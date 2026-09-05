@@ -87,6 +87,17 @@ public sealed class SqlAssistSettings
     public bool UseSquareBrackets { get; init; }
 
     /// <summary>
+    /// sqlAssist.insertion.tableSourceAliasStyle
+    /// </summary>
+    /// <remarks>
+    /// 在 FROM／JOIN／APPLY 等資料來源位置提交資料表、檢視或資料表值函式時，
+    /// 自動在物件名稱後補上別名並留下一個空格。別名取物件名各段的首字母小寫
+    /// （<c>Lib_Reader</c> → <c>lr</c>）；同一個敘述裡已有相同別名時自動加序號
+    /// （<c>lr2</c>）。INSERT INTO 的目標表、DROP TABLE 這種不適用別名的位置不補。
+    /// </remarks>
+    public SqlTableSourceAliasStyle TableSourceAliasStyle { get; init; } = SqlTableSourceAliasStyle.None;
+
+    /// <summary>
     /// sqlAssist.insertion.expandWildcardOnTab
     /// </summary>
     /// <remarks>

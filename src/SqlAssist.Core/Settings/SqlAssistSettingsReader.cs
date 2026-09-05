@@ -72,6 +72,9 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.UseSquareBrackets,
                 defaults.UseSquareBrackets),
+            TableSourceAliasStyle = ParseTableSourceAliasStyle(
+                Value(source, SqlAssistMonikers.TableSourceAliasStyle, string.Empty),
+                defaults.TableSourceAliasStyle),
             ExpandWildcardOnTab = Value(
                 source,
                 SqlAssistMonikers.ExpandWildcardOnTab,
@@ -125,6 +128,17 @@ public static class SqlAssistSettingsReader
         source.TryGetValue<T>(moniker, out var value) ? value : fallback;
 
     /// <summary>無法辨識的值一律當成預設值，而不是列舉的第一個成員。</summary>
+    private static SqlTableSourceAliasStyle ParseTableSourceAliasStyle(string value, SqlTableSourceAliasStyle fallback)
+    {
+        return value switch
+        {
+            "none" => SqlTableSourceAliasStyle.None,
+            "as" => SqlTableSourceAliasStyle.As,
+            "off" => SqlTableSourceAliasStyle.Off,
+            _ => fallback
+        };
+    }
+
     private static SqlPreviewMode ParsePreviewMode(string value, SqlPreviewMode fallback)
     {
         return value switch

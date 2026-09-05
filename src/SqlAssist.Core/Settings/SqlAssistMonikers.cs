@@ -35,6 +35,7 @@ public static class SqlAssistMonikers
 
     public const string QualifyObjectNames = "sqlAssist.insertion.qualifyObjectNames";
     public const string UseSquareBrackets = "sqlAssist.insertion.useSquareBrackets";
+    public const string TableSourceAliasStyle = "sqlAssist.insertion.tableSourceAliasStyle";
     public const string ExpandWildcardOnTab = "sqlAssist.insertion.expandWildcardOnTab";
     public const string WildcardLayout = "sqlAssist.insertion.wildcardLayout";
     public const string ExpandAlterDefinition = "sqlAssist.insertion.expandAlterDefinition";

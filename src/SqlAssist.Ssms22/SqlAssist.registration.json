@@ -157,6 +157,20 @@
       "description": "例如插入 [dbo].[Lib_Reader]。關閉時仍會為含空白或保留字的名稱加上括號，否則插入的 SQL 無效。",
       "additionalKeywords": [ "[]", "中括號", "bracket", "跳脫", "保留字" ]
     },
+    "sqlAssist.insertion.tableSourceAliasStyle": {
+      "type": "string",
+      "default": "none",
+      "order": 120,
+      "enum": [ "none", "as", "off" ],
+      "enumItemLabels": [
+        "自動補上別名，不寫 AS",
+        "自動補上別名並寫 AS",
+        "不要自動補上別名"
+      ],
+      "title": "自動為資料來源補上別名",
+      "description": "在 FROM、JOIN、APPLY 這些資料來源位置選取資料表、檢視或資料表值函式時，自動在名稱後補上別名並留下一個空格。別名取物件名各段的首字母小寫（dbo.Lib_Reader 補 lr）；同一個敘述裡已有相同別名時自動加序號（lr2）。INSERT INTO 的目標表、DROP TABLE 這類不適用別名的位置不會補。",
+      "additionalKeywords": [ "別名", "alias", "FROM", "JOIN", "APPLY", "縮寫" ]
+    },
     "sqlAssist.insertion.expandWildcardOnTab": {
       "type": "boolean",
       "default": true,

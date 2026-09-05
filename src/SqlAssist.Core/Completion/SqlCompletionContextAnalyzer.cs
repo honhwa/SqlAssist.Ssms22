@@ -121,6 +121,13 @@ public static class SqlCompletionContextAnalyzer
             out var intent);
         var isValid = prefix.Length > 0 || target != CompletionTarget.Any || qualifierPath is not null;
 
+        // 自動別名只發生在「補完名稱之後文法上接得了別名」的位置：FROM／JOIN／
+        // APPLY／USING／UPDATE 之後，以及這些清單的逗號續列。INSERT INTO 的目標表、
+        // DROP TABLE 那些一樣列資料表、文法上卻不接受別名的位置，被下面的白名單
+        // 自然排除——不必在這一格把每一種反例都寫一遍。
+        var mayAppendTableAlias = IsTableSourceNameSlot(
+            qualifierPath is null ? beforeToken : beforeQualifier);
+
         return new SqlCompletionContext(
             isValid,
             tokenStart,
@@ -131,7 +138,94 @@ public static class SqlCompletionContextAnalyzer
             intent,
             columnSources: null,
             keywordPosition,
-            qualifierStart: qualifierStart);
+            qualifierStart: qualifierStart,
+            mayAppendTableAlias);
+    }
+
+    /// <summary>
+    /// 游標正要輸入資料來源名稱、補完後可以自動接別名嗎？
+    /// </summary>
+    /// <remarks>
+    /// 回傳 true 的兩種形狀：文字尾巴直接是 FROM／JOIN／APPLY／USING／UPDATE，
+    /// 或是 FROM／JOIN／APPLY 清單裡的逗號（<c>FROM dbo.Loan l, |</c>）。
+    /// 逗號那一種要往左找它屬於哪一個清單——SELECT 清單、IN 清單這些也都以逗號
+    /// 分隔，卻是列欄位或值而不是列資料來源的位置。
+    ///
+    /// 不接受別名的反例（INTO、DROP TABLE…）不在白名單上，因此會自然回傳 false；
+    /// 反過來說，這一格只回答「能不能接別名」，不管清單本身列不列資料表。
+    /// </remarks>
+    private static bool IsTableSourceNameSlot(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var trimmed = text.TrimEnd();
+
+        // 直接跟在資料來源關鍵字後面：名稱一個字都還沒打，而補上去的物件
+        // 本身正是這個清單的第一個來源。
+        if (EndsWithKeyword(trimmed, "FROM", out _) ||
+            EndsWithKeyword(trimmed, "JOIN", out _) ||
+            EndsWithKeyword(trimmed, "APPLY", out _) ||
+            EndsWithKeyword(trimmed, "USING", out _) ||
+            EndsWithKeyword(trimmed, "UPDATE", out _))
+        {
+            return true;
+        }
+
+        if (!trimmed.EndsWith(",", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // 逗號清單：往左找第一個關鍵字，看它是不是資料來源清單的錨點。
+        // 括號、點號與其他非關鍵字一路跳過；真的會經過子查詢的場合（逗號接在
+        // 衍生資料表後面）它的清單錨點仍然是外層的 FROM，結果不會因此翻錯。
+        var tokens = SqlTokenizer.Tokenize(trimmed);
+
+        for (var index = tokens.Count - 2; index >= 0; index--)
+        {
+            var word = tokens[index].Value;
+
+            if (IsTableSourceAnchor(word))
+            {
+                return true;
+            }
+
+            if (IsNonSourceListKeyword(word))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTableSourceAnchor(string word) =>
+        word.Equals("FROM", StringComparison.OrdinalIgnoreCase) ||
+        word.Equals("JOIN", StringComparison.OrdinalIgnoreCase) ||
+        word.Equals("APPLY", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsNonSourceListKeyword(string word)
+    {
+        return word.Equals("SELECT", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("WHERE", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("IN", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("INTO", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("ON", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("SET", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("VALUES", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("MERGE", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("INSERT", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("UPDATE", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("DELETE", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("TABLE", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("HAVING", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("GROUP", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("ORDER", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("UNION", StringComparison.OrdinalIgnoreCase) ||
+            word.Equals("WITH", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

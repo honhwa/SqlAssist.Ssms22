@@ -56,6 +56,16 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     /// </remarks>
     internal const string QualifierSlotKey = "SqlAssist.QualifierSlot";
 
+    /// <summary>
+    /// 資料表值函式補完後要接在 <c>fn(…)</c> 後面的自動別名（含前後空格）。
+    /// </summary>
+    /// <remarks>
+    /// 掛在 item 上而不是 session：同一次清單裡只有資料表值函式需要它，而每筆
+    /// 建議的別名是各算各的（撞名時會加序號）。提交管理器在展開器把名稱換成
+    /// <c>fn(…)</c> 之後，把這一串接到展開結果的尾巴。
+    /// </remarks>
+    internal const string TableSourceAliasKey = "SqlAssist.TableSourceAlias";
+
     /// <summary>建立 <see cref="_builtIn"/> 時所用的那一份 Snippet 清單。</summary>
     private static SqlSnippetLibrary? _builtInSnippets;
 
@@ -480,6 +490,21 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 提交與排名都需要拿回原始建議項；PropertyCollection 是官方提供的掛載點。
         item.Properties.AddProperty(SuggestionKey, suggestion);
+
+        // 資料表值函式的自動別名不在插入文字裡拼（SqlInsertionText 刻意略過——
+        // 提交會走函式呼叫展開，展開器把名稱換成 fn(…) 時會整段蓋掉先拼好的字）。
+        // 別名在建立清單這一刻算好、掛到建議項上，提交管理器看到就直接把它接到
+        // 展開結果的尾巴。這裡只服務「函式呼叫展開開啟」的路徑；關閉時 Build 已
+        // 把別名拼進插入文字，不需要這份屬性。
+        if (suggestion.Kind == SuggestionKind.TableFunction && settings.ExpandFunctionCall)
+        {
+            var tableSourceAliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
+            if (tableSourceAliasSuffix is not null)
+            {
+                item.Properties.AddProperty(TableSourceAliasKey, tableSourceAliasSuffix);
+            }
+        }
+
         return item;
     }
 

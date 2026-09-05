@@ -41,13 +41,31 @@ public static class SqlInsertionText
             return objectName;
         }
 
+        string insertionText;
         if (!NeedsSchema(context, settings) ||
             string.IsNullOrWhiteSpace(suggestion.SchemaName))
         {
-            return objectName;
+            insertionText = objectName;
+        }
+        else
+        {
+            insertionText = Quote(suggestion.SchemaName!, settings) + "." + objectName;
         }
 
-        return Quote(suggestion.SchemaName!, settings) + "." + objectName;
+        var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
+
+        // 資料表值函式在「展開函式呼叫」開啟時不在這裡接別名：提交資料表值函式會
+        // 走函式呼叫展開，展開器把名稱換成 fn(…) 的同時會蓋掉先拼在後面的文字，
+        // 接上去等於白接——那一條路徑在提交管理器裡，展開成 fn(…) 之後才把別名
+        // 補上去（建議項的 SqlAsyncCompletionSource.TableSourceAliasKey）。關閉展開
+        // 時名稱原樣落地，別名就照一般物件在這裡接。
+        if (aliasSuffix is not null &&
+            (suggestion.Kind != SuggestionKind.TableFunction || !settings.ExpandFunctionCall))
+        {
+            return insertionText + aliasSuffix;
+        }
+
+        return insertionText;
     }
 
     /// <summary>

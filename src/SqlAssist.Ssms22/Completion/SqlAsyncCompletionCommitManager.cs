@@ -243,6 +243,17 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             settings,
             writtenName);
 
+        // 資料表值函式在資料來源位置的自動別名：建立清單那一刻算好、掛在 item 上，
+        // 這裡掛到展開器身上——展開器把名稱換成 fn(…) 時會把先拼好的字整段蓋掉，
+        // 所以別名要跟展開結果一起落地，而不是跟著插入文字走。
+        if (expansion is SqlFunctionCallExpansion functionCall &&
+            item.Properties.TryGetProperty<string>(
+                SqlAsyncCompletionSource.TableSourceAliasKey,
+                out var tableSourceAliasSuffix))
+        {
+            functionCall.TableSourceAliasSuffix = tableSourceAliasSuffix;
+        }
+
         // 內建函式與帶參數的型別，插入文字自己帶著左括號（GETDATE(、varchar(），
         // 而平台只會照著寫進去——提交完停在編輯器裡的是一句語法錯誤。右括號併進
         // 下面那一次編輯，所以 Ctrl+Z 一次就連它一起收掉，程式碼片段的欄位
