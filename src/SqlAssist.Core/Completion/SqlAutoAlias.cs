@@ -167,7 +167,9 @@ public static class SqlAutoAlias
 
             if (!string.IsNullOrEmpty(name))
             {
-                yield return name;
+                // 已通過 IsNullOrEmpty 守衛,但迭代器的 null 狀態追蹤會丟失,
+                // 用 ! 告訴編譯器這裡 name 必非 null。
+                yield return name!;
             }
         }
     }
@@ -198,7 +200,9 @@ public static class SqlAutoAlias
 
             if (current.Length > 0 && char.IsUpper(character))
             {
-                var previous = current[^1];
+                // netstandard2.0 沒有 System.Index,改用 Length-1 走索引,
+                // 避免 CS0656 'System.Index..ctor' 缺失。
+                var previous = current[current.Length - 1];
                 var boundaryAfterLower = char.IsLower(previous) || char.IsDigit(previous);
                 var boundaryAfterAcronym =
                     char.IsUpper(previous) &&

@@ -103,7 +103,7 @@ public static class SqlCompletionContextAnalyzer
         if (ddlOn >= 0)
         {
             return new SqlCompletionContext(
-                isValid: true,
+                true,
                 tokenStart,
                 prefix,
                 CompletionTarget.DataSource,
@@ -111,7 +111,7 @@ public static class SqlCompletionContextAnalyzer
                 tokens[ddlOn].Start,
                 CompletionIntent.Reference,
                 columnSources: null,
-                keywordPosition,
+                keywordPosition: keywordPosition,
                 qualifierStart: qualifierStart);
         }
 
@@ -137,9 +137,9 @@ public static class SqlCompletionContextAnalyzer
             targetKeywordStart,
             intent,
             columnSources: null,
-            keywordPosition,
+            keywordPosition: keywordPosition,
             qualifierStart: qualifierStart,
-            mayAppendTableAlias);
+            mayAppendTableAlias: mayAppendTableAlias);
     }
 
     /// <summary>
