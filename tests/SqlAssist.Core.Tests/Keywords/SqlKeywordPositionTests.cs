@@ -1,6 +1,7 @@
 using System.Linq;
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Keywords;
+using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Snippets;
 using Xunit;
 
@@ -256,7 +257,7 @@ public sealed class SqlKeywordPositionTests
     /// </summary>
     /// <remarks>
     /// 這四處以前一律回 <see cref="SqlKeywordPosition.Any"/>，於是 191 個關鍵字與
-    /// 45 筆片段全部進場：同一組候選、同一個前綴 <c>C</c>，<c>SELECT C</c> 只有
+    /// 49 筆片段全部進場：同一組候選、同一個前綴 <c>C</c>，<c>SELECT C</c> 只有
     /// 62 筆而 <c>ORDER BY C</c> 有 118 筆，前 13 名全被捷徑以 <c>C</c> 開頭的片段
     /// 占滿。<c>Any</c> 是給「判不出來」用的，而分析器在這四處都判得出來。
     /// </remarks>
@@ -337,7 +338,7 @@ public sealed class SqlKeywordPositionTests
     // DESC 屬於欄位「之後」，在欄位這一格不該出現。
     [InlineData("SELECT * FROM t ORDER BY ", "DESC", false)]
 
-    // ALTER TABLE：SQL Prompt 在 ADD 之後給的就是這幾個字。
+    // ALTER TABLE：成熟的補全工具在 ADD 之後給的就是這幾個字。
     [InlineData("ALTER TABLE dbo.t ", "ADD", true)]
     [InlineData("ALTER TABLE dbo.t ", "ALTER", true)]
     [InlineData("ALTER TABLE dbo.t ", "SELECT", false)]
@@ -435,9 +436,8 @@ public sealed class SqlKeywordPositionTests
     // 同一行代表他還在寫同一個子句，語句級片段不進場。
     [InlineData("SELECT * FROM dbo.Loan WHERE ReaderId = 1 ", "ssf", false)]
 
-    // 選取清單換行之後接的幾乎總是下一個欄位或 FROM。在那裡放進 64 個語句開頭的字
-    // 與 35 筆片段，使用者真正要的欄位就被擠下去了。
-    [InlineData("SELECT CopyNo\r\n", "ssf", false)]
+    // 沒有 FROM 的 SELECT 也能是完整敘述，不能為了減少候選而封死下一句片段。
+    [InlineData("SELECT CopyNo\r\n", "ssf", true)]
 
     // 反方向：續寫的字沒有因為多了語句開頭就掉。
     [InlineData("SELECT * FROM dbo.Loan WHERE ReaderId = 1\r\n", "AND", true)]
@@ -457,5 +457,149 @@ public sealed class SqlKeywordPositionTests
             .Any(suggestion => suggestion.DisplayText == displayText);
 
         Assert.Equal(expected, matched);
+    }
+
+    [Theory]
+    [InlineData("SELECT dbo.fn_Fee('')\n")]
+    [InlineData("SELECT dbo.fn_Fee('')\r\n")]
+    [InlineData("SELECT dbo.fn_Fee('')\r")]
+    [InlineData("SELECT dbo.fn_Fee('')\n\n    ")]
+    [InlineData("SELECT [dbo].[fn_Fee]('')\n")]
+    [InlineData("SELECT LibArchive.dbo.fn_Fee('')\n")]
+    [InlineData("SELECT dbo.fn_Fee(COALESCE(NULL, ''))\n")]
+    [InlineData("SELECT GETDATE()\n")]
+    [InlineData("SELECT 1\n")]
+    [InlineData("SELECT N''\n")]
+    [InlineData("SELECT @CopyNo\n")]
+    [InlineData("SELECT 1 + 2\n")]
+    [InlineData("SELECT (1 + 2)\n")]
+    [InlineData("SELECT (SELECT 1)\n")]
+    [InlineData("SELECT dbo.fn_Fee('') AS Fine\n")]
+    [InlineData("SELECT dbo.fn_Fee(''), 1\n")]
+    [InlineData("SELECT dbo.fn_Fee('') -- 計算費用\n")]
+    [InlineData("SELECT dbo.fn_Fee('')\n/* 計算費用 */ ")]
+    [InlineData("SELECT dbo.fn_Fee('') /* 外層\n /* 內層 */ 結束 */ ")]
+    public void 選取清單跨行保留續寫位置並開放所有語句片段(string textBeforeToken)
+    {
+        var tokens = SqlTokenizer.Tokenize(textBeforeToken);
+        var expected = SqlKeywordPosition.SelectListTail | SqlKeywordPosition.StatementStart;
+        Assert.Equal(expected, SqlKeywordPositionAnalyzer.Analyze(textBeforeToken));
+        Assert.Equal(expected, SqlKeywordPositionAnalyzer.Analyze(tokens, textBeforeToken));
+
+        var suggestions = BuiltInSuggestionCatalog.Create(SqlSnippetDefaults.Current);
+        foreach (var prefix in new[] { "", "s", "ss", "ssf", "SSF", "st100", "ssc", "ii", "cp", "SELECT", "FROM" })
+        {
+            var context = SqlCompletionContextAnalyzer.Analyze(textBeforeToken + prefix);
+            Assert.Equal(expected, context.KeywordPosition);
+            if (prefix.Length == 0)
+            {
+                // 一般位置未輸入前綴時仍不自動開清單，不能用放寬觸發掩蓋位置漏判。
+                Assert.False(context.IsValid);
+                continue;
+            }
+
+            Assert.True(context.IsValid);
+            var displayText = prefix is "s" or "ss" or "SSF" ? "ssf" : prefix;
+            Assert.Contains(SuggestionMatcher.Filter(suggestions, context),
+                suggestion => suggestion.DisplayText == displayText);
+            Assert.Contains(SuggestionMatcher.Match(suggestions, context),
+                suggestion => suggestion.DisplayText == displayText);
+        }
+    }
+
+    [Theory]
+    [InlineData("SELECT dbo.fn_Fee('') ", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT dbo.fn_Fee('') /* 同一行 */ ", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT dbo.fn_Fee('\n') ", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT [Copy\nNo] ", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT\n", SqlKeywordPosition.SelectList)]
+    [InlineData("SELECT 1,\n", SqlKeywordPosition.SelectList)]
+    [InlineData("SELECT 1 AS\n", SqlKeywordPosition.None)]
+    [InlineData("SELECT dbo.fn_Fee(1\n", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT COALESCE(dbo.fn_Fee(''), 1\n", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT (SELECT 1\n", SqlKeywordPosition.SelectListTail)]
+    [InlineData(";WITH LoanFees AS (SELECT 1\n", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT * FROM (SELECT 1\n", SqlKeywordPosition.SelectListTail)]
+    [InlineData("SELECT * FROM (SELECT 1)\n", SqlKeywordPosition.None)]
+    [InlineData("SELECT * FROM dbo.Loan WHERE ReaderId IN (1\n", SqlKeywordPosition.ExpressionTail)]
+    [InlineData("SELECT (SELECT CopyNo FROM dbo.Loan\n", SqlKeywordPosition.TableSourceTail)]
+    [InlineData("SELECT (SELECT CopyNo FROM dbo.Loan ORDER BY CopyNo\n", SqlKeywordPosition.OrderByTail)]
+    public void 同行或括號未關閉不因換行新增語句開頭(string textBeforeToken, SqlKeywordPosition expected)
+    {
+        Assert.Equal(expected, SqlKeywordPositionAnalyzer.Analyze(textBeforeToken));
+        var suggestions = BuiltInSuggestionCatalog.Create(SqlSnippetDefaults.Current);
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeToken + "ssf");
+        if (expected == SqlKeywordPosition.None)
+        {
+            Assert.False(context.IsValid);
+            return;
+        }
+
+        Assert.DoesNotContain(SuggestionMatcher.Filter(suggestions, context),
+            suggestion => suggestion.DisplayText == "ssf");
+    }
+
+    /// <summary>
+    /// <c>NOT</c> 同時是述詞的開頭與運算子的一半。
+    /// </summary>
+    /// <remarks>
+    /// <c>WHERE NOT </c> 之後開始一個述詞，<c>a.Big5Code NOT </c> 之後接的是
+    /// <c>IN</c>／<c>LIKE</c>／<c>BETWEEN</c>，而那三個字掛的是
+    /// <see cref="SqlKeywordPosition.ExpressionTail"/>。只給述詞起點的症狀是
+    /// <c>NOT </c> 之後打 <c>i</c> 完全等不到 <c>IN</c>。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT * FROM t WHERE NOT ")]
+    [InlineData("SELECT * FROM t WHERE a NOT ")]
+    [InlineData("SELECT * FROM t WHERE a = 1 AND t.b NOT ")]
+    public void NOT之後同時是述詞起點與運算式尾端(string textBeforeToken)
+    {
+        var position = SqlKeywordPositionAnalyzer.Analyze(textBeforeToken);
+
+        Assert.Equal(
+            SqlKeywordPosition.Predicate | SqlKeywordPosition.ExpressionTail,
+            position);
+        Assert.Contains(
+            SqlKeywordCatalog.SuggestionKeywords,
+            keyword => keyword == "IN" &&
+                (SqlKeywordCatalog.GetPositions(keyword) & position) != SqlKeywordPosition.None);
+    }
+
+    /// <summary>
+    /// 尾端的點號屬於正在輸入的那個名稱，位置由整個名稱之前的東西決定。
+    /// </summary>
+    /// <remarks>
+    /// 少了這一條，限定字之後一律是 <see cref="SqlKeywordPosition.Any"/>，
+    /// 而那讓 <c>FROM a, LibArchive.</c> 在位置上與 <c>SELECT LibArchive.</c>
+    /// 沒有差別——前者要的只有資料來源。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT * FROM dbo.", SqlKeywordPosition.DataSource)]
+    [InlineData("SELECT * FROM a, LibArchive.dbo.", SqlKeywordPosition.DataSource)]
+    [InlineData("SELECT * FROM t WHERE t.", SqlKeywordPosition.Predicate)]
+    [InlineData("SELECT t.", SqlKeywordPosition.SelectList)]
+    [InlineData("SELECT * FROM t ORDER BY t.", SqlKeywordPosition.OrderByColumn)]
+
+    // 空段不是限定字，照舊落在「判不出來」那一支。小數點根本走不到這裡：
+    // 詞法分析把 1. 掃成一個數值詞元，位置仍然由子句錨點決定。
+    [InlineData("SELECT * FROM LibArchive..", SqlKeywordPosition.Any)]
+    [InlineData("SELECT 1.", SqlKeywordPosition.SelectListTail)]
+    public void 尾端點號由名稱之前的位置決定(string textBeforeToken, SqlKeywordPosition expected)
+    {
+        Assert.Equal(expected, SqlKeywordPositionAnalyzer.Analyze(textBeforeToken));
+    }
+
+    [Theory]
+    [InlineData("SELECT dbo.fn_Fee('');\n")]
+    [InlineData("SELECT dbo.fn_Fee('')\nGO\n")]
+    [InlineData("SELECT * FROM dbo.Loan WHERE ReaderId = 1\n/* 接續 */ ")]
+    [InlineData("SELECT * FROM dbo.Loan\n/* 接續 */ ")]
+    [InlineData("SELECT * FROM dbo.Loan ORDER BY CopyNo\n/* 接續 */ ")]
+    public void 明確邊界及既有子句跨註解仍提供片段(string textBeforeToken)
+    {
+        var suggestions = BuiltInSuggestionCatalog.Create(SqlSnippetDefaults.Current);
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeToken + "ssf");
+        Assert.Contains(SuggestionMatcher.Filter(suggestions, context),
+            suggestion => suggestion.DisplayText == "ssf");
     }
 }

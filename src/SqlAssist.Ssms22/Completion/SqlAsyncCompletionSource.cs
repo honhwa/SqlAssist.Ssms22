@@ -1,3 +1,5 @@
+using SqlAssist.Ssms22.Editor;
+using SqlAssist.Core.Notifications;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -22,6 +24,7 @@ using SqlAssist.Ssms22.Preview;
 using SqlAssist.Ssms22.QuickInfo;
 using SqlAssist.Ssms22.Settings;
 using SqlAssist.Ssms22.Snippets;
+using SqlAssist.Ssms22.UI;
 
 namespace SqlAssist.Ssms22.Completion;
 
@@ -55,16 +58,6 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     /// 每一項的限定字都是同一串，掛幾百份是同一個答案。
     /// </remarks>
     internal const string QualifierSlotKey = "SqlAssist.QualifierSlot";
-
-    /// <summary>
-    /// 資料表值函式補完後要接在 <c>fn(…)</c> 後面的自動別名（含前後空格）。
-    /// </summary>
-    /// <remarks>
-    /// 掛在 item 上而不是 session：同一次清單裡只有資料表值函式需要它，而每筆
-    /// 建議的別名是各算各的（撞名時會加序號）。提交管理器在展開器把名稱換成
-    /// <c>fn(…)</c> 之後，把這一串接到展開結果的尾巴。
-    /// </remarks>
-    internal const string TableSourceAliasKey = "SqlAssist.TableSourceAlias";
 
     /// <summary>建立 <see cref="_builtIn"/> 時所用的那一份 Snippet 清單。</summary>
     private static SqlSnippetLibrary? _builtInSnippets;
@@ -153,13 +146,13 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
             return CompletionStartData.DoesNotParticipateInCompletion;
         }
 
-        // 欄位模式的範圍已經由引擎給定，不必再驗詞元起點——那個起點算的是
-        // 「這一格之前」那一段的尾巴，與這次要取代的範圍無關。
         if (fieldSpan is { } field)
         {
             _fieldSpan = field.Span.Span;
             _fieldDefault = field.DefaultValue;
-            return new CompletionStartData(CompletionParticipation.ProvidesItems, field.Span);
+            return new CompletionStartData(
+                CompletionParticipation.ProvidesItems,
+                ResolveFieldApplicableSpan(field, context));
         }
 
         // 範圍必須自己驗一次，不能靠例外兜底：TokenStart 是從文字分析算出來的，
@@ -177,6 +170,41 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
             Span.FromBounds(context.TokenStart, triggerLocation.Position));
 
         return new CompletionStartData(CompletionParticipation.ProvidesItems, applicableSpan);
+    }
+
+    /// <summary>
+    /// 原生 Snippet 欄位裡這次要取代的範圍。
+    /// </summary>
+    /// <remarks>
+    /// 整格還是<b>樣板填的預設值</b>時就是整格：那幾個字不是使用者打的，
+    /// 詞元起點算的是這一格<b>之前</b>那一段的尾巴，與這次要取代的範圍無關。
+    ///
+    /// 使用者一打字就改以詞元起點為界，而那唯一會與格子起點不同的情形正是
+    /// 限定字：<c>ORDER BY [a.]</c> 這一格裡打下 <c>a.</c> 之後，整格是
+    /// <c>a.</c> 而要取代的只有點號<b>之後</b>那一段。整格當範圍的話，篩選前綴
+    /// 會是 <c>a.</c>——它比不中任何一個資料行名稱，而
+    /// <see cref="SqlAsyncCompletionItemManager"/> 一個都沒中就回 null，平台會把
+    /// 剛開的 session 直接關掉。症狀是「格子裡打 <c>a.</c> 沒有清單，
+    /// 把 <c>a.</c> 刪掉反而有」，而那正是限定字唯一有用的那一次。
+    ///
+    /// 終點仍然是格子的尾端而不是游標：提交要換掉的是這一格，不是游標前那幾個字。
+    /// </remarks>
+    private static SnapshotSpan ResolveFieldApplicableSpan(
+        SqlSnippetFieldSpan field,
+        SqlCompletionContext context)
+    {
+        var start = field.Span.Start.Position;
+
+        if (field.HoldsDefault ||
+            context.TokenStart <= start ||
+            context.TokenStart > field.Span.End.Position)
+        {
+            return field.Span;
+        }
+
+        return new SnapshotSpan(
+            field.Span.Snapshot,
+            Span.FromBounds(context.TokenStart, field.Span.End.Position));
     }
 
     public Task<CompletionContext> GetCompletionContextAsync(
@@ -202,6 +230,13 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         var settings = SqlAssistSettingsStore.Current;
         var context = Analyze(triggerLocation, applicableToSpan);
 
+        // 這一則正是「打開建議清單卻不知道背景在忙什麼」的答案：底下的限定名稱解析與
+        // 每一條中繼資料查詢都併進這一列。三軸是 Completion／Typing／Info——每按一次鍵
+        // 就走一次，因此不是 User；「建議清單」那一格預設關著，想看的人自己打開。
+        using var notification = NotificationCenter.Default.Begin(NotificationCatalog.PreparingSuggestions,
+            NotificationKind.Completion, NotificationOrigin.Typing, NotificationLevel.Info,
+            DescribeTarget(context.Target), ActiveSqlEditor.GetDocumentName(_textView));
+
         // 限定字最左邊那一段是結構描述、資料庫還是連結伺服器，只看文字分不出來。
         // 在問清單之前就換成對齊過的上下文，後面的候選來源、過濾與插入文字才會
         // 讀到同一個答案；各自再判一次的話，症狀是清單列得出來、Tab 下去少一段。
@@ -209,9 +244,21 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         // 關掉「列出資料庫物件與欄位」的人要的是「不要連線」，這裡跟著不問。
         if (settings.IncludeDatabaseObjects)
         {
-            context = await _metadataService
-                .ResolveQualifierAsync(context, token)
-                .ConfigureAwait(false);
+            // 連線換過時，先確認現在真的連到哪裡再問清單。這條路徑跑在平台的
+            // 背景工作上，等得起一次往返；不等的代價是換完資料庫之後的第一份
+            // 清單仍然列著舊資料庫的物件，而畫面上完全看不出退過。
+            await _metadataService.ConfirmConnectionAsync().ConfigureAwait(false);
+
+            // 限定名稱解析自己就要問一次中繼資料；分開一列，才看得出「清單還沒出來」
+            // 是卡在這一步還是卡在候選清單上。
+            using (NotificationCenter.Default.Begin(NotificationCatalog.ResolvingQualifier,
+                       NotificationKind.Completion, NotificationOrigin.Typing, NotificationLevel.Debug,
+                       context.Prefix, ActiveSqlEditor.GetDocumentName(_textView)))
+            {
+                context = await _metadataService
+                    .ResolveQualifierAsync(context, token)
+                    .ConfigureAwait(false);
+            }
         }
 
         // 提交那一端的上下文是從文字重新分析的，認不出「LibArchive. 其實是資料庫」
@@ -342,21 +389,59 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         {
             preview.ReconcileSelection(session, _metadataService);
 
-            // 預覽視窗接手之後就不要再回傳說明內容：
-            // 兩個視窗同時貼在清單旁邊只會互相搶位置。
-            return null;
+            // 預覽已經展開時整份讓給它：兩個視窗同時貼在清單旁邊會互相搶位置。展開狀態
+            // 下它畫得出資料庫物件、指令碼自己宣告的名稱與內建說明，只有其餘的項目才說
+            // 沒有東西可以顯示。
+            //
+            // 還沒展開時畫面上根本沒有那個視窗，說明面板照常畫——一併吞掉的症狀是
+            // 打開浮動預覽之後，選到 CONVERT 連引數順序那一行都不見了。內建說明沒有跟著
+            // 物件一起讓掉，因為這一份正是「一眼看得完」的那一半，而且查表就有；
+            // 看不完的對照表才是向右鍵要開的東西。物件先讓掉的理由則是成本：那一條要
+            // await 一次 GetDetailAsync，而使用者多半只是按著方向鍵路過。
+            if (preview.IsExpanded || objectInfo is not null)
+            {
+                return null;
+            }
         }
 
         if (objectInfo is null)
         {
-            return suggestion.Preview;
+            return BuildBuiltInDescription(suggestion) ?? (object)suggestion.Preview;
         }
 
-        var detail = await _metadataService.GetDetailAsync(objectInfo, token).ConfigureAwait(false);
+        using var notification = NotificationCenter.Default.Begin(
+            NotificationCatalog.LoadingSuggestionDescription, NotificationKind.Completion,
+            NotificationOrigin.Typing, NotificationLevel.Debug,
+            objectInfo.QualifiedName, ActiveSqlEditor.GetDocumentName(_textView));
+        var detail = await _metadataService
+            .GetDetailAsync(objectInfo, token, NotificationOrigin.Typing)
+            .ConfigureAwait(false);
 
         return detail is null
             ? SqlQuickInfoContentBuilder.BuildLoading(objectInfo)
             : SqlQuickInfoContentBuilder.Build(detail);
+    }
+
+    /// <summary>
+    /// 內建名稱在說明面板裡的內容；不是內建名稱或沒有寫過說明時回傳 null。
+    /// </summary>
+    /// <remarks>
+    /// 與滑鼠停留提示同一份資料、同一個建構器，因此清單裡看到的與停在字上看到的
+    /// 是同一段話。說明面板沒有可點擊的地方，線上文件那一行不畫。
+    ///
+    /// 種類已經在建議項上，不必再從文字猜一次——<c>YEAR</c> 在日期部分與內建函式
+    /// 目錄裡各有一筆，猜的話兩邊都說得通。
+    /// </remarks>
+    private static object? BuildBuiltInDescription(SqlSuggestion suggestion)
+    {
+        if (!SqlBuiltInKinds.TryFromSuggestionKind(suggestion.Kind, out var kind))
+        {
+            return null;
+        }
+
+        return SqlBuiltInDocCatalog.TryGet(suggestion.DisplayText, kind, out var doc)
+            ? SqlQuickInfoContentBuilder.BuildBuiltIn(doc)
+            : null;
     }
 
     private async Task<IReadOnlyList<SqlSuggestion>> GetCandidatesAsync(
@@ -396,6 +481,29 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
                 return SqlArgumentCatalog.TableHints;
             case CompletionTarget.QueryHint:
                 return SqlArgumentCatalog.QueryHints;
+        }
+
+        // 定序只有伺服器知道，但那個位置不會因為問不到而空掉：DATABASE_DEFAULT
+        // 這兩個字與這份指令碼已經寫過的定序都不必送出查詢。關掉「列出資料庫物件
+        // 與欄位」的人要的是「不要連線」，剩下的正好是這一份。
+        if (context.Target == CompletionTarget.Collation)
+        {
+            var known = SqlCollationCatalog.Defaults.Concat(context.ScriptSources).ToArray();
+
+            if (!settings.IncludeDatabaseObjects)
+            {
+                return known;
+            }
+
+            var exclude = new HashSet<string>(
+                known.Select(item => item.DisplayText),
+                StringComparer.OrdinalIgnoreCase);
+
+            var collations = await _metadataService
+                .GetCollationSuggestionsAsync(exclude, token)
+                .ConfigureAwait(false);
+
+            return known.Concat(collations).ToArray();
         }
 
         // 內建型別是一份封閉的清單，但使用者自訂的資料表型別在資料庫裡，
@@ -477,7 +585,9 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         var item = new CompletionItem(
             displayText: suggestion.DisplayText,
             source: this,
-            icon: null!,
+            // 篩選類別與圖示不是同一個問題：同義字歸入資料表那一類，圖示仍須
+            // 呈現真正的物件種類，判斷整份在 SqlIcons。
+            icon: SqlIcons.GetImageElement(suggestion),
             filters: withFilters
                 ? SqlCompletionFilters.For(suggestion.Kind)
                 : ImmutableArray<CompletionFilter>.Empty,
@@ -490,21 +600,6 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 提交與排名都需要拿回原始建議項；PropertyCollection 是官方提供的掛載點。
         item.Properties.AddProperty(SuggestionKey, suggestion);
-
-        // 資料表值函式的自動別名不在插入文字裡拼（SqlInsertionText 刻意略過——
-        // 提交會走函式呼叫展開，展開器把名稱換成 fn(…) 時會整段蓋掉先拼好的字）。
-        // 別名在建立清單這一刻算好、掛到建議項上，提交管理器看到就直接把它接到
-        // 展開結果的尾巴。這裡只服務「函式呼叫展開開啟」的路徑；關閉時 Build 已
-        // 把別名拼進插入文字，不需要這份屬性。
-        if (suggestion.Kind == SuggestionKind.TableFunction && settings.ExpandFunctionCall)
-        {
-            var tableSourceAliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
-            if (tableSourceAliasSuffix is not null)
-            {
-                item.Properties.AddProperty(TableSourceAliasKey, tableSourceAliasSuffix);
-            }
-        }
-
         return item;
     }
 
@@ -563,6 +658,32 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     /// 判斷靠 <see cref="_fieldSpan"/> 而不是重問一次引擎：這個方法在平台的背景
     /// 執行緒上，那個查詢是 COM，只能在 UI 執行緒做。
     /// </remarks>
+    /// <summary>這一次清單在找什麼；通知的主體。</summary>
+    /// <remarks>
+    /// switch 回常數而不是 <c>ToString()</c>：這一段每按一次鍵都走一次，而
+    /// 列舉名稱的字串化每次都配置一份，即使通知被篩掉也一樣。
+    /// </remarks>
+    private static string DescribeTarget(CompletionTarget target) => target switch
+    {
+        CompletionTarget.DataSource => "資料來源",
+        CompletionTarget.Procedure => "預存程序",
+        CompletionTarget.Function => "函式",
+        CompletionTarget.TableFunction => "資料表值函式",
+        CompletionTarget.Column => "資料行",
+        CompletionTarget.Database => "資料庫",
+        CompletionTarget.GlobalVariable => "全域變數",
+        CompletionTarget.Variable => "變數",
+        CompletionTarget.DataType => "資料型別",
+        CompletionTarget.View => "檢視",
+        CompletionTarget.Trigger => "觸發程序",
+        CompletionTarget.Sequence => "序列",
+        CompletionTarget.DatePart => "日期部分",
+        CompletionTarget.TableHint => "資料表提示",
+        CompletionTarget.QueryHint => "查詢提示",
+        CompletionTarget.Collation => "定序",
+        _ => "",
+    };
+
     private SqlCompletionContext Analyze(SnapshotPoint triggerLocation, SnapshotSpan applicableToSpan)
     {
         // 只有「整格還是樣板填的預設值」那一次要當它不存在；使用者打過字之後，

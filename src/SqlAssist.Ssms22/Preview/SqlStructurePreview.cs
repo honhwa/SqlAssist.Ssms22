@@ -1,4 +1,6 @@
 using System;
+using SqlAssist.Core.Notifications;
+using SqlAssist.Ssms22.Editor;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -8,6 +10,7 @@ using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion.Data;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Completion;
+using SqlAssist.Core.Keywords;
 using SqlAssist.Core.Settings;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Ssms22;
@@ -54,7 +57,28 @@ internal sealed class SqlStructurePreview
     private ITrackingSpan? _anchor;
     private IAsyncCompletionSession? _observedSession;
     private IAsyncCompletionSession? _session;
-    private SqlObjectInfo? _target;
+
+    /// <summary>
+    /// 目前要畫的東西：一個資料庫物件，或一份內建名稱的說明。
+    /// </summary>
+    /// <remarks>
+    /// 兩種內容共用同一格而不是各佔一個欄位，理由見 <see cref="SqlPreviewSubject"/>。
+    /// 指令碼自己宣告的暫存資料表、資料表變數與 CTE 已經讀好的結構也掛在它身上：
+    /// 它們的 <c>object_id</c> 一律是 0，中繼資料的第二、三層快取卻是照編號存的——
+    /// 交給一般的載入路徑不是拿到別的東西，就是白等一次查不到東西的查詢。
+    /// </remarks>
+    private SqlPreviewSubject? _subject;
+
+    /// <summary>目前這份文字的指令碼宣告名冊，與它所屬的版本。</summary>
+    /// <remarks>
+    /// 名冊要掃過整份文字，所以只在真的要畫的時候才建，而且照版本留著：使用者
+    /// 按著方向鍵在清單裡上下走時文字一個字都沒動，那一段路上一次都不必重掃。
+    /// 反過來，文字一改就得換一份——舊的那一份會交出使用者已經刪掉的宣告。
+    /// </remarks>
+    private ITextSnapshot? _declarationsSnapshot;
+
+    private SqlScriptDeclarations? _declarations;
+
     private SqlMetadataService? _metadataService;
     private CancellationTokenSource? _loading;
     private CancellationTokenSource? _selectionRefresh;
@@ -65,7 +89,8 @@ internal sealed class SqlStructurePreview
 
     private bool _layoutUpdateQueued;
 
-    private bool _selectedItemIsSqlObject;
+    /// <summary>對帳確認過目前這一項畫得出東西；向右鍵靠它決定要不要吞掉按鍵。</summary>
+    private bool _selectedItemHasContent;
 
     private bool _selectionPending;
 
@@ -193,9 +218,9 @@ internal sealed class SqlStructurePreview
                 current.ItemsUpdated -= OnSessionItemsUpdated;
                 _view.TextBuffer.Changed -= OnTextBufferChanged;
                 _session = null;
-                _target = null;
+                _subject = null;
                 _metadataService = null;
-                _selectedItemIsSqlObject = false;
+                _selectedItemHasContent = false;
                 _selectionPending = false;
                 _expandWhenSelectionReady = false;
                 DetachInputTracking();
@@ -255,7 +280,7 @@ internal sealed class SqlStructurePreview
             return false;
         }
 
-        if (_selectedItemIsSqlObject)
+        if (_selectedItemHasContent)
         {
             return Expand();
         }
@@ -319,9 +344,9 @@ internal sealed class SqlStructurePreview
         _session = session;
         _observedSession = session;
         _anchor = session.ApplicableToSpan;
-        _target = null;
+        _subject = null;
         _metadataService = null;
-        _selectedItemIsSqlObject = false;
+        _selectedItemHasContent = false;
         _selectionPending = false;
         _expandWhenSelectionReady = false;
         session.Dismissed += OnSessionEnded;
@@ -396,9 +421,9 @@ internal sealed class SqlStructurePreview
             {
                 _observedSession = null;
             }
-            _target = null;
+            _subject = null;
             _metadataService = null;
-            _selectedItemIsSqlObject = false;
+            _selectedItemHasContent = false;
             _selectionPending = false;
             _expandWhenSelectionReady = false;
             DetachInputTracking();
@@ -446,7 +471,7 @@ internal sealed class SqlStructurePreview
     /// <summary>只套用已由 generation 與 recent model 驗證過的項目；必須在 UI 執行緒。</summary>
     private void ApplyVerifiedSelection(
         IAsyncCompletionSession session,
-        SqlObjectInfo? objectInfo,
+        SqlPreviewSubject? subject,
         SqlMetadataService metadataService)
     {
         if (_closed || session.IsDismissed || !ReferenceEquals(_session, session))
@@ -458,26 +483,29 @@ internal sealed class SqlStructurePreview
         var settings = SqlAssistSettingsStore.Current;
         _selectionPending = false;
         _expandWhenSelectionReady = false;
-        _selectedItemIsSqlObject = objectInfo is not null;
+        _selectedItemHasContent = subject is not null;
 
-        // 平台一次換選取會通知好幾輪，多數輪次解析出來的是同一個物件。
+        // 平台一次換選取會通知好幾輪，多數輪次解析出來的是同一個東西。
         // 展開狀態下解析出 null 是例外：那時畫面上可能還停在「正在取得目前建議項目…」，
         // 得讓它走下去換成正式訊息。
-        var sameContent = IsSameObject(_target, objectInfo) &&
+        var sameContent = SqlPreviewSubject.IsSame(_subject, subject) &&
                           ReferenceEquals(_metadataService, metadataService) &&
-                          (!IsExpanded || objectInfo is not null);
+                          (!IsExpanded || subject is not null);
 
         if (!sameContent)
         {
             _generation++;
             StopPendingWork();
             _metadataService = metadataService;
-            _target = objectInfo;
+            _subject = subject;
         }
 
+        // 向右鍵與「停夠久」只是兩種觸發方式，展開之後做的事完全一樣，所以兩條都只走到
+        // Expand()。合成同一個旗標則不行：向右鍵的意圖要跨過「對帳還沒完成」那段空窗
+        // （先吞鍵、驗證成功再補展開），而倒數是對帳完成之後才起算的。
         if (expandWhenReady &&
             !IsExpanded &&
-            objectInfo is not null &&
+            subject is not null &&
             settings.Enabled &&
             settings.PreviewMode == SqlPreviewMode.RightArrow)
         {
@@ -489,24 +517,24 @@ internal sealed class SqlStructurePreview
         {
             if (sameContent)
             {
-                // 畫面已經是這個物件了。重畫等於使用者眼前閃一下；換代還會取消掉剛送出
+                // 畫面已經是這個東西了。重畫等於使用者眼前閃一下；換代還會取消掉剛送出
                 // 的查詢，然後再等一次節流重送。
                 return;
             }
 
-            if (objectInfo is null)
+            if (subject is null)
             {
-                EnsureControl()?.ShowMessage("沒有結構可以顯示", "這一項不是資料庫物件。");
+                ShowNothingToShow();
                 return;
             }
 
-            ShowTarget(objectInfo, metadataService);
+            ShowSubject(subject, metadataService);
             return;
         }
 
         if (!settings.Enabled ||
             settings.PreviewMode != SqlPreviewMode.Delay ||
-            objectInfo is null)
+            subject is null)
         {
             return;
         }
@@ -520,20 +548,6 @@ internal sealed class SqlStructurePreview
             Math.Max(MinimumExpandDelayMilliseconds, settings.PreviewDelayMilliseconds));
         _timer.Start();
     }
-
-    /// <summary>
-    /// 兩次對帳指的是不是同一個資料庫物件。
-    /// </summary>
-    /// <remarks>
-    /// 用 <see cref="SqlObjectInfo.ObjectId"/> 而不是參考相等：中繼資料快取、
-    /// 詳細資料與結構查詢從頭到尾都以 ObjectId 當識別，這裡跟著同一套才不會出現
-    /// 「快取認為是同一個、預覽認為換人了」。參考相等目前剛好成立，但那只是因為
-    /// 兩次都讀到同一個 CompletionItem，換一條入口（停留提示、工具選單）就不成立。
-    /// </remarks>
-    private static bool IsSameObject(SqlObjectInfo? left, SqlObjectInfo? right) =>
-        left is null
-            ? right is null
-            : right is not null && left.ObjectId == right.ObjectId;
 
     /// <summary>展開預覽；已經展開時回傳 false，讓按鍵照原本的方式往下走。</summary>
     public bool Expand()
@@ -551,14 +565,9 @@ internal sealed class SqlStructurePreview
             _anchor = session.ApplicableToSpan;
         }
 
-        if (_target is { } target && _metadataService is { } metadataService)
+        if (_subject is { } subject)
         {
-            ShowTarget(target, metadataService);
-        }
-        else if (_target is { } pendingTarget)
-        {
-            EnsureControl()?.SetTarget(pendingTarget);
-            ShowAgent();
+            ShowSubject(subject, _metadataService);
         }
         else
         {
@@ -599,7 +608,14 @@ internal sealed class SqlStructurePreview
     /// 滑鼠停留提示的連結與工具選單的命令走這條路。與建議清單共用同一個視窗、
     /// 同一份資料路徑，差別只在錨點與誰負責收掉它。
     /// </remarks>
-    public void ShowAt(ITrackingSpan anchor, SqlObjectInfo objectInfo, SqlMetadataService metadataService)
+    /// <param name="script">
+    /// 指令碼自己宣告的物件已經讀好的結構；要向中繼資料要的物件傳 null。
+    /// </param>
+    public void ShowAt(
+        ITrackingSpan anchor,
+        SqlObjectInfo objectInfo,
+        SqlMetadataService metadataService,
+        SqlObjectStructure? script = null)
     {
         if (_closed || objectInfo is null)
         {
@@ -612,10 +628,39 @@ internal sealed class SqlStructurePreview
             _generation++;
             StopPendingWork();
             _anchor = anchor;
-            _target = objectInfo;
+            _subject = SqlPreviewSubject.ForObject(objectInfo, script);
             _metadataService = metadataService;
             IsExpanded = true;
-            ShowTarget(objectInfo, metadataService);
+            ShowSubject(_subject, metadataService);
+        });
+    }
+
+    /// <summary>
+    /// 顯示一個內建名稱的完整說明，錨在指定的範圍上。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="ShowAt"/> 共用同一個視窗、同一套擺放與縮放，差別在於這條路
+    /// <b>沒有中繼資料</b>：內容是隨組件發布的一份資料，畫完就結束，不查、不等、
+    /// 不需要連線。<c>_metadataService</c> 因此一律清掉，留著會讓後續的對帳把畫面
+    /// 換回上一個資料表。
+    /// </remarks>
+    public void ShowBuiltInAt(ITrackingSpan anchor, SqlBuiltInDoc doc)
+    {
+        if (_closed || doc is null)
+        {
+            return;
+        }
+
+        Invoke(() =>
+        {
+            DetachSession();
+            _generation++;
+            StopPendingWork();
+            _anchor = anchor;
+            _subject = SqlPreviewSubject.ForBuiltIn(doc);
+            _metadataService = null;
+            IsExpanded = true;
+            ShowSubject(_subject, metadataService: null);
         });
     }
 
@@ -678,7 +723,7 @@ internal sealed class SqlStructurePreview
         session.ItemsUpdated -= OnSessionItemsUpdated;
         _view.TextBuffer.Changed -= OnTextBufferChanged;
         _session = null;
-        _selectedItemIsSqlObject = false;
+        _selectedItemHasContent = false;
         _selectionPending = false;
         _expandWhenSelectionReady = false;
         DetachInputTracking();
@@ -711,13 +756,13 @@ internal sealed class SqlStructurePreview
     /// 選取可能換人了：讓「右鍵立刻展開」失效，並到背景去問平台真正選到誰。
     /// </summary>
     /// <remarks>
-    /// 刻意不動 <see cref="_target"/>、節流計時器與載入工作，也不碰畫面。平台換一次選取
+    /// 刻意不動 <see cref="_subject"/>、節流計時器與載入工作，也不碰畫面。平台換一次選取
     /// 會從方向鍵命令、說明 callback 與 <c>ItemsUpdated</c> 分別通知一次；只要其中一條
     /// 先把畫面清成「正在取得目前建議項目…」，另外兩條就會讓同一個物件再重畫一次——
     /// 使用者看到的是每按一次方向鍵閃一下，而且剛送出的查詢會被取消再送一次。
     /// 該不該換內容留給 <see cref="ApplyVerifiedSelection"/>，只有它知道新舊是不是同一個。
     ///
-    /// 舊物件留在畫面上不會被誤用：這裡把 <see cref="_selectedItemIsSqlObject"/> 壓成
+    /// 舊物件留在畫面上不會被誤用：這裡把 <see cref="_selectedItemHasContent"/> 壓成
     /// false，向右鍵因此走「等對帳完成再展開」那條路，不會拿上一項展開。
     /// </remarks>
     private void BeginReconcile(IAsyncCompletionSession session, bool cancelExpandIntent)
@@ -732,7 +777,7 @@ internal sealed class SqlStructurePreview
             _expandWhenSelectionReady = false;
         }
 
-        _selectedItemIsSqlObject = false;
+        _selectedItemHasContent = false;
         _selectionPending = true;
 
         // 「停夠久才自動展開」的倒數前提是使用者停在同一項上，換了就重新起算——
@@ -747,7 +792,7 @@ internal sealed class SqlStructurePreview
         QueueSelectionRefresh(session);
     }
 
-    /// <summary>對帳結果確定不是資料庫物件；這時才真的丟掉目標並換掉畫面。</summary>
+    /// <summary>對帳結果確定沒有東西可畫；這時才真的丟掉主體並換掉畫面。</summary>
     private void ClearSelection(IAsyncCompletionSession session)
     {
         if (!ReferenceEquals(_session, session))
@@ -757,17 +802,26 @@ internal sealed class SqlStructurePreview
 
         _generation++;
         StopPendingWork();
-        _target = null;
-        _selectedItemIsSqlObject = false;
+        _subject = null;
+        _selectedItemHasContent = false;
         _selectionPending = false;
         _expandWhenSelectionReady = false;
         if (IsExpanded)
         {
-            EnsureControl()?.ShowMessage(
-                "沒有結構可以顯示",
-                "目前選取的項目不是資料庫物件。");
+            ShowNothingToShow();
         }
     }
+
+    /// <summary>
+    /// 這一項沒有東西可畫。
+    /// </summary>
+    /// <remarks>
+    /// 對帳中途與對帳落空是兩個進入點，話卻只有一句：寫成兩份的症狀是同一個情況在
+    /// 使用者眼前有兩種說法。也不能再說成「不是資料庫物件」——內建名稱現在畫得出來，
+    /// 選到 CONVERT 的人看到那句話只會以為是自己按錯了。
+    /// </remarks>
+    private void ShowNothingToShow() =>
+        EnsureControl()?.ShowMessage("沒有結構可以顯示", "目前選取的項目沒有可以顯示的內容。");
 
     /// <summary>
     /// 等平台先處理完這次鍵盤／滑鼠輸入，再從背景取得最新選取。
@@ -804,8 +858,10 @@ internal sealed class SqlStructurePreview
                 }
 
                 SqlAssistPlatformGuard.Begin(
-                    "取得最新的建議選取",
-                    () => RefreshSelectionAsync(session, source, generation));
+                    NotificationCatalog.RefreshingPreviewSelection,
+                    () => RefreshSelectionAsync(session, source, generation),
+                    NotificationKind.Preview, NotificationOrigin.Typing, NotificationLevel.Debug,
+                    ActiveSqlEditor.GetDocumentName(_view));
             }));
     }
 
@@ -844,7 +900,10 @@ internal sealed class SqlStructurePreview
                         _metadataService is { } metadataService)
                     {
                         // 只有此處同時驗證過 source、generation 與 recent model，才可更新 target。
-                        ApplyVerifiedSelection(session, suggestion.Tag as SqlObjectInfo, metadataService);
+                        ApplyVerifiedSelection(
+                            session,
+                            SqlSuggestionTarget.Describe(suggestion),
+                            metadataService);
                     }
                     else
                     {
@@ -912,14 +971,20 @@ internal sealed class SqlStructurePreview
     }
 
     /// <summary>
-    /// 載入並顯示一個物件。
+    /// 把目前的主體畫出來。
     /// </summary>
     /// <remarks>
-    /// 由便宜到昂貴依序嘗試：第四層快取命中就直接畫完；只有第二層命中就先畫欄位，
+    /// 四條入口（向右鍵、停夠久、停留提示的連結、Ctrl+F12）的終點都是這裡，所以
+    /// 「換內容之前要先停掉什麼」與「畫什麼」都只有這一份。
+    ///
+    /// 物件由便宜到昂貴依序嘗試：第四層快取命中就直接畫完；只有第二層命中就先畫欄位，
     /// 索引與外來鍵稍後補上；兩層都沒有就先畫標題，等節流計時器到期才查資料庫。
     /// 使用者按著方向鍵一路往下時，中途的每一項都不會送出查詢。
     /// </remarks>
-    private void ShowTarget(SqlObjectInfo objectInfo, SqlMetadataService metadataService)
+    /// <param name="metadataService">
+    /// 內建說明不需要，傳 null；物件在對帳完成前也可能還沒有，那時只畫得出標題。
+    /// </param>
+    private void ShowSubject(SqlPreviewSubject subject, SqlMetadataService? metadataService)
     {
         var control = EnsureControl();
 
@@ -931,6 +996,34 @@ internal sealed class SqlStructurePreview
         _timer.Stop();
         _timerExpands = false;
         _loading?.Cancel();
+
+        // 內建說明是隨組件發布的一份資料：查表就有，畫完就結束，不起節流計時器。
+        if (subject.BuiltIn is { } doc)
+        {
+            control.ShowBuiltIn(doc);
+            ShowAgent();
+            return;
+        }
+
+        if (subject.Object is not { } objectInfo)
+        {
+            return;
+        }
+
+        // 指令碼自己宣告的物件不必經過任何一層快取或查詢：答案就在使用者眼前的文字裡。
+        if (objectInfo.Kind.IsScriptDeclared())
+        {
+            ShowDeclared(control, subject, objectInfo);
+            return;
+        }
+
+        // 對帳還沒把中繼資料服務交過來就先展開了：先把標題畫出來，等它補上。
+        if (metadataService is null)
+        {
+            control.SetTarget(objectInfo);
+            ShowAgent();
+            return;
+        }
 
         if (metadataService.PeekStructure(objectInfo) is { } structure)
         {
@@ -953,6 +1046,57 @@ internal sealed class SqlStructurePreview
         _timer.Start();
     }
 
+    /// <summary>
+    /// 畫一個這份指令碼自己宣告的物件。
+    /// </summary>
+    /// <remarks>
+    /// 滑鼠停留與 Ctrl+F12 在定位那一步就把明細讀好了，直接畫；建議清單那條入口
+    /// 只知道名稱，這裡才去問名冊。兩條路徑最後畫的是同一份東西。
+    /// </remarks>
+    private void ShowDeclared(
+        SqlStructurePreviewControl control,
+        SqlPreviewSubject subject,
+        SqlObjectInfo objectInfo)
+    {
+        if (subject.Script is null ||
+            !SqlPreviewSubject.IsSameObject(subject.Script.Object, objectInfo))
+        {
+            subject.Script = FindDeclared(objectInfo.Name) is { } detail
+                ? new SqlObjectStructure(detail)
+                : null;
+        }
+
+        if (subject.Script is { } declared)
+        {
+            control.Populate(declared);
+        }
+        else
+        {
+            // 名稱認得出來、資料行讀不出來：SELECT * INTO #Loan FROM dbo.Loan 的欄位
+            // 只有中繼資料知道，而這條路徑不等查詢。說出實情，不要畫一個空的結構
+            // 讓人以為它真的沒有欄位。
+            control.ShowMessage(
+                objectInfo.QualifiedName,
+                "這個名稱是這份指令碼自己宣告的，但目前的文字裡讀不出它的資料行。");
+        }
+
+        ShowAgent();
+    }
+
+    /// <summary>問這份文字宣告了什麼；名冊照文字版本留著，同一個版本只掃一次。</summary>
+    private SqlObjectDetail? FindDeclared(string name)
+    {
+        var snapshot = _view.TextBuffer.CurrentSnapshot;
+
+        if (!ReferenceEquals(_declarationsSnapshot, snapshot))
+        {
+            _declarationsSnapshot = snapshot;
+            _declarations = SqlScriptDeclarations.Create(snapshot.GetText());
+        }
+
+        return _declarations?.Find(name);
+    }
+
     private void OnTimerTick(object sender, EventArgs eventArgs)
     {
         _timer.Stop();
@@ -970,7 +1114,7 @@ internal sealed class SqlStructurePreview
             if (settings.Enabled &&
                 settings.PreviewMode == SqlPreviewMode.Delay &&
                 _session is { IsDismissed: false } &&
-                _target is not null)
+                _subject is not null)
             {
                 SqlAssistPlatformGuard.Run("結構預覽操作", () => Expand());
             }
@@ -978,7 +1122,9 @@ internal sealed class SqlStructurePreview
             return;
         }
 
-        if (_target is { } target && _metadataService is { } metadataService && IsExpanded)
+        if (_subject is { Object: { } target } &&
+            _metadataService is { } metadataService &&
+            IsExpanded)
         {
             BeginLoad(target, metadataService);
         }
@@ -994,8 +1140,10 @@ internal sealed class SqlStructurePreview
 
         // 取消一律當成正常結束：換了物件或收起了視窗，什麼都不用做。
         SqlAssistPlatformGuard.Begin(
-            "載入結構預覽",
-            () => LoadAsync(objectInfo, metadataService, source, generation));
+            NotificationCatalog.LoadingStructurePreview,
+            () => LoadAsync(objectInfo, metadataService, source, generation),
+            NotificationKind.Preview, NotificationOrigin.Typing, NotificationLevel.Info,
+            ActiveSqlEditor.GetDocumentName(_view), objectInfo.QualifiedName);
     }
 
     private async Task LoadAsync(
@@ -1006,7 +1154,7 @@ internal sealed class SqlStructurePreview
     {
         var cancellationToken = source.Token;
         var structure = await metadataService
-            .GetStructureAsync(objectInfo, cancellationToken)
+            .GetStructureAsync(objectInfo, cancellationToken, NotificationOrigin.Typing)
             .ConfigureAwait(false);
 
         await _view.VisualElement.Dispatcher.InvokeAsync(
@@ -1016,7 +1164,7 @@ internal sealed class SqlStructurePreview
                 if (cancellationToken.IsCancellationRequested ||
                     generation != _generation ||
                     !ReferenceEquals(_loading, source) ||
-                    !IsSameObject(_target, objectInfo) ||
+                    !SqlPreviewSubject.IsSameObject(_subject?.Object, objectInfo) ||
                     !ReferenceEquals(_metadataService, metadataService) ||
                     _control is not { } control)
                 {
@@ -1051,7 +1199,7 @@ internal sealed class SqlStructurePreview
 
         return SqlAssistPlatformGuard.Create("建立結構預覽", () =>
         {
-            var control = new SqlStructurePreviewControl();
+            var control = new SqlStructurePreviewControl(_view);
             control.ResizeStarted += OnResizeStarted;
             control.ResizeDelta += OnResizeDelta;
             control.ResizeCompleted += OnResizeCompleted;
@@ -1371,6 +1519,10 @@ internal sealed class SqlStructurePreview
         _loading = null;
         _selectionRefresh?.Cancel();
         _selectionRefresh = null;
+
+        // 名冊抓著那個版本的整份文字，視窗都關了不必再留著。
+        _declarationsSnapshot = null;
+        _declarations = null;
         DetachSession();
 
         if (_agent is { } agent)
@@ -1391,6 +1543,7 @@ internal sealed class SqlStructurePreview
             control.ResizeCompleted -= OnResizeCompleted;
             control.SizeResetRequested -= OnSizeResetRequested;
             control.CloseRequested -= OnCloseRequested;
+            control.Dispose();
             _control = null;
         }
 

@@ -18,20 +18,32 @@ public static class SuggestionMatcher
     /// <remarks>
     /// 每一層的倍率都大於它底下所有層的最大總和，因此低層只在高層打平時才說得上話：
     ///
-    ///   比對品質（8192／分） ＞ 最近用過（3072） ＞ 類別（最多 40×64＝2560） ＞ 名稱長度（最多 63）
+    ///   比對品質（8192／分） ＞ 類別（最多 40×128＝5120） ＞ 最近用過（64） ＞ 名稱長度（最多 63）
     ///
     /// 這個關係必須維持。倍率一旦太靠近，低層就會翻過高層——曾經
     /// 長度懲罰上限 64、類別加成最多 40，兩者同一量級，於是
     /// <c>USER_ACCOUNT_HISTORY_DETAIL</c>（欄位 35−27＝8）輸給
     /// <c>USERS</c>（資料表 20−5＝15），正好違反「欄位優先於資料表」。
+    ///
+    /// 「最近用過」曾經壓在類別之上，而那條規則在真實的編輯順序下必定反過來咬人：
+    /// 使用者剛從清單裡挑完 <c>FROM dbo.Loan l, dbo.Copy c</c>，游標一移到
+    /// <c>SET |</c> 或 <c>WHERE |</c>，那幾張表就全部帶著加成排在敘述自己的欄位
+    /// 前面——而他要的正是欄位。類別說的是「這個位置文法上要什麼」，
+    /// 使用紀錄只是跨敘述的猜測，猜測不該翻過眼前這句話的證據。
+    /// 降到類別之下，它仍然做原本真正有價值的那件事：同一類別內把常用的拉到前面。
     /// </remarks>
     private const int FuzzyScoreScale = 8192;
 
-    /// <summary>最近提交過的加成；壓得過類別偏好，壓不過更好的比對品質。</summary>
-    private const int RecentlyUsedBonus = 3072;
+    /// <summary>
+    /// 最近提交過的加成。
+    /// </summary>
+    /// <remarks>
+    /// 壓得過名稱長度，壓不過類別偏好：它排的是「同一類別裡先看哪一個」。
+    /// </remarks>
+    private const int RecentlyUsedBonus = 64;
 
-    /// <summary>類別偏好的倍率。</summary>
-    private const int KindBonusScale = 64;
+    /// <summary>類別偏好的倍率；要大於最近用過加成與長度懲罰的總和。</summary>
+    private const int KindBonusScale = 128;
 
     /// <summary>長度懲罰的上限，避免超長物件名稱把分數拉到失真。</summary>
     private const int MaximumLengthPenalty = 63;
@@ -78,9 +90,7 @@ public static class SuggestionMatcher
 
         foreach (var suggestion in suggestions)
         {
-            if (!IsAllowedForTarget(suggestion.Kind, context.Target) ||
-                !IsAllowedForPosition(suggestion, context) ||
-                !IsAllowedForSchema(suggestion, context))
+            if (!IsAllowed(suggestion, context))
             {
                 continue;
             }
@@ -143,9 +153,7 @@ public static class SuggestionMatcher
 
         foreach (var suggestion in suggestions)
         {
-            if (IsAllowedForTarget(suggestion.Kind, context.Target) &&
-                IsAllowedForPosition(suggestion, context) &&
-                IsAllowedForSchema(suggestion, context))
+            if (IsAllowed(suggestion, context))
             {
                 results.Add(suggestion);
             }
@@ -221,7 +229,7 @@ public static class SuggestionMatcher
 
     /// <summary>
     /// 類別偏好；由 <see cref="KindBonusScale"/> 放大成一個層級，
-    /// 只在比對品質與最近使用都打平時決定順序。
+    /// 只在比對品質打平時決定順序，並壓過最近使用與名稱長度。
     /// </summary>
     private static int KindBonus(SuggestionKind kind)
     {
@@ -247,6 +255,13 @@ public static class SuggestionMatcher
             SuggestionKind.DatePart => 25,
             SuggestionKind.TableHint => 25,
             SuggestionKind.QueryHint => 25,
+            SuggestionKind.Collation => 25,
+
+            // 唯一與同類別比大小的一個：COLLATE 之後那份清單有五千多筆，
+            // 而名稱長得幾乎一樣（只差 _CI_AS、_CS_AS 這種尾巴），模糊比對的
+            // 順序沒有意義。目前資料庫的定序與這份指令碼已經寫過的那一個
+            // 排在前面，其餘照舊——差一個層級就壓得過長度懲罰與最近使用。
+            SuggestionKind.CollationInUse => 30,
 
             // 自訂型別排在內建型別之上：DECLARE @t | 打出前綴時，
             // 使用者要的是自己那一個，內建型別他背得起來。
@@ -272,11 +287,35 @@ public static class SuggestionMatcher
 
             // 這兩類排在最底：它們與資料表競爭 FROM 之後那一格，而那裡使用者要的
             // 幾乎都是目前這個資料庫的表。USE 之後沒有別的東西跟資料庫競爭，
-            // 所以壓低不影響那個位置——常用的那幾個會被使用紀錄自己拉上來。
+            // 所以壓低不影響那個位置——同一類別裡常用的那幾個仍會被使用紀錄拉上來。
             SuggestionKind.Database => 9,
             SuggestionKind.LinkedServer => 8,
             _ => 0
         };
+    }
+
+    /// <summary>上下文過濾；<see cref="Rank"/> 與 <see cref="Filter"/> 共用這一份。</summary>
+    private static bool IsAllowed(SqlSuggestion suggestion, SqlCompletionContext context)
+    {
+        return IsAllowedForTarget(suggestion.Kind, context.Target) &&
+               IsAllowedForPosition(suggestion, context) &&
+               IsAllowedForSchema(suggestion, context) &&
+               IsAllowedSystemSchema(suggestion, context);
+    }
+
+    /// <summary>
+    /// <c>sys</c> 與 <c>INFORMATION_SCHEMA</c> 只出現在拿得到系統物件的位置。
+    /// </summary>
+    /// <remarks>
+    /// 哪些位置算數是上下文的判斷（<see cref="SqlCompletionContext.WantsSystemSchemas"/>），
+    /// 這裡只負責套用。認的是名稱而不是來源：第一層查詢不收這兩個結構描述，
+    /// 但哪天收了，同一條規則照樣成立。
+    /// </remarks>
+    private static bool IsAllowedSystemSchema(SqlSuggestion suggestion, SqlCompletionContext context)
+    {
+        return suggestion.Kind != SuggestionKind.Schema ||
+               context.WantsSystemSchemas ||
+               !SqlSystemSchemas.IsSystem(suggestion.DisplayText);
     }
 
     private static bool IsAllowedForTarget(SuggestionKind kind, CompletionTarget target)
@@ -285,7 +324,12 @@ public static class SuggestionMatcher
         // 多段式名稱的位置就該有它們，而那是由「這個位置接不接得住一個物件」
         // 決定的，不是由目標的名字決定的——逐個目標補的話，漏掉的那一個
         // 沒有徵兆：使用者只會看到「這裡沒有建議」，而語法明明合法。
-        if (kind is SuggestionKind.Database or SuggestionKind.LinkedServer)
+        //
+        // 結構描述是同一種東西的第二段，規則相同。曾經只補了前兩類，於是
+        // FROM／EXEC／APPLY 之後列得出 LibArchive 卻列不出 dbo 與 INFORMATION_SCHEMA。
+        if (kind is SuggestionKind.Database
+            or SuggestionKind.LinkedServer
+            or SuggestionKind.Schema)
         {
             return IsQualifiedNameStart(kind, target);
         }
@@ -298,15 +342,13 @@ public static class SuggestionMatcher
             // 資料表值函式也在這裡：FROM dbo.fn_LoansByReader(1) 是合法的資料來源，
             // 而中繼資料層的 SqlObjectKinds.IsDataSource 早就這樣認了。
             // 連結伺服器與資料庫也在這裡：四段式名稱是合法的資料來源，而它的
-            // 第一、二段就長這樣。它們能不能出現在游標<b>這一格</b>是另一個問題，
-            // 由 IsAllowedForSchema 依限定字停在哪一格決定——這裡只說
-            // 「這個目標接不接得住這個類別」。
+            // 第一、二段在上面的 IsQualifiedNameStart 就已經放行；它們能不能出現在
+            // 游標<b>這一格</b>是另一個問題，由 IsAllowedForSchema 依限定字停在哪一格
+            // 決定——這裡只說「這個目標接不接得住這個類別」。
             CompletionTarget.DataSource => kind is SuggestionKind.Table
                 or SuggestionKind.View
                 or SuggestionKind.TableFunction
-                or SuggestionKind.ScriptDataSource
-                or SuggestionKind.LinkedServer
-                or SuggestionKind.Database,
+                or SuggestionKind.ScriptDataSource,
             CompletionTarget.Procedure => kind == SuggestionKind.Procedure,
 
             // ALTER／DROP FUNCTION 兩種函式都改得動也刪得掉。
@@ -330,6 +372,11 @@ public static class SuggestionMatcher
             CompletionTarget.TableHint => kind == SuggestionKind.TableHint,
             CompletionTarget.QueryHint => kind == SuggestionKind.QueryHint,
 
+            // 兩類是同一種東西、不同的來源，排名才分開；能不能出現在這個位置
+            // 沒有差別。
+            CompletionTarget.Collation => kind is SuggestionKind.Collation
+                or SuggestionKind.CollationInUse,
+
             // 沒有限定字時仍然可以有欄位：SELECT | FROM PUBLISHER a 這種位置，
             // 敘述裡看得到的欄位比整個資料庫的物件清單更接近使用者要的東西。
             // 候選清單是依上下文組出來的，沒有範圍就不會有欄位，這裡不必再擋。
@@ -345,7 +392,9 @@ public static class SuggestionMatcher
                 or SuggestionKind.Sequence
                 or SuggestionKind.DatePart
                 or SuggestionKind.TableHint
-                or SuggestionKind.QueryHint)
+                or SuggestionKind.QueryHint
+                or SuggestionKind.Collation
+                or SuggestionKind.CollationInUse)
         };
     }
 
@@ -382,7 +431,7 @@ public static class SuggestionMatcher
     /// </summary>
     /// <remarks>
     /// 關鍵字、內建函式與 Snippet 各自帶著旗標比對。Snippet 在只有三筆時也是 Any，
-    /// 擴充到 45 筆後必須共用這套過濾，否則 CREATE TABLE 會出現在 SELECT 欄位清單
+    /// 擴充到 49 筆後必須共用這套過濾，否則 CREATE TABLE 會出現在 SELECT 欄位清單
     /// 中間；內建函式一起收在這裡的理由相同：語句開頭與 DDL 物件位置不該冒出
     /// <c>COUNT</c>。
     ///
@@ -422,7 +471,8 @@ public static class SuggestionMatcher
     /// 一份一定比不中的名單。
     ///
     /// <c>USE</c> 是唯一的特例：那裡的資料庫名稱是整句的<b>終點</b>而不是名稱的
-    /// 第一段，而連結伺服器在那裡根本接不上（<c>USE</c> 換不了伺服器）。
+    /// 第一段，連結伺服器與結構描述在那裡根本接不上（<c>USE</c> 換不了伺服器，
+    /// 也不接結構描述）。
     /// </remarks>
     private static bool IsQualifiedNameStart(SuggestionKind kind, CompletionTarget target)
     {

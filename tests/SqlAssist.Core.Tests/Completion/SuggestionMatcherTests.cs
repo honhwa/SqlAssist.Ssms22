@@ -136,8 +136,11 @@ public sealed class SuggestionMatcherTests
         Assert.Equal("Loan", ranked[0]);
     }
 
+    /// <remarks>
+    /// 結構描述是名稱的第二段，也在這個位置；預存程序與片段不在。
+    /// </remarks>
     [Fact]
-    public void FROM之後只顯示資料表與View()
+    public void FROM之後只顯示資料來源與結構描述()
     {
         var candidates = BuiltInSuggestionCatalog.Create(SqlSnippetDefaults.Current)
             .Concat(new[] { Table("Publisher"), Procedure("usp_Publisher") })
@@ -148,7 +151,9 @@ public sealed class SuggestionMatcherTests
             SqlCompletionContextAnalyzer.Analyze("SELECT * FROM "));
 
         Assert.NotEmpty(ranked);
-        Assert.All(ranked, item => Assert.Equal(SuggestionKind.Table, item.Suggestion.Kind));
+        Assert.All(ranked, item => Assert.Contains(
+            item.Suggestion.Kind,
+            new[] { SuggestionKind.Table, SuggestionKind.Schema }));
     }
 
     [Fact]
@@ -304,14 +309,19 @@ public sealed class SuggestionMatcherTests
     }
 
     /// <summary>
-    /// 最近用過壓得過類別偏好，壓不過更好的比對品質。
+    /// 最近用過壓不過類別偏好，也壓不過更好的比對品質。
     /// </summary>
     /// <remarks>
-    /// 前者：資料表排到欄位之前。後者：<c>publ</c> 之下，
-    /// 真正以它開頭的候選項仍要贏過只是包含這幾個字母的那一個。
+    /// 前者：剛提交過的資料表仍然排在敘述自己的欄位之後。這正是編輯的實際順序
+    /// ——使用者才剛從清單裡挑完 FROM 後面那幾張表，游標一移到 SET 或 WHERE，
+    /// 那幾張表就會帶著加成蓋住他真正要挑的欄位。類別說的是「這個位置文法上要
+    /// 什麼」，使用紀錄只是跨敘述的猜測，猜測不該翻過眼前這句話的證據。
+    ///
+    /// 後者：<c>publ</c> 之下，真正以它開頭的候選項仍要贏過只是包含這幾個字母的
+    /// 那一個。
     /// </remarks>
     [Fact]
-    public void 最近用過壓得過類別但壓不過比對品質()
+    public void 最近用過壓不過類別也壓不過比對品質()
     {
         SqlSuggestionUsage.Clear();
 
@@ -319,9 +329,9 @@ public sealed class SuggestionMatcherTests
         {
             SqlSuggestionUsage.Record(Table("PUBLCODE"));
             Assert.Equal(
-                SuggestionKind.Table,
+                SuggestionKind.Column,
                 SuggestionMatcher.Rank(
-                    new[] { Column("PUBLCODE"), Table("PUBLCODE") },
+                    new[] { Table("PUBLCODE"), Column("PUBLCODE") },
                     SqlCompletionContextAnalyzer.Analyze("SELECT publcode"))[0].Suggestion.Kind);
 
             SqlSuggestionUsage.Clear();

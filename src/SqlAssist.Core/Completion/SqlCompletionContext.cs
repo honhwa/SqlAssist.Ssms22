@@ -24,8 +24,7 @@ public sealed class SqlCompletionContext
         IReadOnlyList<SqlColumnSource>? scopeSources = null,
         IReadOnlyList<SqlSuggestion>? scriptSources = null,
         SqlExecutedModule? executedModule = null,
-        int qualifierStart = -1,
-        bool mayAppendTableAlias = false)
+        int qualifierStart = -1)
     {
         ScriptSources = scriptSources ?? NoScriptSources;
         IsValid = isValid;
@@ -40,7 +39,6 @@ public sealed class SqlCompletionContext
         ScopeSources = scopeSources ?? NoSources;
         ExecutedModule = executedModule;
         QualifierStart = qualifierStart;
-        MayAppendTableAlias = mayAppendTableAlias;
     }
 
     public bool IsValid { get; }
@@ -153,8 +151,28 @@ public sealed class SqlCompletionContext
     /// </remarks>
     public bool WantsSystemObjects =>
         (Target == CompletionTarget.Procedure && Intent == CompletionIntent.ExecuteCall) ||
-        string.Equals(Qualifier, "sys", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(Qualifier, "INFORMATION_SCHEMA", StringComparison.OrdinalIgnoreCase);
+        SqlSystemSchemas.IsSystem(Qualifier);
+
+    /// <summary>
+    /// 這個位置要不要把 <c>sys</c> 與 <c>INFORMATION_SCHEMA</c> 兩個結構描述列進清單。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="WantsSystemObjects"/> 是兩個問題：那一個問「要不要花一輪查詢把
+    /// 一兩千個系統物件拉進來」，這一個只問兩筆名稱該不該出現，好讓使用者打
+    /// <c>FROM info</c> 就選得到 <c>INFORMATION_SCHEMA</c>，再打點號才去拉那一份。
+    ///
+    /// 列的是<b>接得到</b>系統物件的位置：資料來源、<c>APPLY</c>
+    /// （<c>sys.dm_exec_sql_text</c>）、<c>EXEC</c> 與運算式。<c>ALTER</c>／<c>DROP</c>
+    /// 的函式、檢視、預存程序不算，理由與 <see cref="WantsSystemObjects"/> 排除
+    /// <c>ALTER PROCEDURE</c> 相同：系統物件改不動也刪不掉。序列也不算，
+    /// 那兩個結構描述底下沒有序列。
+    /// </remarks>
+    public bool WantsSystemSchemas => Target switch
+    {
+        CompletionTarget.Any or CompletionTarget.DataSource or CompletionTarget.TableFunction => true,
+        CompletionTarget.Procedure => Intent == CompletionIntent.ExecuteCall,
+        _ => false
+    };
 
     /// <summary>
     /// 決定 <see cref="Target"/> 的關鍵字在原文中的起點，例如 <c>ALTER PROCEDURE</c> 的
@@ -177,21 +195,6 @@ public sealed class SqlCompletionContext
     /// </remarks>
     public SqlKeywordPosition KeywordPosition { get; }
 
-    /// <summary>
-    /// 游標正停在「資料來源名稱」的位置——補上物件之後，文法上可以自動接別名
-    /// 的那一種位置（FROM／JOIN／APPLY／USING 之後，或它們的逗號清單裡）。
-    /// </summary>
-    /// <remarks>
-    /// 刻意不從 <see cref="Target"/> 推導：INSERT INTO 的目標表與 DROP TABLE
-    /// 的名稱一樣是 <see cref="CompletionTarget.DataSource"/>，文法上卻都不接受
-    /// 別名，所以判斷放在上下文這一層，讓每一條使用路徑共用同一份答案。
-    ///
-    /// 它與「別名還沒寫」的判斷（<see cref="SqlKeywordPositionAnalyzer"/>）互補：
-    /// 那是在名稱<b>已經在</b>、等著寫別名的位置，而建議提交發生在名稱還是一片
-    /// 空白或只打了前幾個字的時候——中間空掉的那一格就是這個旗標。
-    /// </remarks>
-    public bool MayAppendTableAlias { get; }
-
     /// <summary>複製這個上下文，補上敘述看得到的欄位來源。</summary>
     internal SqlCompletionContext WithScopeSources(IReadOnlyList<SqlColumnSource> sources)
     {
@@ -208,8 +211,7 @@ public sealed class SqlCompletionContext
             sources,
             ScriptSources,
             ExecutedModule,
-            QualifierStart,
-            MayAppendTableAlias);
+            QualifierStart);
     }
 
     /// <summary>複製這個上下文，補上指令碼自己宣告的資料來源。</summary>
@@ -228,8 +230,7 @@ public sealed class SqlCompletionContext
             ScopeSources,
             sources,
             ExecutedModule,
-            QualifierStart,
-            MayAppendTableAlias);
+            QualifierStart);
     }
 
     /// <summary>複製這個上下文，換上重新對齊過的限定字。</summary>
@@ -255,8 +256,7 @@ public sealed class SqlCompletionContext
             ScopeSources,
             ScriptSources,
             ExecutedModule,
-            QualifierStart,
-            MayAppendTableAlias);
+            QualifierStart);
     }
 
     /// <summary>複製這個上下文，改以欄位為建議目標。</summary>
@@ -275,7 +275,6 @@ public sealed class SqlCompletionContext
             ScopeSources,
             ScriptSources,
             ExecutedModule,
-            QualifierStart,
-            MayAppendTableAlias);
+            QualifierStart);
     }
 }

@@ -1,8 +1,10 @@
 using System;
 using Microsoft.Internal.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Utilities.UnifiedSettings;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Core.Settings;
 using SqlAssist.Ssms22;
+using SqlAssist.Ssms22.UI;
 
 namespace SqlAssist.Ssms22.Settings;
 
@@ -37,6 +39,9 @@ internal static class SqlAssistSettingsStore
 
     /// <summary>目前生效的設定。任何時候都可以讀，不會回傳 null。</summary>
     public static SqlAssistSettings Current => _current;
+
+    /// <summary>可能由背景執行緒通知；呈現層必須派送至其 UI 執行緒並於關閉時解除訂閱。</summary>
+    public static event EventHandler? Changed;
 
     /// <summary>是否已接上 SSMS Unified Settings；否則 <see cref="Current"/> 是內建預設值。</summary>
     public static bool IsConnected => _reader is not null;
@@ -81,6 +86,7 @@ internal static class SqlAssistSettingsStore
 
                         var reader = _manager.GetReader();
                         _current = SqlAssistSettingsReader.Read(new UnifiedSettingsSource(reader));
+                        NotifyChanged();
                         _reader = reader;
 
                         // 訂閱回呼可能來自任何執行緒；這裡只換掉一個 volatile 欄位，
@@ -102,9 +108,9 @@ internal static class SqlAssistSettingsStore
     /// 套件卸載時解除訂閱；訂閱物件活到這裡為止。
     /// </summary>
     /// <remarks>
-    /// 順便把 SSMS 的語言偏好還原。那是唯一一個寫在擴充之外的狀態，
-    /// 而 SSMS 22 的設定 UI 沒有暴露它——不還原的話，解除安裝之後
-    /// 內建清單就永遠不會再彈出來，而且使用者找不到地方改回去。
+    /// 順便把 SSMS 的語言偏好還原。那是唯一一個寫在擴充之外的狀態——
+    /// 不還原的話，解除安裝之後內建清單就不會再彈出來，得由使用者自己回設定頁
+    /// 把「自動列出成員」勾回來。
     /// 下一次啟動會在套件載入時重新套用，所以還原不會讓設定失效。
     /// </remarks>
     public static void Shutdown()
@@ -209,14 +215,35 @@ internal static class SqlAssistSettingsStore
             return;
         }
 
+        // 設定頁按下去與殼層自己推的更新走同一條路，分不出誰觸發的；
+        // 一律標 Ambient，讓它跟著詳細度門檻走而不是無條件顯示。
+        using var notification = NotificationCenter.Default.Begin(NotificationCatalog.ReloadingSettings,
+            NotificationKind.Settings, NotificationOrigin.Ambient, NotificationLevel.Debug);
         // 保留上一份可用的快照，總比切回預設值讓使用者的設定突然失效好。
-        SqlAssistPlatformGuard.Run(
-            "重新讀取設定",
-            () => _current = SqlAssistSettingsReader.Read(new UnifiedSettingsSource(reader)));
+        if (!SqlAssistPlatformGuard.Run(
+                "重新讀取設定",
+                () =>
+                {
+                    _current = SqlAssistSettingsReader.Read(new UnifiedSettingsSource(reader));
+                    return true;
+                },
+                fallback: false))
+        {
+            notification.Fail();
+        }
 
-        // 其餘設定放著等人來讀就好，只有這一個要推到擴充外面去。
+        NotifyChanged();
+        // 語言偏好還要推到擴充外面去。
         // 少了這一行，勾掉「只使用 SqlAssist 的建議清單」要重開 SSMS 才會生效。
         NativeMemberList.ApplyFromSettings();
+    }
+
+    private static void NotifyChanged()
+    {
+        SqlAssistChrome.UseSettings(_current);
+        if (Changed is not { } handlers) return;
+        foreach (EventHandler handler in handlers.GetInvocationList())
+            SqlAssistPlatformGuard.Run("通知設定變更", () => handler(null, EventArgs.Empty));
     }
 
     /// <summary>

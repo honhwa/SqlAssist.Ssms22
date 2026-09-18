@@ -12,6 +12,10 @@ namespace SqlAssist.Core.Settings;
 /// </remarks>
 public static class SqlAssistLimits
 {
+    public static int ClampNotificationTime(int value, int minimum) => System.Math.Max(minimum, System.Math.Min(30000, value));
+    public const int DefaultBlockDebounce = 150;
+    public static int ClampBlockDebounce(int value) => Clamp(value, 50, 2000);
+
     public const int MinimumTriggerCharacters = 1;
 
     public const int MaximumTriggerCharacters = 10;
@@ -72,6 +76,82 @@ public static class SqlAssistLimits
 
     public static double ClampPreviewHeight(double value) =>
         Clamp(value, MinimumPreviewHeight, MaximumPreviewHeight, DefaultPreviewHeight);
+
+    /// <summary>停止輸入多久之後記下草稿；再短就變成每按一次鍵排一次工作。</summary>
+    public const int MinimumSqlMemoryIdleSeconds = 1;
+
+    public const int MaximumSqlMemoryIdleSeconds = 120;
+
+    public const int DefaultSqlMemoryIdleSeconds = 5;
+
+    public const int MinimumSqlMemoryAutoRevisionMinutes = 1;
+
+    public const int MaximumSqlMemoryAutoRevisionMinutes = 480;
+
+    public const int DefaultSqlMemoryAutoRevisionMinutes = 10;
+
+    public const int MinimumSqlMemoryRetentionDays = 1;
+
+    /// <summary>十年；再長與「不限」沒有分別，而分級收緊會需要更多輪才追得上容量。</summary>
+    public const int MaximumSqlMemoryRetentionDays = 3650;
+
+    public const int DefaultSqlMemoryDraftRetentionDays = 30;
+
+    public const int DefaultSqlMemoryExecutionRetentionDays = 180;
+
+    /// <summary>未存檔草稿的期限另計；它保護的是當機後還救得回來的內容，不是歷程。</summary>
+    public const int MaximumSqlMemoryRecoveryRetentionDays = 365;
+
+    public const int DefaultSqlMemoryRecoveryRetentionDays = 7;
+
+    public const int MinimumSqlMemoryExecutions = 100;
+
+    public const int MaximumSqlMemoryExecutions = 1000000;
+
+    public const int DefaultSqlMemoryExecutions = 10000;
+
+    public const int MinimumSqlMemorySessionRevisions = 5;
+
+    public const int MaximumSqlMemorySessionRevisions = 5000;
+
+    public const int DefaultSqlMemorySessionRevisions = 50;
+
+    public const int MinimumSqlMemoryFavoriteRevisions = 1;
+
+    public const int MaximumSqlMemoryFavoriteRevisions = 1000;
+
+    public const int DefaultSqlMemoryFavoriteRevisions = 20;
+
+    /// <summary>維護間隔；比五分鐘更密只會讓同一批候選被反覆巡過。</summary>
+    public const int MinimumSqlMemoryMaintenanceMinutes = 5;
+
+    public const int MaximumSqlMemoryMaintenanceMinutes = 1440;
+
+    public const int DefaultSqlMemoryMaintenanceMinutes = 60;
+
+    public static int ClampSqlMemoryIdleSeconds(int value) =>
+        Clamp(value, MinimumSqlMemoryIdleSeconds, MaximumSqlMemoryIdleSeconds);
+
+    public static int ClampSqlMemoryAutoRevisionMinutes(int value) =>
+        Clamp(value, MinimumSqlMemoryAutoRevisionMinutes, MaximumSqlMemoryAutoRevisionMinutes);
+
+    public static int ClampSqlMemoryRetentionDays(int value) =>
+        Clamp(value, MinimumSqlMemoryRetentionDays, MaximumSqlMemoryRetentionDays);
+
+    public static int ClampSqlMemoryRecoveryRetentionDays(int value) =>
+        Clamp(value, MinimumSqlMemoryRetentionDays, MaximumSqlMemoryRecoveryRetentionDays);
+
+    public static int ClampSqlMemoryExecutions(int value) =>
+        Clamp(value, MinimumSqlMemoryExecutions, MaximumSqlMemoryExecutions);
+
+    public static int ClampSqlMemorySessionRevisions(int value) =>
+        Clamp(value, MinimumSqlMemorySessionRevisions, MaximumSqlMemorySessionRevisions);
+
+    public static int ClampSqlMemoryFavoriteRevisions(int value) =>
+        Clamp(value, MinimumSqlMemoryFavoriteRevisions, MaximumSqlMemoryFavoriteRevisions);
+
+    public static int ClampSqlMemoryMaintenanceMinutes(int value) =>
+        Clamp(value, MinimumSqlMemoryMaintenanceMinutes, MaximumSqlMemoryMaintenanceMinutes);
 
     private static int Clamp(int value, int minimum, int maximum) =>
         Math.Min(Math.Max(value, minimum), maximum);

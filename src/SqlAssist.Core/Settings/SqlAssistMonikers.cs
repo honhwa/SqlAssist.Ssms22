@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using SqlAssist.Core.Notifications;
 
 namespace SqlAssist.Core.Settings;
 
@@ -10,7 +11,8 @@ namespace SqlAssist.Core.Settings;
 /// </summary>
 /// <remarks>
 /// Unified Settings 以字串定址，打錯字不會有編譯錯誤，只會在執行期
-/// 安靜地回退到預設值——所以字串只在這裡出現一次。
+/// 安靜地回退到預設值——所以每個字串只寫一次：多數在這裡，通知的種類開關在
+/// <see cref="NotificationKindToggle.All"/> 那張表上，兩邊在 <see cref="All"/> 會合。
 ///
 /// 放在 Core 而不是 SSMS 專案：真正屬於平台的是
 /// <c>ISettingsReader</c> 與 <c>SVsUnifiedSettingsManager</c>，
@@ -19,12 +21,40 @@ namespace SqlAssist.Core.Settings;
 /// </remarks>
 public static class SqlAssistMonikers
 {
+    public const string NotificationEnabled = "sqlAssist.notifications.enabled";
+    public const string NotificationGlass = "sqlAssist.notifications.glass";
+    public const string NotificationExpanded = "sqlAssist.notifications.expanded";
+    public const string NotificationDelay = "sqlAssist.notifications.delay";
+    public const string NotificationRetention = "sqlAssist.notifications.retention";
+    public const string NotificationVerbosity = "sqlAssist.notifications.verbosity";
+    public const string NotificationFailures = "sqlAssist.notifications.failures";
+    public const string NotificationDegraded = "sqlAssist.notifications.degraded";
     /// <summary>整個分類的前綴；「設定…」命令用它定位設定頁，也是 <see cref="All"/> 的篩選條件。</summary>
     public const string Category = "sqlAssist";
 
     public const string Enabled = "sqlAssist.general.enabled";
+    public const string BlockMatchingEnabled = "sqlAssist.blocks.enabled";
+    public const string BlockKeywordHighlight = "sqlAssist.blocks.keywordHighlight";
+    public const string BlockKeywordForeground = "sqlAssist.blocks.keywordForeground";
+    public const string BlockKeywordBackground = "sqlAssist.blocks.keywordBackground";
+    public const string BlockSymbolForeground = "sqlAssist.blocks.symbolForeground";
+    public const string BlockSymbolBackground = "sqlAssist.blocks.symbolBackground";
+    public const string BlockRangeBackground = "sqlAssist.blocks.rangeBackground";
+    public const string BlockRangeInside = "sqlAssist.blocks.rangeInside";
+    public const string BlockAccentColor = "sqlAssist.blocks.accentColor";
+    public const string BlockStructure = "sqlAssist.blocks.structure";
+    public const string BlockOutlining = "sqlAssist.blocks.outlining";
+    public const string BlockGlyphs = "sqlAssist.blocks.glyphs";
+    public const string BlockOverview = "sqlAssist.blocks.overview";
+    public const string BlockContextHint = "sqlAssist.blocks.contextHint";
+    public const string BlockSameLineBackground = "sqlAssist.blocks.sameLineBackground";
+    public const string BlockMatchParentheses = "sqlAssist.blocks.matchParentheses";
+    public const string BlockMatchCase = "sqlAssist.blocks.matchCase";
+    public const string BlockDebounce = "sqlAssist.blocks.debounce";
     public const string UppercaseKeywordsOnType = "sqlAssist.general.uppercaseKeywordsOnType";
     public const string AutoPairDelimiters = "sqlAssist.general.autoPairDelimiters";
+    public const string Animations = "sqlAssist.general.animations";
+    public const string IgnoreWindowsAnimationSetting = "sqlAssist.general.ignoreWindowsAnimationSetting";
 
     public const string SuggestionsEnabled = "sqlAssist.suggestions.enabled";
     public const string SuppressNativeMemberList = "sqlAssist.suggestions.suppressNativeMemberList";
@@ -35,7 +65,6 @@ public static class SqlAssistMonikers
 
     public const string QualifyObjectNames = "sqlAssist.insertion.qualifyObjectNames";
     public const string UseSquareBrackets = "sqlAssist.insertion.useSquareBrackets";
-    public const string TableSourceAliasStyle = "sqlAssist.insertion.tableSourceAliasStyle";
     public const string ExpandWildcardOnTab = "sqlAssist.insertion.expandWildcardOnTab";
     public const string WildcardLayout = "sqlAssist.insertion.wildcardLayout";
     public const string ExpandAlterDefinition = "sqlAssist.insertion.expandAlterDefinition";
@@ -44,12 +73,36 @@ public static class SqlAssistMonikers
     public const string ExpandProcedureCall = "sqlAssist.insertion.expandProcedureCall";
     public const string IncludeOptionalParameters = "sqlAssist.insertion.includeOptionalParameters";
     public const string ExpandFunctionCall = "sqlAssist.insertion.expandFunctionCall";
+    public const string ExpandFunctionArguments = "sqlAssist.insertion.expandFunctionArguments";
 
     public const string HoverEnabled = "sqlAssist.structure.hoverEnabled";
+    public const string BuiltInHelp = "sqlAssist.structure.builtInHelp";
+    public const string ParameterHint = "sqlAssist.structure.parameterHint";
     public const string PreviewMode = "sqlAssist.structure.previewMode";
     public const string PreviewDelay = "sqlAssist.structure.previewDelay";
     public const string PreviewPlacement = "sqlAssist.structure.previewPlacement";
     public const string PreviewFontSize = "sqlAssist.structure.previewFontSize";
+    public const string ScriptStyle = "sqlAssist.structure.scriptStyle";
+    public const string ScriptIncludeExtendedProperties =
+        "sqlAssist.structure.scriptIncludeExtendedProperties";
+    public const string ScriptIncludeAnalyzerComments =
+        "sqlAssist.structure.scriptIncludeAnalyzerComments";
+    public const string ScriptIncludeHeaderComment = "sqlAssist.structure.scriptIncludeHeaderComment";
+
+    public const string SqlMemoryEnabled = "sqlAssist.sqlMemory.enabled";
+    public const string SqlMemoryCaptureExecuted = "sqlAssist.sqlMemory.captureExecuted";
+    public const string SqlMemoryCaptureDrafts = "sqlAssist.sqlMemory.captureDrafts";
+    public const string SqlMemoryCaptureRecovery = "sqlAssist.sqlMemory.captureRecovery";
+    public const string SqlMemoryIdleSeconds = "sqlAssist.sqlMemory.idleSeconds";
+    public const string SqlMemoryAutoRevisionMinutes = "sqlAssist.sqlMemory.autoRevisionMinutes";
+    public const string SqlMemoryDraftRetentionDays = "sqlAssist.sqlMemory.draftRetentionDays";
+    public const string SqlMemoryExecutionRetentionDays = "sqlAssist.sqlMemory.executionRetentionDays";
+    public const string SqlMemoryRecoveryRetentionDays = "sqlAssist.sqlMemory.recoveryRetentionDays";
+    public const string SqlMemoryMaxExecutions = "sqlAssist.sqlMemory.maxExecutions";
+    public const string SqlMemoryMaxSessionRevisions = "sqlAssist.sqlMemory.maxSessionRevisions";
+    public const string SqlMemoryMaxFavoriteRevisions = "sqlAssist.sqlMemory.maxFavoriteRevisions";
+    public const string SqlMemoryStorageLimit = "sqlAssist.sqlMemory.storageLimit";
+    public const string SqlMemoryMaintenanceMinutes = "sqlAssist.sqlMemory.maintenanceMinutes";
 
     public const string VerboseLogging = "sqlAssist.diagnostics.verboseLogging";
 
@@ -75,6 +128,9 @@ public static class SqlAssistMonikers
     /// <remarks>
     /// 由上面的常數反射產生，而不是再手寫一次清單：手寫的版本漏掉一個
     /// 不會有任何徵兆，只會變成「改了設定要重開查詢視窗才生效」。
+    /// 通知的種類開關是表驅動的，moniker 寫在
+    /// <see cref="NotificationKindToggle.All"/>，在這裡併進來——所以新增一個種類
+    /// 仍然不必回頭改這個檔案。
     /// 只在型別初始化時跑一次。
     /// </remarks>
     public static readonly string[] All = Discover();
@@ -83,12 +139,19 @@ public static class SqlAssistMonikers
     {
         var prefix = Category + ".";
 
-        return typeof(SqlAssistMonikers)
+        var declared = typeof(SqlAssistMonikers)
             .GetFields(BindingFlags.Public | BindingFlags.Static)
             .Where(field => field.IsLiteral && field.FieldType == typeof(string))
             .Select(field => (string?)field.GetRawConstantValue())
-            .Where(moniker => moniker is not null && moniker.StartsWith(prefix, StringComparison.Ordinal))
-            .Select(moniker => moniker!)
+            .Where(moniker => moniker is not null)
+            .Select(moniker => moniker!);
+
+        var kinds = NotificationKindToggle.All.Select(toggle => toggle.Moniker);
+
+        return declared
+            .Concat(kinds)
+            .Where(moniker => moniker.StartsWith(prefix, StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
             .OrderBy(moniker => moniker, StringComparer.Ordinal)
             .ToArray();
     }

@@ -91,11 +91,21 @@ function Test-Placement {
 }
 
 foreach ($menu in $vsct.SelectNodes('//ct:Menus/ct:Menu', $ns)) {
+    # Toolbar 是殼層根表面，不是子選單；VSCT 官方契約不要求 Parent。
+    if ($menu.type -eq 'Toolbar' -and $null -eq $menu.SelectSingleNode('ct:Parent', $ns)) {
+        continue
+    }
     Test-Placement -Node $menu -Kind 'Menu' -ExpectedParentKind 'Group' -OwnIdsOfExpectedKind $ownGroupIds
 }
 
 foreach ($button in $vsct.SelectNodes('//ct:Buttons/ct:Button', $ns)) {
     Test-Placement -Node $button -Kind 'Button' -ExpectedParentKind 'Group' -OwnIdsOfExpectedKind $ownGroupIds
+}
+
+# 同一個命令的第二個位置是用 CommandPlacement 接的，掛錯層的症狀與按鈕一樣安靜：
+# 那個入口就是不出現，而原本那個照常能按，看起來只像「右鍵選單沒做出來」。
+foreach ($placement in $vsct.SelectNodes('//ct:CommandPlacements/ct:CommandPlacement', $ns)) {
+    Test-Placement -Node $placement -Kind 'CommandPlacement' -ExpectedParentKind 'Group' -OwnIdsOfExpectedKind $ownGroupIds
 }
 
 
@@ -134,7 +144,8 @@ foreach ($button in $vsct.SelectNodes('//ct:Buttons/ct:Button', $ns)) {
 $declaredIds = @($vsct.SelectNodes('//ct:Symbols/ct:GuidSymbol[@name="guidSqlAssistCommandSet"]/ct:IDSymbol', $ns) |
     ForEach-Object { $_.name })
 $usedIds = @($ownGroupIds) + @($ownMenuIds) +
-    @($vsct.SelectNodes('//ct:Buttons/ct:Button', $ns) | ForEach-Object { $_.id })
+    @($vsct.SelectNodes('//ct:Buttons/ct:Button', $ns) | ForEach-Object { $_.id }) +
+    @($vsct.SelectNodes('//ct:CommandPlacements/ct:CommandPlacement', $ns) | ForEach-Object { $_.id })
 
 foreach ($id in $usedIds) {
     if ($id -notin $declaredIds) {
@@ -226,6 +237,30 @@ foreach ($match in [regex]::Matches($commandsText, 'AddCommand\(\s*CommandIds\.(
     }
 }
 
+# 「選項 → 環境 → 鍵盤」顯示的是命令表裡的正式名稱：沒有 CanonicalName 與
+# LocCanonicalName 時，殼層只照選單路徑推出「工具.移至定義」這種名字，名稱裡沒有
+# SqlAssist 字樣，使用者搜不到也就改不了鍵。而且元素名稱寫錯（例如
+# LocalizedCanonicalName）會被 vsct 靜靜丟掉——0 錯誤 0 警告，命令表照樣產生。
+# 兩種失敗都只在使用者去翻鍵盤頁時才看得出來，所以在這裡擋。
+$vsctText = Get-Content -LiteralPath $VsctPath -Raw -Encoding UTF8
+
+if ($vsctText -match '<LocalizedCanonicalName') {
+    $problems.Add('命令表用了 LocalizedCanonicalName，VSCT 的元素名稱是 LocCanonicalName；寫錯會被編譯器忽略。')
+}
+
+foreach ($button in $vsct.SelectNodes('//ct:Buttons/ct:Button', $ns)) {
+    foreach ($element in 'CanonicalName', 'LocCanonicalName') {
+        $value = $button.SelectSingleNode("ct:Strings/ct:$element", $ns)
+
+        if (-not $value) {
+            $problems.Add("$($button.id) 沒有 $element，鍵盤頁上會找不到 SqlAssist 這個名字。")
+        }
+        elseif (-not $value.InnerText.StartsWith('SqlAssist.')) {
+            $problems.Add("$($button.id) 的 $element 是「$($value.InnerText)」，必須以 SqlAssist. 開頭才搜得到。")
+        }
+    }
+}
+
 # 註冊檔帶註解（Unified Settings 的載入器接受 JSONC），因此不用 ConvertFrom-Json。
 $jsonOptions = [System.Text.Json.JsonDocumentOptions]::new()
 $jsonOptions.CommentHandling = [System.Text.Json.JsonCommentHandling]::Skip
@@ -295,7 +330,7 @@ else {
         $ssmsMenus = @{
             guidSqlWorkbenchEditorGroup = @{
                 Field = 'GUID_SQLEditorGroup'
-                Ids   = @('IDM_SQLWB_SQLRESGRID_CONTEXT')
+                Ids   = @('IDM_SQLWB_SQLSCRIPT_CONTEXT', 'IDM_SQLWB_SQLRESGRID_CONTEXT')
             }
         }
 

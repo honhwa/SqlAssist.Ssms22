@@ -302,6 +302,7 @@ public static class SqlAssistDiagnosticReport
             SqlAssistActivityKind.FunctionCallExpanded => WithCount("補上函式引數", activity, "個引數"),
             SqlAssistActivityKind.DefinitionOpened => "在新查詢視窗開啟定義",
             SqlAssistActivityKind.ResultGridScripted => "從查詢結果產生指令碼",
+            SqlAssistActivityKind.SqlMemoryOpened => "已從 SQL Memory 開啟 SQL",
             _ => "未知活動"
         };
 
@@ -320,7 +321,12 @@ public static class SqlAssistDiagnosticReport
             return $"{bytes / 1024d:0.#} KB";
         }
 
-        return $"{bytes / (1024d * 1024d):0.#} MB";
+        if (bytes < 1024L * 1024 * 1024)
+        {
+            return $"{bytes / (1024d * 1024d):0.#} MB";
+        }
+
+        return $"{bytes / (1024d * 1024d * 1024d):0.##} GB";
     }
 
     private static SqlAssistHealthCheck MemberListHealth(SqlAssistDiagnosticSnapshot snapshot)

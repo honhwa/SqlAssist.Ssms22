@@ -1,3 +1,7 @@
+using SqlAssist.Core.Notifications;
+using SqlAssist.Core.SqlMemory;
+using SqlAssist.Core.Scripting;
+
 namespace SqlAssist.Core.Settings;
 
 /// <summary>
@@ -14,6 +18,36 @@ namespace SqlAssist.Core.Settings;
 /// </remarks>
 public sealed class SqlAssistSettings
 {
+    public bool NotificationEnabled { get; init; } = true;
+    public bool NotificationGlass { get; init; } = true;
+    public bool NotificationExpanded { get; init; } = true;
+    public int NotificationDelay { get; init; } = 0;
+    public int NotificationRetention { get; init; } = 2500;
+    public NotificationVerbosity NotificationVerbosity { get; init; } = NotificationVerbosity.Normal;
+    /// <summary>各種類的顯示開關；表在 <see cref="NotificationKindToggle.All"/>，這裡不逐項列。</summary>
+    /// <remarks>每一個種類都有一格；關掉之後連使用者自己觸發的那一類也不再上畫面。</remarks>
+    public NotificationKindSwitches NotificationKinds { get; init; } = NotificationKindSwitches.Defaults;
+    public bool NotificationFailures { get; init; } = true;
+    public bool NotificationDegraded { get; init; } = true;
+    public bool BlockMatchingEnabled { get; init; } = true;
+    public bool BlockKeywordHighlight { get; init; } = true;
+    public string BlockKeywordForeground { get; init; } = string.Empty;
+    public string BlockKeywordBackground { get; init; } = string.Empty;
+    public string BlockSymbolForeground { get; init; } = string.Empty;
+    public string BlockSymbolBackground { get; init; } = string.Empty;
+    public bool BlockRangeBackground { get; init; } = true;
+    public bool BlockRangeInside { get; init; } = true;
+    public string BlockAccentColor { get; init; } = string.Empty;
+    public bool BlockStructure { get; init; } = true;
+    public bool BlockOutlining { get; init; }
+    public bool BlockGlyphs { get; init; } = true;
+    public bool BlockOverview { get; init; } = true;
+    public bool BlockContextHint { get; init; } = true;
+    public bool BlockSameLineBackground { get; init; } = true;
+    public bool BlockMatchParentheses { get; init; } = true;
+    public bool BlockMatchCase { get; init; } = true;
+    public int BlockDebounceMilliseconds { get; init; } = SqlAssistLimits.DefaultBlockDebounce;
+
     /// <summary>sqlAssist.general.enabled</summary>
     public bool Enabled { get; init; } = true;
 
@@ -40,6 +74,26 @@ public sealed class SqlAssistSettings
     /// 與「每一次按鍵都要判斷」的分隔字元不是同一個機制。
     /// </remarks>
     public bool AutoPairDelimiters { get; init; } = true;
+
+    /// <summary>
+    /// sqlAssist.general.animations
+    /// </summary>
+    /// <remarks>
+    /// 全套件自製介面的動畫總開關：通知、結構預覽淡入、SQL Memory 的載入圖示與清單停駐。
+    /// 刻意是一個全域開關而不是各表面各一個：分開時只有通知有旋鈕，SQL Memory 的載入圖示
+    /// 被 Windows 動畫設定停住卻無從調整。高對比模式一律不播，與這個值無關。
+    /// </remarks>
+    public bool Animations { get; init; } = true;
+
+    /// <summary>
+    /// sqlAssist.general.ignoreWindowsAnimationSetting
+    /// </summary>
+    /// <remarks>
+    /// 開著時不看 Windows「在 Windows 中顯示動畫」（<c>SystemParameters.ClientAreaAnimation</c>），
+    /// 只由 <see cref="Animations"/> 決定。遠端桌面與效能選項常把那一項關掉，而使用者未必知道
+    /// 那會連帶讓載入圖示停住、看起來像當掉。只影響 SqlAssist，不寫回 Windows。
+    /// </remarks>
+    public bool IgnoreWindowsAnimationSetting { get; init; } = true;
 
     /// <summary>sqlAssist.suggestions.enabled</summary>
     public bool SuggestionsEnabled { get; init; } = true;
@@ -85,17 +139,6 @@ public sealed class SqlAssistSettings
 
     /// <summary>sqlAssist.insertion.useSquareBrackets</summary>
     public bool UseSquareBrackets { get; init; }
-
-    /// <summary>
-    /// sqlAssist.insertion.tableSourceAliasStyle
-    /// </summary>
-    /// <remarks>
-    /// 在 FROM／JOIN／APPLY 等資料來源位置提交資料表、檢視或資料表值函式時，
-    /// 自動在物件名稱後補上別名並留下一個空格。別名取物件名各段的首字母小寫
-    /// （<c>Lib_Reader</c> → <c>lr</c>）；同一個敘述裡已有相同別名時自動加序號
-    /// （<c>lr2</c>）。INSERT INTO 的目標表、DROP TABLE 這種不適用別名的位置不補。
-    /// </remarks>
-    public SqlTableSourceAliasStyle TableSourceAliasStyle { get; init; } = SqlTableSourceAliasStyle.None;
 
     /// <summary>
     /// sqlAssist.insertion.expandWildcardOnTab
@@ -184,18 +227,64 @@ public sealed class SqlAssistSettings
     /// sqlAssist.insertion.expandFunctionCall
     /// </summary>
     /// <remarks>
-    /// 提交一個使用者自訂函式時補上引數清單：<c>SELECT dbo.fn_DueDate(NULL)</c>、
-    /// <c>FROM dbo.fn_LoansByReader(0)</c>。與上面三個分成獨立的開關，理由相同——
-    /// 展開的東西不同，想關掉它的理由也不同：這一個補的是括號與預留值，
-    /// 而括號在 T-SQL 裡本來就非寫不可。
+    /// 提交一個使用者自訂函式時補上一對空括號，游標停在中間：
+    /// <c>SELECT dbo.fn_DueDate(|)</c>、<c>FROM dbo.fn_LoansByReader(|)</c>。
+    /// 預設開著，理由與其他四個展開不同——那四個補的是可以不要的方便，
+    /// 這一個補的是<b>非寫不可</b>的語法：<c>SELECT dbo.fn_DueDate</c> 是語法錯誤，
+    /// 沒有參數的函式也一樣要寫 <c>()</c>。
+    ///
+    /// 括號裡要不要再填預留值由 <see cref="ExpandFunctionArguments"/> 決定；
+    /// 這一個關掉之後那一個就沒有意義了，所以它掛在這一個底下。
     ///
     /// 只管使用者自訂函式。T-SQL 內建函式的左括號寫在建議項自己的插入文字裡
     /// （<c>SqlFunctionCatalog</c>），那一份不查資料庫，也不受這個開關影響。
     /// </remarks>
     public bool ExpandFunctionCall { get; init; } = true;
 
+    /// <summary>
+    /// sqlAssist.insertion.expandFunctionArguments
+    /// </summary>
+    /// <remarks>
+    /// 開著時括號裡再依參數型別填一組預留值：<c>SELECT dbo.fn_DueDate(NULL)</c>、
+    /// <c>FROM dbo.fn_LoansByReader(0, NULL, N'')</c>，游標停在第一個引數上。
+    ///
+    /// 預設<b>關著</b>，與其他四個展開相反。那四個省下來的是使用者本來就要一列一列
+    /// 打出來的東西；這一份預留值只是照型別猜的字面值，接著每一個都要換掉，
+    /// 而且填進去之後游標旁邊站的是 <c>NULL</c> 而不是空括號——參數叫什麼、
+    /// 現在輪到第幾個，反而要自己去別的地方看。空括號留給 SSMS 自己的
+    /// 「陳述式完成 → 參數資訊」接手，那一份知道的比預留值多。
+    ///
+    /// 只在 <see cref="ExpandFunctionCall"/> 開著時有效：括號都不補的話，
+    /// 沒有地方可以放引數。
+    /// </remarks>
+    public bool ExpandFunctionArguments { get; init; }
+
     /// <summary>sqlAssist.structure.hoverEnabled：滑鼠停留提示，與浮動預覽是兩個獨立的表面。</summary>
     public bool HoverEnabled { get; init; } = true;
+
+    /// <summary>
+    /// sqlAssist.structure.builtInHelp：內建名稱的滑鼠停留說明。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="HoverEnabled"/> 分開，因為關掉它的理由不同：物件結構要查中繼資料，
+    /// 內建說明只查一份內嵌資料，不受連線與快取影響。已經熟記 T-SQL 的人只想關掉後者。
+    /// </remarks>
+    public bool BuiltInHelpEnabled { get; init; } = true;
+
+    /// <summary>
+    /// sqlAssist.structure.parameterHint
+    /// </summary>
+    /// <remarks>
+    /// 游標停在使用者自訂函式的引數清單裡時，浮出一行簽章並把目前的引數標成粗體。
+    ///
+    /// 與 <see cref="HoverEnabled"/> 分開，因為兩者的時機相反：那一份要滑鼠停下來，
+    /// 這一份跟著游標走，打字時就在眼前——嫌它擋住程式碼的人想關掉的只有這一個。
+    ///
+    /// 只做<b>純量</b>函式。SSMS 自己的「陳述式完成 → 參數資訊」涵蓋內建函式，
+    /// 以及 <c>FROM</c> 後面的資料表值函式（2026-09 實機量測），那些位置再浮一份
+    /// 是兩個視窗搶同一格；純量函式在運算式位置它一律不給，缺的正是這一格。
+    /// </remarks>
+    public bool ParameterHintEnabled { get; init; } = true;
 
     /// <summary>sqlAssist.structure.previewMode</summary>
     public SqlPreviewMode PreviewMode { get; init; } = SqlPreviewMode.Delay;
@@ -222,6 +311,78 @@ public sealed class SqlAssistSettings
     /// 是要拿去跟查詢視窗裡的程式碼對照的。
     /// </remarks>
     public double PreviewFontSize { get; init; } = SqlAssistLimits.DefaultPreviewFontSize;
+
+    /// <summary>
+    /// sqlAssist.structure.scriptStyle
+    /// </summary>
+    /// <remarks>
+    /// F12 與浮動預覽的指令碼分頁共用這一組。逐項的開關<b>不</b>放進 Unified
+    /// Settings：那是四十幾個旋鈕，而每一個都要動四處並過守門測試，設定頁也會
+    /// 從五項變成五十項。風格是那些開關的具名組合，要再細調的人改的是
+    /// SqlScriptOptions 本身。
+    /// </remarks>
+    public SqlScriptStyle ScriptStyle { get; init; } = SqlScriptStyle.Fidelity;
+
+    /// <summary>sqlAssist.structure.scriptIncludeExtendedProperties</summary>
+    /// <remarks>
+    /// 單獨拉出來是因為它最常被關掉：一張三十個資料行的資料表，說明會佔掉
+    /// 整份指令碼的一半以上，而要的人與不要的人各佔一半。
+    /// </remarks>
+    public bool ScriptIncludeExtendedProperties { get; init; } = true;
+
+    /// <summary>sqlAssist.structure.scriptIncludeAnalyzerComments</summary>
+    public bool ScriptIncludeAnalyzerComments { get; init; }
+
+    /// <summary>sqlAssist.structure.scriptIncludeHeaderComment</summary>
+    public bool ScriptIncludeHeaderComment { get; init; }
+
+    /// <summary>sqlAssist.sqlMemory.enabled</summary>
+    /// <remarks>
+    /// 預設關閉，而且只由使用者打開。這一項管的是「要不要把使用者輸入的 SQL 留在磁碟上」，
+    /// 儲存自我測試通過只證明存得起來，不構成替他決定的理由。
+    /// </remarks>
+    public bool SqlMemoryEnabled { get; init; }
+
+    /// <summary>sqlAssist.sqlMemory.captureExecuted</summary>
+    public bool SqlMemoryCaptureExecuted { get; init; } = true;
+
+    /// <summary>sqlAssist.sqlMemory.captureDrafts</summary>
+    public bool SqlMemoryCaptureDrafts { get; init; } = true;
+
+    /// <summary>sqlAssist.sqlMemory.captureRecovery</summary>
+    public bool SqlMemoryCaptureRecovery { get; init; } = true;
+
+    /// <summary>sqlAssist.sqlMemory.idleSeconds</summary>
+    public int SqlMemoryIdleSeconds { get; init; } = SqlAssistLimits.DefaultSqlMemoryIdleSeconds;
+
+    /// <summary>sqlAssist.sqlMemory.autoRevisionMinutes</summary>
+    public int SqlMemoryAutoRevisionMinutes { get; init; } = SqlAssistLimits.DefaultSqlMemoryAutoRevisionMinutes;
+
+    /// <summary>sqlAssist.sqlMemory.draftRetentionDays</summary>
+    public int SqlMemoryDraftRetentionDays { get; init; } = SqlAssistLimits.DefaultSqlMemoryDraftRetentionDays;
+
+    /// <summary>sqlAssist.sqlMemory.executionRetentionDays</summary>
+    public int SqlMemoryExecutionRetentionDays { get; init; } = SqlAssistLimits.DefaultSqlMemoryExecutionRetentionDays;
+
+    /// <summary>sqlAssist.sqlMemory.recoveryRetentionDays</summary>
+    public int SqlMemoryRecoveryRetentionDays { get; init; } =
+        SqlAssistLimits.DefaultSqlMemoryRecoveryRetentionDays;
+
+    /// <summary>sqlAssist.sqlMemory.maxExecutions</summary>
+    public int SqlMemoryMaxExecutions { get; init; } = SqlAssistLimits.DefaultSqlMemoryExecutions;
+
+    /// <summary>sqlAssist.sqlMemory.maxSessionRevisions</summary>
+    public int SqlMemoryMaxSessionRevisions { get; init; } = SqlAssistLimits.DefaultSqlMemorySessionRevisions;
+
+    /// <summary>sqlAssist.sqlMemory.maxFavoriteRevisions</summary>
+    public int SqlMemoryMaxFavoriteRevisions { get; init; } = SqlAssistLimits.DefaultSqlMemoryFavoriteRevisions;
+
+    /// <summary>sqlAssist.sqlMemory.storageLimit</summary>
+    /// <remarks>屬性不與列舉同名，否則屬性初始設定式無法指名列舉成員。</remarks>
+    public SqlMemoryStorageLimit SqlMemoryStorage { get; init; } = SqlMemoryStorageLimit.Megabytes512;
+
+    /// <summary>sqlAssist.sqlMemory.maintenanceMinutes</summary>
+    public int SqlMemoryMaintenanceMinutes { get; init; } = SqlAssistLimits.DefaultSqlMemoryMaintenanceMinutes;
 
     /// <summary>sqlAssist.diagnostics.verboseLogging</summary>
     public bool VerboseLogging { get; init; }

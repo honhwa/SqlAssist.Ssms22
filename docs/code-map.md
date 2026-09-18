@@ -24,10 +24,12 @@
 | `#tmp`／`@rows` 的欄位列不出來或展不開 | `Core/Parsing/SqlScriptTableCollector.cs` |
 | 程式碼片段的格式或展開行為 | `Core/Snippets/DefaultSnippets.json`、`SqlSnippetExpansion.cs` |
 | 片段合併、override 或存檔 | `SqlSnippetMerger.cs`、`SqlSnippetSerializer.cs` |
+| 包住選取範圍的清單、縮排或觸發 | `Core/Snippets/SqlSnippetSurround.cs`、`Ssms22/Snippets/SqlSnippetSurroundAction.cs` |
 | `SELECT *` 展不開或展錯 | `Core/Wildcards/SqlWildcardAnalyzer.cs` |
 | 展開後的欄位排版 | `Core/Wildcards/SqlWildcardExpansionText.cs` |
 | Tab／Shift+Tab 的行為 | `Ssms22/Editor/SqlTabCommandHandler.cs` |
 | 滑鼠停留提示的內容 | `Ssms22/QuickInfo/SqlQuickInfoContentBuilder.cs` |
+| 函式參數提示浮不出來、粗體停在錯的引數 | `Ssms22/Signatures/SqlSignatureHelp.cs`、`Core/Completion/SqlCallSignature.cs` |
 | 浮動預覽的行為或擺放 | `Ssms22/Preview/SqlStructurePreview.cs` |
 | 任何自製 UI、顏色、字型或排版 | `Ssms22/UI/SqlAssistChrome.cs`（**唯一**出處） |
 | 按了某個鍵卻沒反應（F12 之類） | `Ssms22/Editor/SqlShellCommandFilter.cs` |
@@ -36,10 +38,16 @@
 | 新增選單項目或鍵繫結後沒生效 | `Menus.vsct` ＋ `ProvideMenuResource` 版號，且必須重新安裝 |
 | F12 開出來的指令碼內容不對 | `Metadata/Formatting/SqlObjectScript.cs` |
 | 新查詢視窗沒有沿用連線 | `Ssms22/Connections/SsmsScriptWindow.cs` |
+| 換了資料庫，清單還是舊資料庫的物件 | `Ssms22/Connections/SqlMetadataService.cs`、`SqlEditorConnectionWatcher.cs` |
 | 新增一個設定 | 註冊 JSON、POCO、moniker、reader 四處 |
 | 查詢的 SQL 或載入分層 | `Metadata/Querying/SqlMetadataQueries.cs` |
 | 連不上資料庫時的行為 | `Metadata/Caching/SqlMetadataCatalog.cs` |
+| SQL Memory 開不起來、停用後還在擷取、心跳或維護沒跑 | `Core/SqlMemory/SqlMemoryRuntime.cs`（`Ssms22/SqlMemory/SqlMemoryHost.cs` 只接線） |
+| SQL Memory 清單篩選、分頁、晚到回應或選取還原 | `Core/SqlMemory/SqlMemoryBrowserModel.cs` |
+| 存檔後歷程掛錯文件、選取執行記錄的文字不對 | `SqlDocumentIdentity.cs`、`SqlSelectionText.cs`、`Ssms22/SqlMemory/SqlCaptureTracker.cs` |
+| SQL Memory 的 SQL、交易或索引 | `SqlMemory.Sqlite/Sqlite*Store.cs`（連線與 schema 在 `SqliteDatabase.cs`） |
 | 指令碼整段變成註解（缺定義、缺欄位） | `Metadata/Model/SqlObjectStructure.cs` 的 `CanBuildExecutableScript` |
+| 通知卡片掛錯或不出現 | `Ssms22/Notifications/NotificationHostPriority.cs` |
 | 建置、安裝、偵錯、發布 | `tools/` |
 | 分層規則、資料夾規則 | — |
 
@@ -49,9 +57,9 @@
 
 ## 測試
 
-`tests/` 鏡像 `src/` 的資料夾結構，所以改了 `Core/Parsing/` 就去看
-`tests/SqlAssist.Core.Tests/Parsing/`。只有兩個測試專案：`SqlAssist.Core.Tests`
-與 `SqlAssist.Metadata.Tests`——`SqlAssist.Ssms22` 沒有測試專案，這正是
+`tests/` 鏡像 `src/` 的資料夾結構，改了 `Core/Parsing/` 就看
+`tests/SqlAssist.Core.Tests/Parsing/`。`SqlAssist.SqlMemory.Sqlite.Tests` 驗真實 SQLite 與隔離層；
+`SqlAssist.Ssms22.Tests` 只連結純 WPF 控制項做渲染測試，不載入 SSMS——這正是
 「**禁止**把只看文字就能判斷的邏輯寫進 Ssms22」的原因。
 
 游標位置的測試寫法見 `tests/SqlAssist.Core.Tests/SqlWithCaret.cs`。

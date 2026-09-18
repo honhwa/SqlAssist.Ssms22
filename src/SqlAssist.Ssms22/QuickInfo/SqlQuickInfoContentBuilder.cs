@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using Microsoft.VisualStudio.Language.StandardClassification;
 using Microsoft.VisualStudio.Text.Adornments;
+using SqlAssist.Core.Completion;
 using SqlAssist.Core.Keywords;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Metadata.Formatting;
 using SqlAssist.Metadata.Model;
+using SqlAssist.Ssms22.UI;
 
 namespace SqlAssist.Ssms22.QuickInfo;
 
@@ -39,6 +41,14 @@ internal static class SqlQuickInfoContentBuilder
 
     private const string OpenStructureTooltip = "開啟浮動結構視窗：可捲動、可用滑鼠選取複製，Esc 關閉";
 
+    private const string OpenReferenceText = "開啟完整說明";
+
+    private const string OpenReferenceTooltip = "開啟浮動視窗：各引數查得到哪些值，可捲動也可以複製";
+
+    private const string OnlineDocsText = "線上文件";
+
+    private const string OnlineDocsTooltip = "以預設瀏覽器開啟 Microsoft Learn 上的說明";
+
     /// <param name="openStructure">
     /// 「開啟完整結構」要執行的動作；建議清單的說明面板沒有可點擊的地方，傳 null 即可。
     /// </param>
@@ -53,40 +63,59 @@ internal static class SqlQuickInfoContentBuilder
         if (detail.Object.Kind.HasSynthesizedDefinition() &&
             !string.IsNullOrWhiteSpace(detail.Definition))
         {
-            return BuildDefinition(detail.Definition!, openStructure);
+            return BuildDefinition(detail, openStructure);
         }
 
         // 資料表值函式的資料行也載入了，但這裡列的仍然是參數：滑鼠停在
         // dbo.fn_LoansByReader 上的人正要呼叫它，該填什麼引數才是他問的事。
-        // 回傳幾個資料行改寫進標題——那句話值得說，但不值得佔掉整個提示。
+        // 回傳幾個資料行併入摘要——那句話值得說，但不值得佔掉整個提示。
         var showsColumns = detail.Object.Kind.IsTableShaped();
 
-        // 標題帶上總數：清單被截斷時，使用者至少知道自己看到的是幾分之幾。
-        // 括號裡的說法要與底下列出來的東西一致，否則使用者會把參數看成欄位。
-        var summary = detail.Columns.Count == 0
-            ? null
-            : showsColumns
-                ? $"（{detail.Columns.Count} 個欄位）"
-                : $"（回傳 {detail.Columns.Count} 個資料行）";
+        // 摘要與實際列出的內容一致；函式的參數與回傳資料行不能混成同一個數量。
+        var summary = new List<string>();
+        if (showsColumns)
+        {
+            summary.Add(detail.Columns.Count > 0 ? $"{detail.Columns.Count} 個欄位" : "欄位明細不可用");
+        }
+        else
+        {
+            if (detail.Parameters.Count > 0)
+            {
+                summary.Add($"{detail.Parameters.Count} 個參數");
+            }
+            if (detail.Columns.Count > 0)
+            {
+                summary.Add($"回傳 {detail.Columns.Count} 個資料行");
+            }
+        }
 
-        var elements = new List<object> { BuildHeader(detail.Object, summary) };
+        var elements = new List<object>
+        {
+            BuildHeader(detail.Object, string.Join(" · ", summary), detail.Description)
+        };
+        var body = new List<object>();
 
         var hidden = 0;
 
         if (showsColumns)
         {
             hidden = Math.Max(0, detail.Columns.Count - MaximumColumns);
-            elements.AddRange(BuildColumns(detail.Columns));
+            body.AddRange(BuildColumns(detail.Columns));
         }
         else if (detail.Parameters.Count > 0)
         {
             hidden = Math.Max(0, detail.Parameters.Count - MaximumParameters);
-            elements.AddRange(BuildParameters(detail.Parameters));
+            body.AddRange(BuildParameters(detail.Parameters));
         }
 
         if (detail.Object.Kind.IsModule() && string.IsNullOrWhiteSpace(detail.Definition))
         {
-            elements.Add(Line(Comment("-- 無法取得定義（可能已加密或權限不足）")));
+            body.Add(Line(Comment("無法取得定義（可能已加密或權限不足）")));
+        }
+
+        if (body.Count > 0)
+        {
+            elements.Add(new ContainerElement(ContainerElementStyle.Stacked, body));
         }
 
         if (BuildFooter(openStructure, hidden) is { } footer)
@@ -94,39 +123,49 @@ internal static class SqlQuickInfoContentBuilder
             elements.Add(footer);
         }
 
-        return new ContainerElement(ContainerElementStyle.Stacked, elements);
+        return Sections(elements);
     }
 
     /// <summary>快取裡還沒有明細時顯示的內容：標題加上開啟面板的連結。</summary>
     public static ContainerElement BuildLoading(SqlObjectInfo objectInfo, Action? openStructure = null)
     {
-        var elements = new List<object> { BuildHeader(objectInfo) };
+        var elements = new List<object> { BuildHeader(objectInfo, "明細載入中…") };
 
         if (BuildFooter(openStructure, hiddenCount: 0) is { } footer)
         {
             elements.Add(footer);
         }
-        else
-        {
-            elements.Add(Line(Comment("-- 載入中…")));
-        }
-
-        return new ContainerElement(ContainerElementStyle.Stacked, elements);
+        return Sections(elements);
     }
 
-    /// <summary>單一欄位的提示內容，標題顯示它屬於哪個物件。</summary>
+    /// <summary>單一欄位的提示內容，以欄位名稱為抬頭，摘要標示所屬物件。</summary>
     public static ContainerElement BuildColumn(
         SqlObjectInfo owner,
         SqlColumnInfo column,
         Action? openStructure = null)
     {
+        // 型別與旗標說得出這一行「是什麼」，說不出它「為什麼在」——
+        // 停在一個叫 Status 的 tinyint 上時，要問的正好是後者。
+        // 說明跟著名稱與所屬物件放進同一疊，不另外開一段：那一段留白會讓
+        // 「這是誰」與「它是什麼型別」之間多出一道看不出理由的分隔。
+        var caption = new List<object>
+        {
+            new ContainerElement(
+                ContainerElementStyle.Wrapped,
+                SqlIcons.GetImageElement(SuggestionKind.Column),
+                Line(Title(column.Name))),
+                Line(Comment($"欄位 · {owner.QualifiedName}"))
+        };
+
+        if (BuildDescription(column.Description) is { } description)
+        {
+            caption.Add(description);
+        }
+
         var elements = new List<object>
         {
-            new ClassifiedTextElement(
-                Keyword("COLUMN"),
-                Text(" "),
-                Identifier(owner.QualifiedName)),
-            new ClassifiedTextElement(BuildColumnRuns(column, "  "))
+            new ContainerElement(ContainerElementStyle.Stacked, caption),
+            new ClassifiedTextElement(BuildColumnRuns(column, includeName: false))
         };
 
         if (BuildFooter(openStructure, hiddenCount: 0) is { } footer)
@@ -134,7 +173,96 @@ internal static class SqlQuickInfoContentBuilder
             elements.Add(footer);
         }
 
-        return new ContainerElement(ContainerElementStyle.Stacked, elements);
+        return Sections(elements);
+    }
+
+    /// <summary>
+    /// 內建名稱的提示：簽章、一行用途與一段範例。
+    /// </summary>
+    /// <remarks>
+    /// 與物件提示共用同一組元素與同一套留白，因此主題、字型與螢幕邊界都不必自己處理。
+    /// 簽章與範例走 <see cref="BuildCodeRuns"/>，著色出處與浮動預覽的指令碼分頁同一份。
+    /// </remarks>
+    /// <param name="openReference">
+    /// 「開啟完整說明」要執行的動作；沒有對照表、或說明面板沒有可點擊的地方時傳 null。
+    /// </param>
+    /// <param name="openDocs">線上文件要執行的動作；沒有文件位址時傳 null。</param>
+    public static ContainerElement BuildBuiltIn(
+        SqlBuiltInDoc doc,
+        Action? openReference = null,
+        Action? openDocs = null)
+    {
+        var caption = new List<object>
+        {
+            new ContainerElement(
+                ContainerElementStyle.Wrapped,
+                SqlIcons.GetImageElement(doc.Kind.ToSuggestionKind()),
+                Line(Title(doc.Name))),
+                Line(Comment(doc.Kind.GetDisplayName()))
+        };
+
+        var elements = new List<object> { new ContainerElement(ContainerElementStyle.Stacked, caption) };
+        var body = new List<object>();
+
+        if (doc.Signature.Length > 0)
+        {
+            body.Add(new ClassifiedTextElement(BuildCodeRuns(doc.Signature)));
+        }
+
+        // 說明是我們自己寫的一行，長度由 SqlBuiltInDocCatalogTests 守住；
+        // 這裡仍走同一份收斂，兩個表面的斷行與省略號才不會有兩套。
+        if (BuildDescription(doc.Summary) is { } summary)
+        {
+            body.Add(summary);
+        }
+
+        if (doc.Example.Length > 0)
+        {
+            var runs = new List<ClassifiedTextRun> { Comment("範例  ") };
+            runs.AddRange(BuildCodeRuns(doc.Example));
+            body.Add(new ClassifiedTextElement(runs));
+        }
+
+        if (body.Count > 0)
+        {
+            elements.Add(new ContainerElement(ContainerElementStyle.Stacked, body));
+        }
+
+        // 提示只給一眼看得完的份量：style 有十六個值，datepart 有十五個，
+        // 那是捲得動也選得起來的浮動視窗才裝得下的東西。
+        var footer = new List<ClassifiedTextRun>();
+
+        if (openReference is not null)
+        {
+            footer.Add(new ClassifiedTextRun(
+                PredefinedClassificationTypeNames.Identifier,
+                OpenReferenceText,
+                openReference,
+                OpenReferenceTooltip,
+                ClassifiedTextRunStyle.Underline));
+        }
+
+        if (openDocs is not null)
+        {
+            if (footer.Count > 0)
+            {
+                footer.Add(Text("　"));
+            }
+
+            footer.Add(new ClassifiedTextRun(
+                PredefinedClassificationTypeNames.Identifier,
+                OnlineDocsText,
+                openDocs,
+                OnlineDocsTooltip,
+                ClassifiedTextRunStyle.Underline));
+        }
+
+        if (footer.Count > 0)
+        {
+            elements.Add(new ClassifiedTextElement(footer));
+        }
+
+        return Sections(elements);
     }
 
     /// <summary>
@@ -148,7 +276,7 @@ internal static class SqlQuickInfoContentBuilder
     {
         if (openStructure is null)
         {
-            return hiddenCount > 0 ? Line(Comment($"-- 另有 {hiddenCount} 項未顯示")) : null;
+            return hiddenCount > 0 ? Line(Comment($"另有 {hiddenCount} 項未顯示")) : null;
         }
 
         var runs = new List<ClassifiedTextRun>();
@@ -179,9 +307,10 @@ internal static class SqlQuickInfoContentBuilder
     /// 逐行分開成 <see cref="ClassifiedTextElement"/>：提示視窗不會自己斷行，
     /// 整段塞進一個元素會排成一長行而被螢幕邊界切掉。
     /// </remarks>
-    private static ContainerElement BuildDefinition(string definition, Action? openStructure)
+    private static ContainerElement BuildDefinition(SqlObjectDetail detail, Action? openStructure)
     {
-        var lines = definition.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var objectInfo = detail.Object;
+        var lines = detail.Definition!.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         var elements = new List<object>();
         var shown = 0;
 
@@ -197,16 +326,28 @@ internal static class SqlQuickInfoContentBuilder
                 break;
             }
 
+            var text = new ClassifiedTextElement(BuildCodeRuns(line));
+            // 定義本身已包含種類與名稱，只在首個非空白列加圖示，不重複標題。
+            elements.Add(shown == 0
+                ? new ContainerElement(ContainerElementStyle.Wrapped, SqlIcons.GetImageElement(objectInfo.Kind), text)
+                : (object)text);
             shown++;
-            elements.Add(new ClassifiedTextElement(BuildCodeRuns(line)));
         }
 
+        // 說明是使用者自己寫的一句話，定義本文說不出來；同義字指向誰與它為什麼
+        // 存在是兩件事，兩件都要。
+        if (BuildDescription(detail.Description) is { } description)
+        {
+            elements.Add(description);
+        }
+
+        var sections = new List<object> { new ContainerElement(ContainerElementStyle.Stacked, elements) };
         if (BuildFooter(openStructure, hiddenCount: 0) is { } footer)
         {
-            elements.Add(footer);
+            sections.Add(footer);
         }
 
-        return new ContainerElement(ContainerElementStyle.Stacked, elements);
+        return Sections(sections);
     }
 
     /// <remarks>
@@ -255,29 +396,51 @@ internal static class SqlQuickInfoContentBuilder
         };
     }
 
-    private static ClassifiedTextElement BuildHeader(SqlObjectInfo objectInfo, string? suffix = null)
+    private static ContainerElement BuildHeader(
+        SqlObjectInfo objectInfo,
+        string? suffix = null,
+        string? description = null)
     {
-        var runs = new List<ClassifiedTextRun>
-        {
-            Keyword(objectInfo.Kind.ToDisplayName()),
-            Text(" "),
-            Identifier(objectInfo.QualifiedName)
-        };
-
+        var summary = objectInfo.Kind.ToDisplayName();
         if (!string.IsNullOrEmpty(suffix))
         {
-            runs.Add(Text("  "));
-            runs.Add(Comment(suffix!));
+            summary += " · " + suffix;
         }
 
-        return new ClassifiedTextElement(runs);
+        var lines = new List<object>
+        {
+            new ContainerElement(ContainerElementStyle.Wrapped,
+                SqlIcons.GetImageElement(objectInfo.Kind),
+                Line(Title(objectInfo.QualifiedName))),
+                Line(Comment(summary))
+        };
+
+        if (BuildDescription(description) is { } text)
+        {
+            lines.Add(text);
+        }
+
+        return new ContainerElement(ContainerElementStyle.Stacked, lines);
+    }
+
+    /// <summary>
+    /// 說明那一行；沒有掛說明時回傳 null。
+    /// </summary>
+    /// <remarks>
+    /// 收斂空白與截斷都走 <see cref="SqlDescriptionText"/>：提示視窗不會自己斷行，
+    /// 一段帶換行的說明會排成一長行而被螢幕邊界切掉，而看的人看不出後面還有東西。
+    /// 全文留給結構預覽——那裡有 Tooltip，也捲得動。
+    /// </remarks>
+    private static ClassifiedTextElement? BuildDescription(string? description)
+    {
+        return SqlDescriptionText.Summarize(description) is { } text ? Line(Comment(text)) : null;
     }
 
     private static IEnumerable<object> BuildColumns(IReadOnlyList<SqlColumnInfo> columns)
     {
         if (columns.Count == 0)
         {
-            yield return Line(Comment("-- 沒有欄位"));
+            yield return Line(Comment("沒有可顯示的欄位明細"));
             yield break;
         }
 
@@ -291,28 +454,28 @@ internal static class SqlQuickInfoContentBuilder
             }
 
             shown++;
-            yield return new ClassifiedTextElement(BuildColumnRuns(column, "  "));
+            yield return new ClassifiedTextElement(BuildColumnRuns(column));
         }
     }
 
-    private static List<ClassifiedTextRun> BuildColumnRuns(SqlColumnInfo column, string indent)
+    private static List<ClassifiedTextRun> BuildColumnRuns(SqlColumnInfo column, bool includeName = true)
     {
-        var runs = new List<ClassifiedTextRun>
+        var runs = new List<ClassifiedTextRun>();
+        if (includeName)
         {
-            Text(indent),
-            Identifier(column.Name),
-            Text("  "),
-            Keyword(column.DataType)
-        };
+            runs.Add(Identifier(column.Name));
+            runs.Add(Text("  "));
+        }
+        runs.Add(Keyword(column.DataType));
 
         foreach (var flag in SqlColumnPresentation.Flags(column))
         {
             runs.Add(Text("  "));
 
-            // 主索引鍵不是型別的一部分，用註解色與 NOT NULL 這些限制分開。
+            // 一般旗標退到摘要層級；主索引鍵另以字重辨識，不只依賴顏色。
             runs.Add(flag == SqlColumnFlag.PrimaryKey
-                ? Comment(flag.ToDisplayName())
-                : Keyword(flag.ToDisplayName()));
+                ? Title(flag.ToDisplayName())
+                : Comment(flag.ToDisplayName()));
         }
 
         return runs;
@@ -333,7 +496,6 @@ internal static class SqlQuickInfoContentBuilder
 
             var runs = new List<ClassifiedTextRun>
             {
-                Text("  "),
                 Identifier(parameter.Name),
                 Text("  "),
                 Keyword(parameter.DataType)
@@ -342,7 +504,7 @@ internal static class SqlQuickInfoContentBuilder
             if (parameter.IsOutput)
             {
                 runs.Add(Text("  "));
-                runs.Add(Keyword("OUTPUT"));
+                runs.Add(Comment("OUTPUT"));
             }
 
             yield return new ClassifiedTextElement(runs);
@@ -350,6 +512,13 @@ internal static class SqlQuickInfoContentBuilder
     }
 
     private static ClassifiedTextElement Line(ClassifiedTextRun run) => new(run);
+
+    // 只在名稱／明細／入口之間留白，資料列仍緊湊；字型與實際間距交給原生呈現器。
+    private static ContainerElement Sections(IEnumerable<object> elements) =>
+        new(ContainerElementStyle.Stacked | ContainerElementStyle.VerticalPadding, elements);
+
+    private static ClassifiedTextRun Title(string text) =>
+        new(PredefinedClassificationTypeNames.Identifier, text, ClassifiedTextRunStyle.Bold);
 
     private static ClassifiedTextRun Keyword(string text) =>
         new(PredefinedClassificationTypeNames.Keyword, text);

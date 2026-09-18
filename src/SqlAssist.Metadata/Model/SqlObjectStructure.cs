@@ -18,15 +18,30 @@ public sealed class SqlObjectStructure
 {
     private static readonly SqlIndexInfo[] NoIndexes = Array.Empty<SqlIndexInfo>();
     private static readonly SqlForeignKeyInfo[] NoForeignKeys = Array.Empty<SqlForeignKeyInfo>();
+    private static readonly SqlExtendedProperty[] NoExtendedProperties = Array.Empty<SqlExtendedProperty>();
+    private static readonly SqlCheckConstraint[] NoCheckConstraints = Array.Empty<SqlCheckConstraint>();
+    private static readonly SqlTriggerInfo[] NoTriggers = Array.Empty<SqlTriggerInfo>();
 
     public SqlObjectStructure(
         SqlObjectDetail detail,
         IReadOnlyList<SqlIndexInfo>? indexes = null,
-        IReadOnlyList<SqlForeignKeyInfo>? foreignKeys = null)
+        IReadOnlyList<SqlForeignKeyInfo>? foreignKeys = null,
+        IReadOnlyList<SqlExtendedProperty>? extendedProperties = null,
+        IReadOnlyList<SqlCheckConstraint>? checkConstraints = null,
+        SqlTableStorage? storage = null,
+        IReadOnlyList<SqlTriggerInfo>? triggers = null,
+        bool structureUnavailable = false,
+        bool structurePending = false)
     {
         Detail = detail ?? throw new ArgumentNullException(nameof(detail));
         Indexes = indexes ?? NoIndexes;
         ForeignKeys = foreignKeys ?? NoForeignKeys;
+        ExtendedProperties = extendedProperties ?? NoExtendedProperties;
+        CheckConstraints = checkConstraints ?? NoCheckConstraints;
+        Storage = storage ?? SqlTableStorage.None;
+        Triggers = triggers ?? NoTriggers;
+        IsStructureUnavailable = structureUnavailable;
+        IsStructurePending = structurePending;
     }
 
     public SqlObjectDetail Detail { get; }
@@ -39,9 +54,41 @@ public sealed class SqlObjectStructure
 
     public string? Definition => Detail.Definition;
 
+    /// <summary>物件自己的 <c>MS_Description</c>；第二層就帶回來了，見
+    /// <see cref="SqlObjectDetail.Description"/>。</summary>
+    public string? Description => Detail.Description;
+
     public IReadOnlyList<SqlIndexInfo> Indexes { get; }
 
     public IReadOnlyList<SqlForeignKeyInfo> ForeignKeys { get; }
+
+    /// <summary>資料表、資料行、索引與條件約束上的擴充屬性。</summary>
+    /// <remarks>
+    /// 與索引、外來鍵同屬第四層：只有使用者主動打開結構或要一份指令碼時才載入。
+    /// 併進按鍵路徑上的第二層等於讓每一次輸入 <c>a.</c> 多付一次查詢，
+    /// 而建議清單一個字都用不到它。
+    /// </remarks>
+    public IReadOnlyList<SqlExtendedProperty> ExtendedProperties { get; }
+
+    /// <summary>資料表上的 CHECK 條件約束。</summary>
+    public IReadOnlyList<SqlCheckConstraint> CheckConstraints { get; }
+
+    /// <summary>資料表本身的儲存位置與建立當時的 SET 選項；查不到時每個欄位都是「沒有」。</summary>
+    public SqlTableStorage Storage { get; }
+
+    /// <summary>掛在這張資料表上的觸發程序。</summary>
+    public IReadOnlyList<SqlTriggerInfo> Triggers { get; }
+
+    /// <summary>第四層查詢失敗，索引以下的每一族都只是「還沒問到」而不是「沒有」。</summary>
+    /// <remarks>
+    /// 與「查詢成功卻一列都沒有回來」必須分得開：後者是常態，答案就是沒有；
+    /// 這一個是查詢本身失敗，而空的清單在這時候是<b>錯的答案</b>。混成同一件事的
+    /// 症狀是一張有五個索引的資料表被重建成沒有索引的資料表，而畫面上看不出來。
+    /// </remarks>
+    public bool IsStructureUnavailable { get; }
+
+    /// <summary>只有第二層、第四層仍在載入；不能讓「複製全部」把部分結構當成完整 DDL。</summary>
+    public bool IsStructurePending { get; }
 
     /// <summary>主索引鍵；沒有時為 null。</summary>
     public SqlIndexInfo? PrimaryKey
@@ -82,18 +129,22 @@ public sealed class SqlObjectStructure
     /// 組出可以直接執行的完整指令碼。
     /// </summary>
     /// <remarks>
-    /// 模組類物件直接給定義本文——那本來就是可執行的原文，重組只會失真。
-    /// 同義字與序列走同一支：它們的定義不在 <c>sys.sql_modules</c> 裡，
-    /// 而是由 <see cref="SqlCatalogScript"/> 從目錄檢視組回 <c>CREATE</c>，
-    /// 但到了這裡兩者沒有差別。
-    /// 資料表則重建 CREATE TABLE，並把主索引鍵寫進條件約束，
-    /// 其餘索引與外來鍵接在後面，順序與 SSMS 的指令碼一致。
-    /// 資料表型別另有一支，見 <see cref="BuildCreateTypeScript"/>。
-    ///
-    /// 寫不出來的情形全部在 <see cref="CheckAvailability"/> 判掉，
-    /// 沒有一種會掉進後面的組字串。
+    /// 排版整個交給 <see cref="TSqlScriptRenderer"/>：全擴充只有那一份組
+    /// <c>CREATE TABLE</c> 的地方，同一張資料表在預覽裡與按下 F12 之後才會一樣。
+    /// 留在這裡的是「這一次的資料夠不夠」與「不夠時要說什麼」，那兩件事只有
+    /// 這個型別答得出來。
     /// </remarks>
-    public string BuildScript()
+    public string BuildScript(SqlScriptContext context) =>
+        TSqlScriptRenderer.Default.Render(this, context);
+
+    /// <summary>
+    /// 資料不齊時的輸出；齊全時回傳 <c>false</c> 且不產生任何文字。
+    /// </summary>
+    /// <remarks>
+    /// 由 <see cref="TSqlScriptRenderer"/> 在組任何東西之前先問。半份指令碼是最糟的
+    /// 結果：少了欄位的 <c>CREATE TABLE</c> 只剩一對空括號，卻仍然貼得上去。
+    /// </remarks>
+    internal bool TryBuildUnavailableScript(out string script)
     {
         switch (CheckAvailability())
         {
@@ -101,7 +152,18 @@ public sealed class SqlObjectStructure
             // 那份文字貼在唯讀的預覽窗格裡沒有問題，要拿去執行的 F12 那一端會再
             // 把它整段註解掉。
             case ScriptAvailability.UnscriptableKind:
-                return Detail.BuildPreview();
+                script = Detail.BuildPreview();
+                return true;
+
+            // 指令碼宣告的東西不經過 OBJECT_DEFINITION，也不經過目錄檢視，
+            // 底下那兩種說法對它都是錯的——使用者會去查加密與 VIEW DEFINITION
+            // 權限，而它從來不經過那兩關。
+            case ScriptAvailability.MissingDefinition when Object.Kind.IsScriptDeclared():
+                script = BuildUnavailableScript(
+                    "宣告原文",
+                    "這個名稱是這份指令碼自己宣告的，宣告的位置卻已經不在目前的文字裡了——",
+                    "多半是提示顯示之後、開啟結構之前，那幾行被改掉或刪掉了。");
+                return true;
 
             // 檢視同時是模組也有欄位。定義取不到時原本會掉進 CREATE TABLE 那一支，
             // 於是一個檢視被寫成一張資料表——那不只是排版難看，是指令碼在說謊：
@@ -111,7 +173,7 @@ public sealed class SqlObjectStructure
             // 說錯的話使用者會去查加密與 VIEW DEFINITION 權限，而同義字的定義
             // 從來不經過那兩關。
             case ScriptAvailability.MissingDefinition:
-                return Object.Kind.HasSynthesizedDefinition()
+                script = Object.Kind.HasSynthesizedDefinition()
                     ? BuildUnavailableScript(
                         "定義",
                         "sys.synonyms／sys.sequences 一列都沒有回來，而查詢本身沒有失敗——",
@@ -121,24 +183,45 @@ public sealed class SqlObjectStructure
                         "定義",
                         "OBJECT_DEFINITION 傳回 NULL 的原因只有兩個：物件是 WITH ENCRYPTION 建立的，",
                         "或是目前的登入沒有它的 VIEW DEFINITION 權限。");
+                return true;
 
             // 一個欄位都沒有時組出來的是一對空括號，而那仍然是一段貼得上去的
             // CREATE TABLE：執行下去建出一張沒有欄位的資料表，比什麼都不做糟。
             case ScriptAvailability.MissingColumns:
-                return BuildUnavailableScript(
+                script = BuildUnavailableScript(
                     "欄位",
                     "sys.columns 一列都沒有回來，而查詢本身沒有失敗——原因只有兩個：物件在",
                     "建議清單被快取之後卸除，或是這個登入對它的權限在那之後被收回。");
+                return true;
+
+            // 這一種與上面那一種相反：查詢本身失敗了，所以空的索引清單不是答案。
+            // 照樣寫出 CREATE TABLE 的話會建出一張少了索引、條件約束與觸發程序的
+            // 資料表，而它仍然貼得上去——與少了欄位的那一種同一條理由。
+            case ScriptAvailability.IncompleteStructure:
+                script = BuildUnavailableScript(
+                    "索引與條件約束",
+                    "第四層查詢失敗了，而空的索引清單在這時候不是答案——原因可能是連線中斷、",
+                    "逾時，或這一版伺服器沒有查詢用到的某個目錄檢視欄位。伺服器說的那句話",
+                    "在「詳細記錄」打開時寫在診斷紀錄檔裡。");
+                return true;
+
+            case ScriptAvailability.MissingExpressions:
+                script = BuildUnavailableScript(
+                    "計算資料行、預設值或 CHECK 運算式",
+                    "已查到欄位或條件約束，但無法取得完整運算式；可能缺少 VIEW DEFINITION 權限，",
+                    "或物件在讀取期間已被修改。保留欄位摘要，不產生不完整的 CREATE／ALTER。");
+                return true;
+
+            case ScriptAvailability.StructurePending:
+                script = BuildUnavailableScript(
+                    "完整結構",
+                    "索引與條件約束仍在載入中，請等載入完成後再複製指令碼；",
+                    "目前只顯示已取得的欄位，不將部分資料重建成可執行 SQL。");
+                return true;
         }
 
-        if (Object.Kind.ScriptsFromDefinition())
-        {
-            return Definition!;
-        }
-
-        return Object.Kind == SqlObjectKind.TableType
-            ? BuildCreateTypeScript()
-            : BuildCreateTableScript();
+        script = string.Empty;
+        return false;
     }
 
     /// <remarks>
@@ -162,7 +245,40 @@ public sealed class SqlObjectStructure
                 : ScriptAvailability.Ready;
         }
 
-        return Columns.Count == 0 ? ScriptAvailability.MissingColumns : ScriptAvailability.Ready;
+        if (Columns.Count == 0)
+        {
+            return ScriptAvailability.MissingColumns;
+        }
+
+        // 欄位齊了也不夠：這一族的指令碼是從第四層重建的，少了索引與條件約束
+        // 的 CREATE TABLE 一樣貼得上去，建出來的卻是另一張表。
+        if (IsStructurePending)
+        {
+            return ScriptAvailability.StructurePending;
+        }
+
+        if (IsStructureUnavailable)
+        {
+            return ScriptAvailability.IncompleteStructure;
+        }
+
+        foreach (var column in Columns)
+        {
+            if ((column.IsComputed && string.IsNullOrWhiteSpace(column.ComputedDefinition)) ||
+                (!string.IsNullOrEmpty(column.Script.DefaultConstraintName) && string.IsNullOrWhiteSpace(column.DefaultDefinition)))
+            {
+                return ScriptAvailability.MissingExpressions;
+            }
+        }
+        foreach (var check in CheckConstraints)
+        {
+            if (string.IsNullOrWhiteSpace(check.Definition))
+            {
+                return ScriptAvailability.MissingExpressions;
+            }
+        }
+
+        return ScriptAvailability.Ready;
     }
 
     /// <summary>指令碼寫不寫得出來，以及寫不出來時缺的是什麼。</summary>
@@ -171,117 +287,10 @@ public sealed class SqlObjectStructure
         Ready,
         UnscriptableKind,
         MissingDefinition,
-        MissingColumns
-    }
-
-    private string BuildCreateTableScript()
-    {
-        var builder = new StringBuilder();
-        var name = Object.QualifiedName;
-        builder.Append("CREATE TABLE ").Append(name).AppendLine();
-        builder.AppendLine("(");
-        AppendColumnDefinitions(builder);
-
-        if (PrimaryKey is { } primaryKey)
-        {
-            builder.Append("    CONSTRAINT ").Append(SqlIdentifier.Quote(primaryKey.Name))
-                .Append(" PRIMARY KEY ").Append(primaryKey.TypeDescription)
-                .Append(" (").Append(primaryKey.BuildKeyColumnList()).AppendLine(")");
-        }
-
-        builder.AppendLine(");");
-
-        foreach (var index in Indexes)
-        {
-            if (index.IsPrimaryKey)
-            {
-                continue;
-            }
-
-            builder.AppendLine();
-            builder.AppendLine(index.ToScript(name));
-        }
-
-        foreach (var foreignKey in ForeignKeys)
-        {
-            builder.AppendLine();
-            builder.AppendLine(foreignKey.ToScript(name));
-        }
-
-        return builder.ToString();
-    }
-
-    /// <summary>
-    /// 資料表型別的 <c>CREATE TYPE ... AS TABLE</c>。
-    /// </summary>
-    /// <remarks>
-    /// 資料表型別有欄位，落到 CREATE TABLE 那一支就是指令碼在說謊：照著執行
-    /// 會多出一張同名的資料表，與檢視取不到定義時不能掉進 CREATE TABLE 是
-    /// 同一條理由。
-    ///
-    /// 主索引鍵寫成<b>不具名</b>的內嵌條件約束。<c>CREATE TYPE</c> 的括號裡
-    /// 不收 <c>CONSTRAINT 名稱</c>——型別的條件約束一律命名不得，查到的那個名字
-    /// 本來就是引擎自己配的——照資料表那一支搬過來會語法錯誤。
-    ///
-    /// 其餘索引整組不寫：<c>CREATE INDEX</c> 與 <c>ALTER TABLE</c> 對型別都不合法，
-    /// 而括號裡的內嵌 <c>INDEX</c> 收不下 INCLUDE 與篩選條件，硬寫就是一段跑不動的
-    /// 指令碼。省略的數量寫在結尾的註解裡，否則這份文字看起來就像那個型別
-    /// 只有主索引鍵。外來鍵不必處理，型別上根本建不起來。
-    /// </remarks>
-    private string BuildCreateTypeScript()
-    {
-        var builder = new StringBuilder();
-        builder.Append("CREATE TYPE ").Append(Object.QualifiedName).AppendLine(" AS TABLE");
-        builder.AppendLine("(");
-        AppendColumnDefinitions(builder);
-
-        if (PrimaryKey is { } primaryKey)
-        {
-            builder.Append("    PRIMARY KEY ").Append(primaryKey.TypeDescription)
-                .Append(" (").Append(primaryKey.BuildKeyColumnList()).AppendLine(")");
-        }
-
-        builder.AppendLine(");");
-
-        var skipped = CountSecondaryIndexes();
-
-        if (skipped > 0)
-        {
-            builder.AppendLine();
-            builder.Append("-- 另有 ").Append(skipped)
-                .AppendLine(" 個索引沒有寫進來：CREATE INDEX 與 ALTER TABLE 對型別都不合法，");
-            builder.AppendLine("-- 而 CREATE TYPE 的括號裡只放得下不具名的條件約束。");
-        }
-
-        return builder.ToString();
-    }
-
-    private int CountSecondaryIndexes()
-    {
-        var count = 0;
-
-        foreach (var index in Indexes)
-        {
-            if (!index.IsPrimaryKey)
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
-    /// <remarks>
-    /// 最後一個欄位後面要不要逗號，看的是它後面還有沒有主索引鍵那一行；
-    /// CREATE TABLE 與 CREATE TYPE 兩支的規則相同。
-    /// </remarks>
-    private void AppendColumnDefinitions(StringBuilder builder)
-    {
-        for (var index = 0; index < Columns.Count; index++)
-        {
-            builder.Append("    ").Append(BuildColumnDefinition(Columns[index]));
-            builder.AppendLine(index == Columns.Count - 1 && PrimaryKey is null ? string.Empty : ",");
-        }
+        MissingColumns,
+        IncompleteStructure,
+        MissingExpressions,
+        StructurePending
     }
 
     /// <summary>
@@ -302,12 +311,11 @@ public sealed class SqlObjectStructure
     private string BuildUnavailableScript(string missing, params string[] reasons)
     {
         var builder = new StringBuilder();
-        builder.Append("-- 取不到 ").Append(Object.QualifiedName)
-            .Append(" 的").Append(missing).AppendLine("。");
+        SqlScriptComment.AppendLine(builder, "取不到 " + Object.QualifiedName + " 的" + missing + "。", Environment.NewLine);
 
         foreach (var reason in reasons)
         {
-            builder.Append("-- ").AppendLine(reason);
+            SqlScriptComment.AppendLine(builder, reason, Environment.NewLine);
         }
 
         if (Columns.Count > 0)
@@ -318,7 +326,7 @@ public sealed class SqlObjectStructure
 
             foreach (var column in Columns)
             {
-                builder.Append("--     ").AppendLine(column.ToScriptLine());
+                SqlScriptComment.AppendLine(builder, "    " + column.ToScriptLine(), Environment.NewLine);
             }
         }
 
@@ -329,44 +337,8 @@ public sealed class SqlObjectStructure
 
             foreach (var parameter in Parameters)
             {
-                builder.Append("--     ").AppendLine(parameter.ToScriptLine());
+                SqlScriptComment.AppendLine(builder, "    " + parameter.ToScriptLine(), Environment.NewLine);
             }
-        }
-
-        return builder.ToString();
-    }
-
-    /// <summary>
-    /// CREATE TABLE 內的單行欄位定義。
-    /// </summary>
-    /// <remarks>
-    /// 與 <see cref="SqlColumnInfo.ToScriptLine"/> 的差別在於這裡要能執行：
-    /// 不加 <c>-- PK</c> 註解（主索引鍵另外寫成條件約束），
-    /// 計算欄位也不能寫型別，否則整段指令碼貼上去就會失敗。
-    /// </remarks>
-    private static string BuildColumnDefinition(SqlColumnInfo column)
-    {
-        var builder = new StringBuilder();
-        builder.Append(SqlIdentifier.Quote(column.Name)).Append(' ');
-
-        if (column.IsComputed)
-        {
-            builder.Append("AS ").Append(column.ComputedDefinition ?? "(/* 無法取得運算式 */)");
-            return builder.ToString();
-        }
-
-        builder.Append(column.DataType);
-
-        if (column.IsIdentity)
-        {
-            builder.Append(" IDENTITY");
-        }
-
-        builder.Append(column.IsNullable ? " NULL" : " NOT NULL");
-
-        if (!string.IsNullOrEmpty(column.DefaultDefinition))
-        {
-            builder.Append(" DEFAULT ").Append(column.DefaultDefinition);
         }
 
         return builder.ToString();

@@ -49,6 +49,156 @@
   // 否則搜尋結果是空的——那是找不到設定最常見的原因，不是分類不對。
   "properties": {
 
+    "sqlAssist.blocks.enabled": {
+      "type": "boolean",
+      "default": true,
+      "title": "啟用 T-SQL 區塊配對高亮",
+      "description": "在起訖關鍵字上標示配對。SqlAssist 總開關關閉時也會停用。",
+      "order": 100
+    },
+    "sqlAssist.blocks.keywordHighlight": {
+      "type": "boolean",
+      "default": true,
+      "title": "配對端點高亮",
+      "description": "游標位於端點時，以較明顯的前景與背景標示配對；不改動 SSMS 原生括號配色。",
+      "order": 110,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.keywordForeground": {
+      "type": "string",
+      "default": "",
+      "title": "全域高亮預設前景色",
+      "description": "所有配對端點共用；符號可在其種類底下覆寫。有效 #RRGGBB 字色保持原值，必要時調整背景以維持可讀性；留空才自動選字色，高對比模式除外。",
+      "order": 120,
+      "enableWhen": "${config:sqlAssist.blocks.keywordHighlight} == 'true'",
+      "commands": [{ "vsct": { "text": "選取色彩…", "set": "4a188946-9364-4f07-af7e-97f3bd7ca7a7", "id": 529 } }]
+    },
+    "sqlAssist.blocks.keywordBackground": {
+      "type": "string",
+      "default": "",
+      "title": "全域高亮預設背景色",
+      "description": "所有配對端點共用；符號可在其種類底下覆寫。留空使用共用基準色，支援 #RRGGBB，並自動適配深淺底色。",
+      "order": 130,
+      "enableWhen": "${config:sqlAssist.blocks.keywordHighlight} == 'true'",
+      "commands": [{ "vsct": { "text": "選取色彩…", "set": "4a188946-9364-4f07-af7e-97f3bd7ca7a7", "id": 530 } }]
+    },
+    "sqlAssist.blocks.symbolForeground": {
+      "type": "string",
+      "default": "",
+      "title": "符號高亮前景色（括號、方括號、字串引號）",
+      "description": "有效 #RRGGBB 字色保持原值，必要時調整背景；留空繼承全域高亮預設，高對比模式除外。需開啟配對端點高亮才會顯示。",
+      "order": 210,
+      "enableWhen": "${config:sqlAssist.blocks.matchParentheses} == 'true'",
+      "commands": [{ "vsct": { "text": "選取色彩…", "set": "4a188946-9364-4f07-af7e-97f3bd7ca7a7", "id": 531 } }]
+    },
+    "sqlAssist.blocks.symbolBackground": {
+      "type": "string",
+      "default": "",
+      "title": "符號高亮背景色（括號、方括號、字串引號）",
+      "description": "留空繼承全域高亮預設；支援 #RRGGBB，並自動適配深淺底色。需開啟配對端點高亮才會顯示。",
+      "order": 220,
+      "enableWhen": "${config:sqlAssist.blocks.matchParentheses} == 'true'",
+      "commands": [{ "vsct": { "text": "選取色彩…", "set": "4a188946-9364-4f07-af7e-97f3bd7ca7a7", "id": 532 } }]
+    },
+    "sqlAssist.blocks.rangeBackground": {
+      "type": "boolean",
+      "default": true,
+      "title": "區間淡色背景",
+      "description": "依基準色與實際編輯器底色推導淡色背景，不更改 SQL 字色；高對比模式不塗背景。",
+      "order": 300,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.accentColor": {
+      "type": "string",
+      "default": "",
+      "title": "共用基準色（背景、端點與指示條）",
+      "description": "留空跟隨 SSMS 主題；例如 #4F86C6，也可按鈕選色。供區間、未另設色的端點、邊欄、概覽與提示共用，因此不隸屬區間背景開關。無效格式回退主題，高對比忽略自訂色；原生導引線除外。",
+      "order": 800,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'",
+      "commands": [{ "vsct": { "text": "選取色彩…", "set": "4a188946-9364-4f07-af7e-97f3bd7ca7a7", "id": 528 } }]
+    },
+    "sqlAssist.blocks.rangeInside": {
+      "type": "boolean",
+      "default": true,
+      "title": "游標在區塊內也顯示最近一層背景",
+      "description": "不必停在關鍵字上；只標示最近符合設定的一層，不疊加多層色彩。關閉後恢復只在端點顯示。",
+      "order": 310,
+      "enableWhen": "${config:sqlAssist.blocks.rangeBackground} == 'true'"
+    },
+    "sqlAssist.blocks.structure": {
+      "type": "boolean",
+      "default": true,
+      "title": "結構導引線",
+      "description": "由 SSMS 繪製。色彩由環境的字型與色彩中「結構輔助線／Structure Guide Lines」的背景色管理，會影響所有原生結構導引線。",
+      "order": 400,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.outlining": {
+      "type": "boolean",
+      "default": false,
+      "title": "進階：補足 SSMS 未提供的區塊摺疊",
+      "description": "只在原生缺少區塊 +/− 時使用，通常保持關閉。SSMS 本來就能摺疊 BEGIN／END 時，切換可能沒有可見差異；不會開關原生摺疊。",
+      "order": 410,
+      "enableWhen": "${config:sqlAssist.blocks.structure} == 'true'"
+    },
+    "sqlAssist.blocks.glyphs": {
+      "type": "boolean",
+      "default": true,
+      "title": "行號邊欄指示條",
+      "description": "在游標所在區塊的每一行顯示指示條；啟用區間背景時跟隨同一層，不必停在關鍵字上。",
+      "order": 500,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.overview": {
+      "type": "boolean",
+      "default": true,
+      "title": "捲軸概覽標記",
+      "description": "游標位於區塊內即可在捲軸顯示起訖與範圍色帶，不必停在 BEGIN／END；跟隨背景範圍，背景關閉時仍可獨立顯示。",
+      "order": 600,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.contextHint": {
+      "type": "boolean",
+      "default": true,
+      "title": "跨頁上下文提示",
+      "description": "起始行已捲出畫面時顯示摘要；滑鼠移入呈現手形與連結色，點擊返回起始行，不占用鍵盤焦點或快捷鍵。",
+      "order": 700,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.sameLineBackground": {
+      "type": "boolean",
+      "default": true,
+      "title": "同一行區塊也顯示背景色",
+      "description": "也顯示同行 CASE、括號或字串區間；關閉後略過同行區塊並保留外層跨行背景，不影響端點高亮。",
+      "order": 320,
+      "enableWhen": "${config:sqlAssist.blocks.rangeBackground} == 'true'"
+    },
+    "sqlAssist.blocks.matchParentheses": {
+      "type": "boolean",
+      "default": true,
+      "title": "納入配對種類：括號、方括號與字串引號",
+      "description": "配對 ( )、[ ] 與 '…'（含 N'…'），同時影響所有區塊呈現。只取外框，字串內跳脫的 '' 與識別字內的 ]] 不當端點。",
+      "order": 200,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.matchCase": {
+      "type": "boolean",
+      "default": true,
+      "title": "納入配對種類：CASE…END",
+      "description": "同時影響所有區塊呈現；停用時仍解析 CASE，避免它的 END 被誤配到外層 BEGIN。",
+      "order": 250,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
+    "sqlAssist.blocks.debounce": {
+      "type": "integer",
+      "default": 150,
+      "minimum": 50,
+      "maximum": 2000,
+      "title": "進階：Debounce 毫秒數",
+      "description": "停止輸入多久後在背景更新配對；游標移動不重新解析。",
+      "order": 900,
+      "enableWhen": "${config:sqlAssist.blocks.enabled} == 'true'"
+    },
     "sqlAssist.general.enabled": {
       "type": "boolean",
       "default": true,
@@ -75,6 +225,23 @@
       "additionalKeywords": [ "括號", "引號", "配對", "自動關閉", "auto close", "bracket", "quote" ],
       "enableWhen": "${config:sqlAssist.general.enabled} == 'true'"
     },
+    "sqlAssist.general.animations": {
+      "type": "boolean",
+      "default": true,
+      "order": 300,
+      "title": "播放介面動畫",
+      "description": "SqlAssist 自製介面的所有動畫：通知的進出、明細、狀態圖示與進度條，結構預覽的淡入，以及 SQL Memory 的載入圖示與清單停駐效果。關閉後直接切到最終狀態。高對比模式一律不播放。",
+      "additionalKeywords": [ "animation", "motion", "淡入", "淡出", "轉圈", "載入", "減少動態效果" ]
+    },
+    "sqlAssist.general.ignoreWindowsAnimationSetting": {
+      "type": "boolean",
+      "default": true,
+      "order": 310,
+      "title": "不受 Windows 動畫設定影響",
+      "description": "Windows 關閉「在 Windows 中顯示動畫」（常見於遠端桌面或效能選項）時仍照常播放。只影響 SqlAssist，不更改 Windows 設定；關閉這一項則跟隨 Windows。",
+      "additionalKeywords": [ "animation", "遠端桌面", "RDP", "效能選項", "系統動畫" ],
+      "enableWhen": "${config:sqlAssist.general.animations} == 'true'"
+    },
 
     "sqlAssist.suggestions.enabled": {
       "type": "boolean",
@@ -89,7 +256,7 @@
       "default": true,
       "order": 110,
       "title": "只使用 SqlAssist 的建議清單",
-      "description": "SSMS 內建的 T-SQL IntelliSense 打字時會彈出自己的清單，兩份同時出現會互相干擾。開啟這一項只擋掉它自動彈出的清單，它的紅色錯誤波浪線、大綱與參數提示照常運作。請不要整個關閉 SSMS 的 T-SQL IntelliSense——那會連錯誤檢查一起關掉。",
+      "description": "SSMS 內建的 T-SQL IntelliSense 打字時會彈出自己的清單，兩份同時出現會互相干擾。開啟這一項只擋掉它自動彈出的清單，它的紅色錯誤波浪線、大綱與參數提示照常運作。做法是取消勾選 設定 → 語言 → Transact-SQL 裡的「自動列出成員」；在那裡勾回來，下次套用時會再被取消。請不要整個關閉 SSMS 的 T-SQL IntelliSense——那會連錯誤檢查一起關掉。",
       "additionalKeywords": [ "內建", "原生", "衝突", "重複", "IntelliSense" ],
       "enableWhen": "${config:sqlAssist.suggestions.enabled} == 'true'"
     },
@@ -118,7 +285,7 @@
       "default": true,
       "order": 200,
       "title": "列出程式碼片段",
-      "description": "把內建與自訂的程式碼片段一起列進建議清單。內建片段共 45 筆。",
+      "description": "把內建與自訂的程式碼片段一起列進建議清單。內建片段共 49 筆。",
       "additionalKeywords": [ "snippet", "範本", "template", "縮寫", "捷徑" ],
       "enableWhen": "${config:sqlAssist.suggestions.enabled} == 'true'",
       "commands": [
@@ -156,20 +323,6 @@
       "title": "插入物件時加上方括號",
       "description": "例如插入 [dbo].[Lib_Reader]。關閉時仍會為含空白或保留字的名稱加上括號，否則插入的 SQL 無效。",
       "additionalKeywords": [ "[]", "中括號", "bracket", "跳脫", "保留字" ]
-    },
-    "sqlAssist.insertion.tableSourceAliasStyle": {
-      "type": "string",
-      "default": "none",
-      "order": 120,
-      "enum": [ "none", "as", "off" ],
-      "enumItemLabels": [
-        "自動補上別名，不寫 AS",
-        "自動補上別名並寫 AS",
-        "不要自動補上別名"
-      ],
-      "title": "自動為資料來源補上別名",
-      "description": "在 FROM、JOIN、APPLY 這些資料來源位置選取資料表、檢視或資料表值函式時，自動在名稱後補上別名並留下一個空格。別名取物件名各段的首字母小寫（dbo.Lib_Reader 補 lr）；同一個敘述裡已有相同別名時自動加序號（lr2）。INSERT INTO 的目標表、DROP TABLE 這類不適用別名的位置不會補。",
-      "additionalKeywords": [ "別名", "alias", "FROM", "JOIN", "APPLY", "縮寫" ]
     },
     "sqlAssist.insertion.expandWildcardOnTab": {
       "type": "boolean",
@@ -239,9 +392,18 @@
       "type": "boolean",
       "default": true,
       "order": 350,
-      "title": "選取自訂函式後補上括號與引數",
-      "description": "選取純量函式或資料表值函式後補上一整組引數，依參數型別填入預留值（數值 0、字串 ''、日期 NULL），沒有參數的函式補一對空括號。函式的括號在 T-SQL 裡本來就非寫不可。關閉後只插入名稱。",
-      "additionalKeywords": [ "使用者自訂函式", "function", "括號", "引數", "參數", "產生 SQL" ]
+      "title": "選取自訂函式後補上括號",
+      "description": "選取純量函式或資料表值函式後補上一對空括號，游標停在中間，接著由 SSMS 的「陳述式完成 → 參數資訊」告訴你要填什麼。函式的括號在 T-SQL 裡本來就非寫不可，沒有參數的函式也一樣要寫 ()。關閉後只插入名稱。",
+      "additionalKeywords": [ "使用者自訂函式", "function", "括號", "參數資訊", "產生 SQL" ]
+    },
+    "sqlAssist.insertion.expandFunctionArguments": {
+      "type": "boolean",
+      "default": false,
+      "order": 360,
+      "title": "括號裡填入引數預留值",
+      "description": "開啟後不只補括號，還依參數型別填入一整組預留值（數值 0、字串 ''、日期 NULL、uniqueidentifier NEWID()），游標停在第一個引數上。預設關閉：預留值只是照型別猜的，每一個接著都要換掉，而空括號讓 SSMS 的參數資訊接手告訴你參數叫什麼。",
+      "additionalKeywords": [ "引數", "參數", "預留值", "placeholder", "預設值", "產生 SQL" ],
+      "enableWhen": "${config:sqlAssist.insertion.expandFunctionCall} == 'true'"
     },
 
     "sqlAssist.structure.hoverEnabled": {
@@ -251,6 +413,23 @@
       "title": "滑鼠停留時顯示物件結構",
       "description": "停在資料表、檢視、預存程序上時顯示欄位型別、NULL、主索引鍵等資訊。總開關在「一般」頁。",
       "additionalKeywords": [ "hover", "quick info", "tooltip", "工具提示", "欄位型別" ]
+    },
+    "sqlAssist.structure.builtInHelp": {
+      "type": "boolean",
+      "default": true,
+      "order": 110,
+      "title": "滑鼠停留時顯示內建名稱的說明",
+      "description": "停在 CONVERT、DATEDIFF、NVARCHAR 這類內建名稱上時顯示引數順序、用途與一段範例。不查資料庫，沒有連線也看得到。",
+      "additionalKeywords": [ "內建函式", "built-in", "簽章", "signature", "範例", "CONVERT", "用法" ],
+      "enableWhen": "${config:sqlAssist.structure.hoverEnabled} == 'true'"
+    },
+    "sqlAssist.structure.parameterHint": {
+      "type": "boolean",
+      "default": true,
+      "order": 120,
+      "title": "輸入自訂函式的引數時顯示參數提示",
+      "description": "游標停在純量函式的括號裡時浮出一行簽章（dbo.dtoc(@ddate smalldatetime) RETURNS varchar(10)），目前輪到的引數以粗體標示，打逗號會跟著往下走。只做純量函式：內建函式與 FROM 後面的資料表值函式由 SSMS 自己的「陳述式完成 → 參數資訊」負責。",
+      "additionalKeywords": [ "簽章", "signature", "參數資訊", "引數", "使用者自訂函式", "提示" ]
     },
     "sqlAssist.structure.previewMode": {
       "type": "string",
@@ -302,7 +481,359 @@
       "additionalKeywords": [ "字型大小", "字體", "font", "太小", "放大" ],
       "enableWhen": "${config:sqlAssist.structure.previewMode} != 'off'"
     },
+    "sqlAssist.structure.scriptStyle": {
+      "type": "string",
+      "default": "fidelity",
+      "order": 300,
+      "enum": [ "fidelity", "ssmsNative", "minimal" ],
+      "enumItemLabels": [
+        "還原度優先（條件約束獨立成敘述、每一段接 GO）",
+        "與 SSMS 的「編寫指令碼為」一致",
+        "只留執行得起來所必需的部分"
+      ],
+      "title": "產生指令碼的風格",
+      "description": "F12 與浮動預覽的指令碼分頁都用這一組。還原度優先那一組會寫出定序、識別值種子、預設值條件約束的名稱與檔案群組。",
+      "additionalKeywords": [ "script", "create table", "編寫指令碼", "還原", "風格", "F12" ]
+    },
+    "sqlAssist.structure.scriptIncludeExtendedProperties": {
+      "type": "boolean",
+      "default": true,
+      "order": 310,
+      "title": "指令碼包含資料行說明",
+      "description": "把 MS_Description 重建成 sp_addextendedproperty。資料表、資料行、索引與條件約束四層都會寫出來。",
+      "additionalKeywords": [ "MS_Description", "說明", "註解", "extended property", "欄位說明" ]
+    },
+    "sqlAssist.structure.scriptIncludeAnalyzerComments": {
+      "type": "boolean",
+      "default": false,
+      "order": 320,
+      "title": "指令碼附上結構健檢的發現",
+      "description": "在每個物件前面寫成 -- [SCHEMA-001][Warning] … 的註解。檢查的是 INCLUDE 帶大型物件、同語意資料行型別不一致、列舉欄位缺少 CHECK 這一類問題。",
+      "additionalKeywords": [ "analyzer", "健檢", "檢查", "SCHEMA-", "建議", "lint" ]
+    },
+    "sqlAssist.structure.scriptIncludeHeaderComment": {
+      "type": "boolean",
+      "default": false,
+      "order": 330,
+      "title": "指令碼附上來源檔頭",
+      "description": "在最前面寫出來源伺服器與資料庫、產生時間、工具版本與風格。存檔之後分得出這一份是從哪一台抓的。",
+      "additionalKeywords": [ "header", "檔頭", "來源", "產生時間", "版本" ]
+    },
 
+    // SQL Memory。整頁預設關閉：擷取的是使用者輸入的 SQL，自我測試通過不等於
+    // 可以自己打開。保留分級（容量壓力下逐級收緊的期限與配額）只有日常那一級在這裡，
+    // 收緊倍率固定寫在 Core 的 SqlRetentionSettings——有序的多級資料放不進
+    // Unified Settings，而拆成「第二級幾天」的純量設定是在問一個使用者沒有依據的問題。
+    "sqlAssist.sqlMemory.enabled": {
+      "type": "boolean",
+      "default": false,
+      "title": "記住查詢歷程",
+      "description": "把查詢視窗的 SQL 存進本機資料庫，供之後查閱與還原。關閉時完全不擷取，也不執行背景整理。需要「一般」頁的「啟用 SqlAssist」也開著。",
+      "order": 100,
+      "additionalKeywords": [ "history", "歷史", "查詢歷程", "recovery", "還原", "隱私" ]
+    },
+    "sqlAssist.sqlMemory.captureExecuted": {
+      "type": "boolean",
+      "default": true,
+      "title": "記錄執行過的查詢",
+      "description": "按下執行時保存當下的 SQL 與連線的伺服器、資料庫名稱；不保存密碼或連線字串。",
+      "order": 110,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "execute", "F5", "執行" ]
+    },
+    "sqlAssist.sqlMemory.captureDrafts": {
+      "type": "boolean",
+      "default": true,
+      "title": "記錄尚未執行的草稿",
+      "description": "停止輸入一段時間後保存目前內容。關閉之後只有執行過的 SQL 留得下來。",
+      "order": 120,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "draft", "草稿", "自動儲存" ]
+    },
+    "sqlAssist.sqlMemory.captureRecovery": {
+      "type": "boolean",
+      "default": true,
+      "title": "保留未存檔草稿以便當機後還原",
+      "description": "每個查詢視窗各留一份最新內容，正常關閉時移除。關閉之後 SSMS 意外結束的未存檔內容救不回來。",
+      "order": 130,
+      "enableWhen": "${config:sqlAssist.sqlMemory.captureDrafts} == 'true'",
+      "additionalKeywords": [ "recovery", "當機", "復原", "未存檔" ]
+    },
+    "sqlAssist.sqlMemory.idleSeconds": {
+      "type": "integer",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 120,
+      "title": "停止輸入幾秒後記下草稿",
+      "description": "越短越不容易漏掉剛打的內容，代價是背景寫入變頻繁。",
+      "order": 140,
+      "enableWhen": "${config:sqlAssist.sqlMemory.captureDrafts} == 'true'",
+      "additionalKeywords": [ "idle", "debounce", "延遲" ]
+    },
+    "sqlAssist.sqlMemory.autoRevisionMinutes": {
+      "type": "integer",
+      "default": 10,
+      "minimum": 1,
+      "maximum": 480,
+      "title": "同一份查詢最密幾分鐘留一個版本",
+      "description": "內容有變才留；這個間隔內的多次修改併成同一個版本。執行與手動快照不受限制。",
+      "order": 150,
+      "enableWhen": "${config:sqlAssist.sqlMemory.captureDrafts} == 'true'",
+      "additionalKeywords": [ "revision", "版本", "checkpoint" ]
+    },
+    "sqlAssist.sqlMemory.draftRetentionDays": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 3650,
+      "title": "草稿保留天數",
+      "description": "超過就從歷程清單移除。收藏、釘選與手動快照不受期限影響。",
+      "order": 200,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "retention", "保留", "清理", "天數" ]
+    },
+    "sqlAssist.sqlMemory.executionRetentionDays": {
+      "type": "integer",
+      "default": 180,
+      "minimum": 1,
+      "maximum": 3650,
+      "title": "執行紀錄保留天數",
+      "description": "執行事件與草稿分開計算；查「上個月那一段跑過什麼」靠的是這一項。",
+      "order": 210,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "retention", "執行", "清理", "天數" ]
+    },
+    "sqlAssist.sqlMemory.recoveryRetentionDays": {
+      "type": "integer",
+      "default": 7,
+      "minimum": 1,
+      "maximum": 365,
+      "title": "無人使用的未存檔草稿保留天數",
+      "description": "只算沒有任何 SSMS 還開著它的那些；還開著的查詢視窗不論多久都保留。",
+      "order": 220,
+      "enableWhen": "${config:sqlAssist.sqlMemory.captureRecovery} == 'true'",
+      "additionalKeywords": [ "recovery", "當機", "遺留", "天數" ]
+    },
+    "sqlAssist.sqlMemory.maxExecutions": {
+      "type": "integer",
+      "default": 10000,
+      "minimum": 100,
+      "maximum": 1000000,
+      "title": "最多保留幾筆執行紀錄",
+      "description": "與保留天數取聯集：期限內但超過筆數的舊紀錄也會移除。",
+      "order": 230,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "quota", "配額", "筆數", "上限" ]
+    },
+    "sqlAssist.sqlMemory.maxSessionRevisions": {
+      "type": "integer",
+      "default": 50,
+      "minimum": 5,
+      "maximum": 5000,
+      "title": "每個查詢視窗最多保留幾個自動版本",
+      "description": "只算自動留下的版本；執行、關閉與手動快照不算在內。",
+      "order": 240,
+      "enableWhen": "${config:sqlAssist.sqlMemory.captureDrafts} == 'true'",
+      "additionalKeywords": [ "quota", "配額", "版本", "上限" ]
+    },
+    "sqlAssist.sqlMemory.maxFavoriteRevisions": {
+      "type": "integer",
+      "default": 20,
+      "minimum": 1,
+      "maximum": 1000,
+      "title": "每個收藏最多保留幾個編輯版本",
+      "description": "收藏的 SQL 每編輯一次留一個版本；目前這一個永遠保留。",
+      "order": 250,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "favorites", "收藏", "版本", "上限" ]
+    },
+    "sqlAssist.sqlMemory.storageLimit": {
+      "type": "string",
+      "default": "mb512",
+      "enum": [ "mb256", "mb512", "gb1", "unlimited" ],
+      "enumItemLabels": [ "256 MB", "512 MB", "1 GB", "不限" ],
+      "title": "查詢內容的儲存上限",
+      "description": "超過之後背景整理會逐級縮短上面幾項保留，直到回到上限內。這不是硬性磁碟配額：收藏、釘選與還開著的查詢視窗永遠不會為了空間被刪。",
+      "order": 300,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "容量", "大小", "磁碟", "size", "quota" ]
+    },
+    "sqlAssist.sqlMemory.maintenanceMinutes": {
+      "type": "integer",
+      "default": 60,
+      "minimum": 5,
+      "maximum": 1440,
+      "title": "多久整理一次",
+      "description": "背景清理的間隔。SSMS 閒置時可能提前，一次只處理有限筆數，不會卡住編輯。",
+      "order": 310,
+      "enableWhen": "${config:sqlAssist.sqlMemory.enabled} == 'true'",
+      "additionalKeywords": [ "maintenance", "整理", "清理", "排程", "間隔" ]
+    },
+    "sqlAssist.notifications.enabled": {
+      "type": "boolean",
+      "default": true,
+      "order": 100,
+      "title": "顯示通知提示",
+      "description": "在目前 SQL 編輯區右上角顯示執行中與近期完成的工作。"
+    },
+    "sqlAssist.notifications.glass": {
+      "type": "boolean",
+      "default": true,
+      "order": 110,
+      "title": "玻璃材質",
+      "description": "使用主題色的層次邊緣；高對比一律使用不透明材質。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.expanded": {
+      "type": "boolean",
+      "default": true,
+      "order": 130,
+      "title": "預設展開明細",
+      "description": "顯示每一項的標題、對象與成功、部分成功、失敗、取消狀態。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.delay": {
+      "type": "integer",
+      "default": 0,
+      "order": 140,
+      "title": "顯示延遲（毫秒）",
+      "description": "延遲顯示提示；預設立即顯示。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'",
+      "minimum": 0,
+      "maximum": 30000
+    },
+    "sqlAssist.notifications.retention": {
+      "type": "integer",
+      "default": 2500,
+      "order": 150,
+      "title": "完成保留時間（毫秒）",
+      "description": "完成項目到期後同時從完成數與總數扣除；失敗與部分成功至少保留六秒。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'",
+      "minimum": 800,
+      "maximum": 30000
+    },
+    "sqlAssist.notifications.verbosity": {
+      "type": "string",
+      "default": "normal",
+      "order": 160,
+      "enum": [ "quiet", "normal", "verbose", "all" ],
+      "enumItemLabels": [
+        "安靜：只留下值得知道的事",
+        "一般：顯示各項工作",
+        "詳細：連逐次的細節工作都顯示",
+        "全部：連只進診斷統計的追蹤工作也顯示"
+      ],
+      "title": "詳細度",
+      "description": "決定工作要到哪一階才上畫面。你剛觸發的動作、失敗與部分成功不受這個門檻影響；「全部」會把打字時的追蹤工作也放上來。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'",
+      "additionalKeywords": [ "verbosity", "詳細", "安靜", "降噪", "太吵" ]
+    },
+    "sqlAssist.notifications.metadata": {
+      "type": "boolean",
+      "default": true,
+      "order": 200,
+      "title": "中繼資料載入",
+      "description": "自動發生的物件、欄位、定序與快取查詢；不包含快取命中。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.completion": {
+      "type": "boolean",
+      "default": false,
+      "order": 210,
+      "title": "建議清單",
+      "description": "輸入時準備、排序建議清單與參數提示；預設隱藏高頻提示。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.analysis": {
+      "type": "boolean",
+      "default": false,
+      "order": 220,
+      "title": "語法與區塊分析",
+      "description": "輸入時反覆執行的 T-SQL 分析；預設隱藏以減少干擾。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.preview": {
+      "type": "boolean",
+      "default": false,
+      "order": 230,
+      "title": "物件提示與結構預覽",
+      "description": "滑鼠停留提示與浮動結構預覽自己的載入工作。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.package": {
+      "type": "boolean",
+      "default": false,
+      "order": 240,
+      "title": "初始化與連線",
+      "description": "啟動 SqlAssist 的準備工作、建立與重新確認中繼資料連線。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.editing": {
+      "type": "boolean",
+      "default": true,
+      "order": 250,
+      "title": "編輯與展開",
+      "description": "按 Tab 展開 SELECT *、展開語句樣板與自動配對這類寫回編輯器的工作。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.navigation": {
+      "type": "boolean",
+      "default": true,
+      "order": 260,
+      "title": "移至定義",
+      "description": "F12 產生定義並另開查詢視窗的過程。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.results": {
+      "type": "boolean",
+      "default": true,
+      "order": 270,
+      "title": "結果格線",
+      "description": "從查詢結果產生指令碼、複製完整內容與剖析欄位。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.snippets": {
+      "type": "boolean",
+      "default": true,
+      "order": 280,
+      "title": "程式碼片段",
+      "description": "載入、儲存與還原內建及自訂片段。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.settings": {
+      "type": "boolean",
+      "default": true,
+      "order": 290,
+      "title": "設定",
+      "description": "重新讀取設定與套用到編輯器的結果回饋。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.unclassified": {
+      "type": "boolean",
+      "default": true,
+      "order": 300,
+      "title": "未分類",
+      "description": "還沒歸類的工作。預設顯示，關掉之後新加入的工作可能整批安靜消失。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'",
+      "additionalKeywords": [ "其他", "unclassified", "漏分類" ]
+    },
+    "sqlAssist.notifications.failures": {
+      "type": "boolean",
+      "default": true,
+      "order": 400,
+      "title": "顯示所有種類的失敗",
+      "description": "獨立控制錯誤提示，即使該種類已隱藏仍可顯示；不影響診斷紀錄。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'"
+    },
+    "sqlAssist.notifications.degraded": {
+      "type": "boolean",
+      "default": true,
+      "order": 410,
+      "title": "顯示部分成功",
+      "description": "主要結果拿到了、但有一部分資料取不到的工作；關掉之後它們併回一般成功。",
+      "enableWhen": "${config:sqlAssist.notifications.enabled} == 'true'",
+      "additionalKeywords": [ "降級", "degraded", "部分資料", "取不到" ]
+    },
     "sqlAssist.diagnostics.verboseLogging": {
       "type": "boolean",
       "default": false,
@@ -314,6 +845,12 @@
   },
 
   "categories": {
+    "sqlAssist.notifications": {
+      "title": "通知與背景工作",
+      "description": "提示跟隨目前 SQL 編輯區，顯示全套件正在做與剛做完的事。",
+      "additionalKeywords": [ "背景", "背景工作", "提示", "notification", "進度" ],
+      "order": 475
+    },
     "sqlAssist": {
       "title": "SqlAssist",
       "description": "T-SQL 即時建議、程式碼片段與資料庫物件結構預覽。",
@@ -321,8 +858,8 @@
     },
     "sqlAssist.general": {
       "title": "一般",
-      "description": "總開關與輸入時的改寫。關閉「啟用 SqlAssist」會一併停用下面各頁的所有功能。",
-      "additionalKeywords": [ "總開關", "停用", "全域" ],
+      "description": "總開關、輸入時的改寫與全套件的介面動畫。關閉「啟用 SqlAssist」會一併停用下面各頁的所有功能。",
+      "additionalKeywords": [ "總開關", "停用", "全域", "動畫" ],
       "order": 100
     },
     "sqlAssist.suggestions": {
@@ -348,6 +885,26 @@
       "description": "滑鼠停留提示與建議清單旁的浮動結構預覽，兩者互不影響。總開關在「一般」頁。",
       "additionalKeywords": [ "預覽", "hover", "quick info", "欄位型別" ],
       "order": 400
+    },
+    "sqlAssist.blocks": {
+      "title": "區塊配對",
+      "description": "T-SQL 起訖關鍵字與括號高亮。",
+      "order": 450
+    },
+    "sqlAssist.sqlMemory": {
+      "title": "SQL Memory",
+      "description": "把查詢視窗的 SQL 留在本機資料庫，供之後查閱、還原與收藏。整頁預設關閉。總開關在「一般」頁。",
+      "additionalKeywords": [ "history", "歷史", "查詢歷程", "草稿", "還原", "收藏", "隱私" ],
+      "order": 460,
+      "commands": [
+        {
+          "vsct": {
+            "text": "立即整理資料庫檔案…",
+            "set": "4a188946-9364-4f07-af7e-97f3bd7ca7a7",
+            "id": 525
+          }
+        }
+      ]
     },
     "sqlAssist.diagnostics": {
       "title": "診斷",

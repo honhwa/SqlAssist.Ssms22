@@ -7,16 +7,17 @@
 
 ## 引數與提示的封閉清單
 
-有三個位置除了固定那幾個字以外沒有別的東西是對的，它們與資料型別是同一種判斷、
+有四個位置除了那一份清單以外沒有別的東西是對的，它們與資料型別是同一種判斷、
 同一個代價權衡——判定成立時整份清單就換掉，所以只收看得出來的：
 
 ```text
 SELECT DATEADD(|              → DAY、MONTH、YEAR…（15 個日期部分）
 SELECT * FROM dbo.Loan WITH (| → NOLOCK、UPDLOCK、INDEX(…（21 個資料表提示）
 SELECT * FROM dbo.Loan OPTION (| → RECOMPILE、MAXDOP、FORCE ORDER…（17 個查詢提示）
+WHERE a.Code = c.Code COLLATE | → 定序名稱與 DATABASE_DEFAULT
 ```
 
-三種都認得出來，是因為左括號**前面**那個字就把話說完了。CTE 的 `WITH` 不會誤判——
+四種都認得出來，是因為游標**前面**那個字就把話說完了。CTE 的 `WITH` 不會誤判——
 `;WITH c AS (` 的 `WITH` 與左括號之間隔著一個名稱。
 
 日期部分只在**第一個**引數：打過逗號之後那裡要的是數字與日期。提示則是一份清單，
@@ -29,6 +30,8 @@ SELECT * FROM dbo.Loan OPTION (| → RECOMPILE、MAXDOP、FORCE ORDER…（17 �
 `OPENJSON(…) WITH (col int '$.x')` 也會列出資料表提示。沒有為它們再加判斷，
 是因為那兩個位置本來也沒有正確答案——前者要的是索引選項，後者要的是使用者自己取的
 資料行名稱，換掉的只是一份同樣不對的關鍵字清單。
+
+定序是唯一清單不在本機的一種，見 [定序](completion-collation.md)。
 
 `SET NOCOUNT ON` 這一類的工作階段選項**沒有**收進來。位置分不開：位置分析看到
 `SET` 一律回報同一個位置，而 `UPDATE t SET |` 要的是資料行，跟 `SET NOCOUNT` 完全
@@ -56,8 +59,8 @@ SELECT * FROM dbo.Loan OPTION (| → RECOMPILE、MAXDOP、FORCE ORDER…（17 �
 
 | 游標前方 | 只顯示 | 提交行為 |
 |---|---|---|
-| `FROM`、`JOIN`、`UPDATE`、`INTO`、`USING` | Table、View、資料表值函式 | 插入名稱；函式補上引數 |
-| `CROSS APPLY`、`OUTER APPLY` | 資料表值函式 | 補上引數 |
+| `FROM`、`JOIN`、`UPDATE`、`INTO`、`USING` | Table、View、資料表值函式 | 插入名稱；函式補上括號 |
+| `CROSS APPLY`、`OUTER APPLY` | 資料表值函式 | 補上括號 |
 | `INSERT INTO` | Table、View | 展開欄位清單與 `VALUES` |
 | `MERGE`／`MERGE INTO` | Table、View | 展開比對鍵、`UPDATE SET`、`INSERT` 與 `VALUES` |
 | `ALTER PROCEDURE`／`PROC` | Procedure | 展開完整 ALTER 定義 |
@@ -65,20 +68,32 @@ SELECT * FROM dbo.Loan OPTION (| → RECOMPILE、MAXDOP、FORCE ORDER…（17 �
 | `ALTER VIEW` | View | 展開完整 ALTER 定義 |
 | `ALTER TRIGGER` | Trigger | 展開完整 ALTER 定義 |
 | `DROP PROCEDURE`／`PROC`、`DROP FUNCTION`、`DROP VIEW` | 同上各一類 | 插入名稱 |
-| 其餘位置選到自訂函式（`SELECT `、`WHERE `…） | — | 補上引數 |
+| 其餘位置選到自訂函式（`SELECT `、`WHERE `…） | — | 補上括號 |
 | `DROP`、`DISABLE`、`ENABLE TRIGGER` | Trigger | 插入名稱 |
 | `ALTER`／`DROP`／`TRUNCATE TABLE` | Table、View | 插入名稱 |
 | `NEXT VALUE FOR`、`ALTER`／`DROP SEQUENCE` | Sequence | 插入名稱 |
 | `EXEC`、`EXECUTE` | Procedure | 展開具名參數清單 |
 | `CREATE`／`ALTER`／`DROP INDEX`／`STATISTICS`／`TRIGGER` 之後的 `ON` | Table、View | 插入名稱 |
 | `USE` | 這台伺服器上的資料庫 | 插入名稱 |
+| `COLLATE` | 定序名稱與 `DATABASE_DEFAULT` | 插入名稱 |
+| `FROM a, `、`FROM a, LibArchive.` | 同 `FROM` 那一列 | 插入名稱 |
 | `dbo.`、`[dbo].` | 該結構描述的物件 | 插入名稱 |
 | `LibArchive.dbo.`、`LibArchive..` | 那個資料庫的物件 | 插入名稱 |
 | `[192.0.2.10].[LibArchive].[dbo].` | — | 認得出來，但不給建議 |
 
+表中「只顯示」之外，寫得出名稱開頭的列（`USE`、`COLLATE` 與限定字那幾列除外）
+另列結構描述、資料庫與連結伺服器，見[限定名稱](qualified-names.md#右對齊猜錯時整條往左挪)。
+
 `USING` 與 `FROM` 收在同一列不是為了湊數：MERGE 的來源與 FROM 的來源是同一條文法，
 `SqlKeywordPositionAnalyzer` 與 `SqlScopeAnalyzer` 也早就這樣歸類。只有這一份漏掉時，
 症狀是 `USING ` 之後完全沒有清單，而使用者看不出它和 `FROM ` 之後有什麼不同。
+
+逗號那一列不靠前導關鍵字：前一、兩個詞元只有一個逗號，答案來自
+`SqlKeywordPositionAnalyzer` 的位置（逗號回到清單起點），這裡不再自己回頭找 `FROM`。
+只多問一次括號，把 `INSERT INTO T (a, ` 的資料行清單排除；括號裡裝的是查詢時仍然
+算數，那是衍生資料表自己的 `FROM` 清單。少了這一列有兩個症狀：逗號之後空前綴時
+整份上下文不參與，以及 `FROM a, LibArchive.` 的限定字會被當成別名——它比中的是
+使用者才打了一半的那個名稱，清單於是改列一張不存在的資料表的欄位。
 
 `IF EXISTS` 在比對前先剝掉一次，`DROP TABLE IF EXISTS `、`DROP TRIGGER IF EXISTS `
 因此不必各寫一條加長版。剝除只砍尾端，前面每個詞元的位置都沒有位移，所以語句

@@ -101,7 +101,7 @@ public sealed class SqlSnippetTests
         // 檔案是使用者可以手改的，壞掉一筆不該讓其他 Snippet 一起消失。
         var library = ReadLibrary("""
             {
-              "version": 1,
+              "version": 2,
               "snippets": [
                 { "shortcut": "ok", "code": "SELECT 1" },
                 { "shortcut": "", "code": "SELECT 2" },
@@ -139,6 +139,30 @@ public sealed class SqlSnippetTests
         Assert.Equal(expected, library.ValidateShortcut(shortcut, allowedExisting: null, out _));
     }
 
+    /// <remarks>
+    /// 與關鍵字撞名的捷徑會把那個字本身吃掉：使用者打 <c>select</c> 想要的多半是
+    /// 關鍵字，而展開器分不出這一次要的是哪一個。內建片段用 <c>cs</c>、<c>be</c>、
+    /// <c>ifb</c> 讓開這一條路，而那條規則原本只有內建片段的守門測試在管——
+    /// 使用者自己在管理介面加一筆 <c>select</c> 沒有人擋。規則因此放在
+    /// <see cref="SqlSnippetLibrary.ValidateShortcut"/>，管理介面存檔時走的正是它。
+    /// </remarks>
+    [Theory]
+    [InlineData("select")]
+    [InlineData("BEGIN")]
+    [InlineData("while")]
+    [InlineData("Case")]
+    public void 捷徑不能與T_SQL關鍵字撞名(string shortcut)
+    {
+        Assert.False(
+            SqlSnippetDefaults.Current.ValidateShortcut(shortcut, allowedExisting: null, out var error));
+        Assert.Contains("關鍵字", error);
+
+        // 連「這一筆本來就叫這個名字」也擋：舊檔帶進來的撞名要修掉，
+        // 放行等於讓它繼續吃掉那個關鍵字。
+        Assert.False(
+            SqlSnippetDefaults.Current.ValidateShortcut(shortcut, allowedExisting: shortcut, out _));
+    }
+
     [Fact]
     public void 編輯既有項目時不會被自己的捷徑擋下來()
     {
@@ -170,7 +194,7 @@ public sealed class SqlSnippetTests
         var library = ReadLibrary("""
             {
               // 我的片段
-              "version": 1,
+              "version": 2,
               "snippets": [
                 { "shortcut": "a", "code": "SELECT 1" },
               ],
@@ -178,6 +202,21 @@ public sealed class SqlSnippetTests
             """);
 
         Assert.Equal(1, library.Count);
+    }
+
+    /// <remarks>
+    /// 手改檔案常常不寫 version，0.14.22 以前的 v1 檔也不再有遷移路徑。
+    /// 兩者都當現行版本讀，才不會有人抱著一份讀不動又救不回來的檔案。
+    /// </remarks>
+    [Theory]
+    [InlineData("{ \"snippets\": [] }")]
+    [InlineData("{ \"version\": 1, \"snippets\": [] }")]
+    public void 版本缺席或比現行舊都照現行版本讀(string text)
+    {
+        var document = SqlSnippetSerializer.DeserializeDocument(text);
+
+        Assert.Equal(SqlSnippetLibrary.CurrentVersion, document.Version);
+        Assert.False(document.IsNewerThanSupported);
     }
 
     [Fact]

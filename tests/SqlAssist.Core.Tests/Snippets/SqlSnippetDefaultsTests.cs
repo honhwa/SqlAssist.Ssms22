@@ -14,11 +14,11 @@ namespace SqlAssist.Core.Tests.Snippets;
 public sealed class SqlSnippetDefaultsTests
 {
     [Fact]
-    public void 內建JSON有四十三筆且識別碼與捷徑唯一()
+    public void 內建JSON有四十九筆且識別碼與捷徑唯一()
     {
         var defaults = SqlSnippetDefaults.Current;
 
-        Assert.Equal(45, defaults.Count);
+        Assert.Equal(49, defaults.Count);
         Assert.Equal(
             defaults.Count,
             defaults.Snippets.Select(item => item.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
@@ -315,8 +315,8 @@ public sealed class SqlSnippetDefaultsTests
     [Theory]
     // 語句級：語句開頭與 BEGIN…END 區塊裡都要在。曾經只給 StatementStart，
     // 於是 BEGIN 之後（分析器只回報 BlockStart）整批語句片段全部消失。
-    [InlineData("SELECT 1;\n", "ssf,st100,st1,ssc,sd,ii,ui,df,mg,cdb,ctb,cv,cp,cf,ctf,cix,at,dt,ap,af,be,bt,ct,rt,ife,ifne,wl,tc,cur,trn,cte,sno,ptt")]
-    [InlineData("BEGIN\n    ", "ssf,st100,st1,ssc,sd,ii,ui,df,mg,cdb,ctb,cv,cp,cf,ctf,cix,at,dt,ap,af,be,bt,ct,rt,ife,ifne,wl,tc,cur,trn,cte,sno,ptt")]
+    [InlineData("SELECT 1;\n", "ssf,st100,st1,ssc,sd,ii,ui,df,mg,cdb,ctb,cv,cp,cf,ctf,cix,at,dt,ap,af,be,bt,ct,rt,ifb,ife,ifne,wl,tc,cur,trn,trr,cte,wcte,wdt,sno,ptt")]
+    [InlineData("BEGIN\n    ", "ssf,st100,st1,ssc,sd,ii,ui,df,mg,cdb,ctb,cv,cp,cf,ctf,cix,at,dt,ap,af,be,bt,ct,rt,ifb,ife,ifne,wl,tc,cur,trn,trr,cte,wcte,wdt,sno,ptt")]
     // 運算式級：CASE 在選取清單、逗號之後與述詞裡都要在。
     [InlineData("SELECT ", "cs")]
     [InlineData("SELECT a, ", "cs")]
@@ -455,6 +455,94 @@ public sealed class SqlSnippetDefaultsTests
             .Where(item => item.Kind == SuggestionKind.Snippet)
             .Select(item => item.DisplayText)
             .ToArray();
+    }
+
+    /// <remarks>
+    /// 包夾清單就是這一份：包夾命令列出來的內容由「樣板裡有沒有
+    /// <c>$surround$</c>」推導，沒有第二份宣告。新增可包夾的片段時要在這裡加一行——
+    /// 少了這份清單，把某一格改名或改錯的症狀只是「那一筆從包夾清單裡消失了」，
+    /// 而它在建議清單裡看起來完全正常。
+    ///
+    /// 順序也一起守：包夾清單維持設定檔的順序，所以這一份陣列就是使用者叫出
+    /// 包夾清單時看到的順序，第一筆還是預先選起來的那一筆。
+    /// <c>cp</c> 排在流程控制那一族之前，因為 DDL 分類在設定檔裡就排在前面。
+    /// </remarks>
+    [Fact]
+    public void 可包夾的內建片段就是這一份清單()
+    {
+        var shortcuts = SqlSnippetDefaults.Current.Snippets
+            .Where(snippet => snippet.CanSurround)
+            .Select(snippet => snippet.Shortcut)
+            .ToArray();
+
+        Assert.Equal(
+            new[] { "cp", "be", "ifb", "ife", "ifne", "wl", "tc", "cur", "trn", "trr", "wcte", "wdt" },
+            shortcuts);
+    }
+
+    /// <remarks>
+    /// 包夾欄位出現兩次的話，選取的內容就會被複製兩份。同名欄位的同步是原生引擎
+    /// 用標記做的，而包夾這一格在填進去之後已經不是欄位了，沒有人會替它同步。
+    /// </remarks>
+    [Fact]
+    public void 包夾欄位在樣板裡只出現一次()
+    {
+        foreach (var snippet in SqlSnippetDefaults.Current.Snippets.Where(item => item.CanSurround))
+        {
+            Assert.Equal(1, Count(snippet.Code, "$" + SqlSnippetPlaceholders.SurroundId + "$"));
+        }
+    }
+
+    /// <remarks>
+    /// 包夾欄位在展開時是最先要填的那一格，所以它在樣板裡的順序決定了「沒有選取
+    /// 時直接展開」的 Tab 路徑。<c>tc</c> 曾經是 <c>tryBody</c> 在前、
+    /// <c>catchBody</c> 在後；把前者改名成包夾欄位時若順序跟著換位，展開之後游標
+    /// 會先跳到 CATCH 區塊——看起來像片段寫錯，其實是欄位順序。
+    /// </remarks>
+    [Fact]
+    public void 包夾欄位維持在樣板的原順序()
+    {
+        var tryCatch = SqlSnippetDefaults.Current.Snippets.Single(item => item.Shortcut == "tc");
+
+        Assert.Equal(
+            new[] { SqlSnippetPlaceholders.SurroundId, "catchBody" },
+            tryCatch.Placeholders.Select(item => item.Id).ToArray());
+    }
+
+    /// <remarks>
+    /// 包夾的定義就是「這段內容被包進一個區塊裡」。錨點放錯位置（放在 <c>BEGIN</c>
+    /// 之前、或放在 <c>END</c> 之後）時，展開出來的文字看起來仍然合理，只是選取的
+    /// 內容根本沒有被包起來——那是唯一真正要守的性質，所以直接問配對器。
+    ///
+    /// 交易是唯一的例外。<see cref="BlockMatcher"/> 刻意不把 <c>BEGIN TRANSACTION</c>
+    /// 當成區塊——否則交易開頭會偷走後面的 <c>END</c>——而 <c>trr</c> 的外框正好就是
+    /// 一個交易。那一種因此另外認，而不是把這條性質放寬成「前後都有東西」，
+    /// 放寬之後錨點掉到樣板尾巴也一樣會通過。
+    /// </remarks>
+    [Fact]
+    public void 包夾之後選取內容確實落在一個區塊或交易裡()
+    {
+        const string body = "PRINT 'wrapped';";
+
+        foreach (var snippet in SqlSnippetDefaults.Current.Snippets.Where(item => item.CanSurround))
+        {
+            var text = snippet.WithSurroundText(body).Expansion.Text;
+            var offset = text.IndexOf(body, StringComparison.Ordinal);
+
+            Assert.True(offset >= 0, snippet.Shortcut);
+            Assert.True(
+                new BlockMatcher(text).GetEnclosingBlock(offset) is not null ||
+                IsInsideTransaction(text, offset),
+                snippet.Shortcut);
+        }
+    }
+
+    /// <summary>錨點夾在 <c>BEGIN TRANSACTION</c> 與 <c>ROLLBACK</c>／<c>COMMIT</c> 之間。</summary>
+    private static bool IsInsideTransaction(string text, int offset)
+    {
+        return text.IndexOf("BEGIN TRANSACTION", 0, offset, StringComparison.OrdinalIgnoreCase) >= 0 &&
+               (text.IndexOf("ROLLBACK TRANSACTION", offset, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("COMMIT TRANSACTION", offset, StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
     private static int Count(string text, string value)

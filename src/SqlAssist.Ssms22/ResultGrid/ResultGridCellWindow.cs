@@ -1,5 +1,6 @@
 using System;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.VisualStudio.PlatformUI;
@@ -31,18 +32,7 @@ internal sealed class ResultGridCellWindow : DialogWindow
     public ResultGridCellWindow(ResultGridCellText cell)
     {
         _cell = cell;
-
-        Title = "SqlAssist — 儲存格內容";
-        Width = 760;
-        Height = 520;
-        MinWidth = 420;
-        MinHeight = 260;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = VsThemeBrushes.WindowBackground;
-        Foreground = VsThemeBrushes.WindowForeground;
-        FontFamily = SqlAssistChrome.InterfaceFont;
-        FontSize = Metrics.Body;
-        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
+        SqlAssistDialogs.Configure(this, "SqlAssist — 儲存格內容", 760, 520, minWidth: 420, minHeight: 260);
 
         _statusText = SqlAssistChrome.CreateStatusText(Metrics);
         Content = BuildLayout();
@@ -50,49 +40,70 @@ internal sealed class ResultGridCellWindow : DialogWindow
 
     private Grid BuildLayout()
     {
-        var root = new Grid { Margin = new Thickness(16) };
+        var root = new Grid { Margin = SqlAssistChrome.DialogPadding };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var heading = SqlAssistChrome.CreateLabel(_cell.Headline, Metrics);
-        Grid.SetRow(heading, 0);
-        root.Children.Add(heading);
+        var toolbar = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var wrap = new CheckBox
+        {
+            Content = "自動換行",
+            Margin = new Thickness(16, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Template = SqlAssistChrome.CreateCheckBoxTemplate(),
+            ToolTip = "只改變顯示方式；複製時仍保留原始換行與空白。"
+        }.WithTheme(CheckBox.ForegroundProperty, ThemeBrush.ListForeground);
+        DockPanel.SetDock(wrap, Dock.Right);
+        toolbar.Children.Add(wrap);
+        toolbar.Children.Add(SqlAssistChrome.CreateMetadataText(_cell.Headline, Metrics));
+        root.Children.Add(toolbar);
 
         var content = SqlAssistChrome.CreateTextBox(Metrics);
         content.Text = _cell.Text;
         content.IsReadOnly = true;
+        content.IsReadOnlyCaretVisible = true;
         content.AcceptsReturn = true;
         content.TextWrapping = TextWrapping.NoWrap;
         content.FontFamily = SqlAssistChrome.CodeFont;
         content.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         content.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
-        content.Margin = new Thickness(0, 8, 0, 0);
-        Grid.SetRow(content, 1);
-        root.Children.Add(content);
+        content.Padding = new Thickness(12);
+        AutomationProperties.SetName(content, "儲存格完整內容（唯讀）");
 
-        var footer = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
+        // 只切換排版，不重設 Text，保留原文與既有選取。
+        wrap.Checked += (_, _) => content.TextWrapping = TextWrapping.Wrap;
+        wrap.Unchecked += (_, _) => content.TextWrapping = TextWrapping.NoWrap;
+
+        var body = new Grid();
+        body.Children.Add(content);
+        if (_cell.Text.Length == 0)
+        {
+            // 說明是覆蓋層，不混進 Text，避免把 NULL 或空字串複製成提示文字。
+            var empty = SqlAssistChrome.CreateHint(
+                _cell.IsNull ? "NULL — 這一格沒有值" : "空內容 — 長度為 0", Metrics);
+            empty.Margin = new Thickness(16);
+            empty.HorizontalAlignment = HorizontalAlignment.Center;
+            empty.VerticalAlignment = VerticalAlignment.Center;
+            empty.IsHitTestVisible = false;
+            body.Children.Add(empty);
+        }
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
 
         var copy = SqlAssistChrome.CreateButton("複製全部", Metrics);
-        copy.MinWidth = 78;
-        copy.Margin = new Thickness(0, 0, 6, 0);
+        copy.ToolTip = "複製完整原文；也可在內容中選取後按 Ctrl+C。";
 
         // NULL 沒有東西可以複製，而一顆按下去什麼都不會發生的按鈕比停用的按鈕難懂。
         copy.IsEnabled = !_cell.IsNull;
         copy.Click += OnCopy;
 
         var close = SqlAssistChrome.CreateButton("關閉", Metrics, primary: true);
-        close.MinWidth = 78;
         close.IsDefault = true;
         close.IsCancel = true;
         close.Click += (_, _) => Close();
 
-        DockPanel.SetDock(copy, Dock.Left);
-        DockPanel.SetDock(close, Dock.Right);
-        footer.Children.Add(copy);
-        footer.Children.Add(close);
-        footer.Children.Add(_statusText);
-
+        var footer = SqlAssistChrome.CreateDialogFooter(new[] { copy }, _statusText, close);
         Grid.SetRow(footer, 2);
         root.Children.Add(footer);
 

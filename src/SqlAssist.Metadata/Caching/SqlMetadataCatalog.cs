@@ -4,6 +4,9 @@ using System.Data;
 using System.Data.Common;
 using System.Threading;
 using System.Threading.Tasks;
+using SqlAssist.Core.Diagnostics;
+using SqlAssist.Core.Keywords;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Metadata.Formatting;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Metadata.Querying;
@@ -47,6 +50,7 @@ public sealed class SqlMetadataCatalog
     private readonly TimeSpan _failureBackoff;
     private readonly SqlCatalogQualifier _qualifier;
     private SqlDatabaseSnapshot _snapshot = SqlDatabaseSnapshot.Empty;
+    private int _snapshotVersion;
 
     /// <summary>上一次載入失敗的時刻；沒有失敗過時為 0。</summary>
     private long _failedAtTicks;
@@ -55,6 +59,11 @@ public sealed class SqlMetadataCatalog
 
     /// <summary>系統物件；只有真的被問到才載入，見 <see cref="GetSystemObjectsAsync"/>。</summary>
     private IReadOnlyList<SqlObjectInfo>? _systemObjects;
+
+    private readonly SemaphoreSlim _collationGate = new(1, 1);
+
+    /// <summary>定序；只有游標落在 <c>COLLATE</c> 之後才載入，見 <see cref="GetCollationsAsync"/>。</summary>
+    private SqlCollations? _collations;
 
     public SqlMetadataCatalog(
         ISqlConnectionSource connectionSource,
@@ -72,22 +81,36 @@ public sealed class SqlMetadataCatalog
 
     public string CacheKey => _connectionSource.CacheKey;
 
+    /// <summary>
+    /// 這份目錄實際使用的連線來源；要換到別的資料庫或別台伺服器時從這裡取。
+    /// </summary>
+    /// <remarks>
+    /// 連線來源的所有權在 <see cref="SqlMetadataCatalogRegistry"/>：同一個快取鍵重複
+    /// 建立時多出來的那一份會被釋放，而交出去的呼叫端無從得知留下來的是不是自己那一份。
+    /// 因此呼叫端<b>禁止</b>自己留一份來源，一律從手上這份目錄取。
+    ///
+    /// 自己留的症狀是：使用者先打過 <c>LibArchive.dbo.</c>（建了那個資料庫的目錄），
+    /// 再 <c>USE LibArchive</c> 切過去，這一次交出去的來源就是多出來的那一份、當場被
+    /// 釋放，而呼叫端手上還握著它——之後每一個限定名稱都以 ObjectDisposedException
+    /// 收場，連線沒有變過也就再也不會重建，直到關掉查詢視窗為止。
+    /// </remarks>
+    public ISqlConnectionSource ConnectionSource => _connectionSource;
+
     /// <summary>目前已快取的第一層資料；尚未載入時為空快照。呼叫端可用它先畫出清單。</summary>
     public SqlDatabaseSnapshot CachedSnapshot => Volatile.Read(ref _snapshot);
 
     /// <summary>清空所有層級的快取，下一次查詢會重新讀取資料庫。</summary>
     public void Invalidate()
     {
-        Volatile.Write(ref _snapshot, SqlDatabaseSnapshot.Empty);
-
         // 系統物件沒有有效期，只有這裡會把它丟掉——換連線就是換一台伺服器。
         Volatile.Write(ref _systemObjects, null);
 
-        // 失敗退避一起清掉：按重新整理的人就是在說「我修好了，現在再試一次」。
-        Volatile.Write(ref _failedAtTicks, 0);
-
         lock (_detailLock)
         {
+            // 清除期間仍在飛的第一層查詢不得把舊清單寫回來。
+            _snapshotVersion++;
+            Volatile.Write(ref _snapshot, SqlDatabaseSnapshot.Empty);
+            Volatile.Write(ref _failedAtTicks, 0);
             _details.Clear();
             _structures.Clear();
         }
@@ -127,6 +150,7 @@ public sealed class SqlMetadataCatalog
 
         if (IsFresh(cached))
         {
+            NoteCacheHit(NotificationOrigin.Typing, cached.DatabaseName);
             return cached;
         }
 
@@ -140,7 +164,7 @@ public sealed class SqlMetadataCatalog
 
         if (!cached.IsEmpty)
         {
-            BeginBackgroundRefresh();
+            _ = RefreshSnapshotInBackgroundAsync();
             return cached;
         }
 
@@ -149,26 +173,17 @@ public sealed class SqlMetadataCatalog
 
         try
         {
-            if (IsFresh(CachedSnapshot))
+            if (IsFresh(CachedSnapshot) || IsInFailureBackoff())
             {
                 return CachedSnapshot;
             }
 
-            var loaded = await Task
-                .Run(() => TryLoad(() => LoadSnapshot(cancellationToken)), cancellationToken)
+            var version = Volatile.Read(ref _snapshotVersion);
+            // 前景載入永遠是打字打出來的：使用者按了鍵、清單要資料，才會走到這裡。
+            return await Task.Run(
+                    () => LoadAndPublishSnapshot(cancellationToken, version, NotificationOrigin.Typing),
+                    cancellationToken)
                 .ConfigureAwait(false);
-
-            if (loaded is null)
-            {
-                // 連不上就維持空快照，只記下失敗的時刻。把空的寫進快取會讓連線
-                // 恢復之後仍然拿到空的，而完全不記則是下一次按鍵立刻再撞一次。
-                RecordFailure();
-                return SqlDatabaseSnapshot.Empty;
-            }
-
-            Volatile.Write(ref _snapshot, loaded);
-            Volatile.Write(ref _failedAtTicks, 0);
-            return loaded;
         }
         finally
         {
@@ -204,54 +219,168 @@ public sealed class SqlMetadataCatalog
                DateTimeOffset.UtcNow.UtcTicks - failedAt < _failureBackoff.Ticks;
     }
 
-    private static T? TryLoad<T>(Func<T> load)
+    /// <param name="operation">
+    /// 哪一條查詢。降級之後畫面上分不出「連線斷了」與「這條查詢寫錯了」，
+    /// 而紀錄檔裡唯一分得出來的線索就是這個名稱加上伺服器說的那句話；
+    /// 送出去的地方見 <see cref="SqlMetadataFailure"/>。
+    /// </param>
+    /// <param name="origin">
+    /// 誰觸發了這一次載入。打字路徑與預載在畫面上的降噪門檻不同，而併進外層工作的
+    /// 巢狀查詢沿用外層那一份。
+    /// </param>
+    /// <param name="subject">物件限定名稱；清單類的查詢沒有單一主體，留空。</param>
+    private T? TryLoad<T>(string operation, NotificationOrigin origin, Func<T> load, string subject = "")
         where T : class
     {
+        // 三軸明寫：中繼資料查詢一律是 Metadata，等級一律 Info——比 Info 低的只有
+        // 快取命中，而那一條根本不查資料庫。標題是常數，主體與來源是既有字串的引用，
+        // 因此通知被可見度篩掉時這一段一個字串都不配置。
+        using var notification = NotificationCenter.Default.Begin(operation, NotificationKind.Metadata,
+            origin, NotificationLevel.Info, subject, source: SourceName, joinParent: true);
+        // 遠端跳躍只由最外層那一次說明；巢狀查詢已經併進外層，跟著開會讓同一次載入
+        // 冒出好幾列一模一樣的提示。
+        using var hop = notification.OwnsItem ? BeginHop(origin) : null;
         try
         {
             return load();
         }
-        catch (DbException)
+        catch (DbException exception)
         {
+            notification.Fail();
+            hop?.Degrade();
+            // 紀錄檔要分得出「哪一條查詢」加「哪一個物件」，而通知的標題已經不含物件
+            // 名稱了。組字串只在真的失敗時付一次，熱路徑一個字串都不配置。
+            SqlMetadataFailure.Report(
+                subject.Length == 0 ? operation : operation + "：" + subject, exception);
             return null;
+        }
+        catch (OperationCanceledException)
+        {
+            notification.Cancel();
+            hop?.Cancel();
+            throw;
+        }
+        catch
+        {
+            // 只標記結果，不改變非資料庫例外原本的傳播契約。
+            notification.Fail();
+            hop?.Fail();
+            throw;
         }
     }
 
-    /// <summary>在背景更新第一層資料；已經有人在更新時直接略過。</summary>
-    private void BeginBackgroundRefresh()
+    /// <summary>畫面上「這一份目錄是從哪裡來的」；不隨焦點更新，也不放路徑或認證。</summary>
+    /// <remarks>中繼資料層拿不到編輯器，因此只填得出資料庫這一半，文件那一半留空。</remarks>
+    private string SourceName => _qualifier.DatabaseName ?? _connectionSource.DatabaseName;
+
+    /// <summary>
+    /// 這一次查詢跳到了別的地方時的說明；就在本機同一個資料庫上時回傳 null。
+    /// </summary>
+    /// <remarks>
+    /// 兩者都慢，而畫面上原本完全看不出來——<c>Context</c> 只有資料庫名，
+    /// 跨庫與遠端跳躍看起來與本機查詢一模一樣。連結伺服器用 <c>Notice</c>：
+    /// 它慢得使用者一定會發現，而「建議清單怎麼卡住了」這句問題只有這一列答得出來。
+    /// </remarks>
+    private NotificationScope? BeginHop(NotificationOrigin origin)
     {
-        if (!_snapshotGate.Wait(0))
+        if (_qualifier.ServerName is { } serverName)
         {
-            return;
+            return NotificationCenter.Default.BeginDetached(NotificationCatalog.QueryingLinkedServer,
+                NotificationKind.Metadata, origin, NotificationLevel.Notice, serverName, source: SourceName);
         }
 
-        _ = Task.Run(() =>
+        // 換連線的資料庫是跨資料庫的唯一形狀，見 SqlDatabaseScopedConnectionSource。
+        return _connectionSource is SqlDatabaseScopedConnectionSource
+            ? NotificationCenter.Default.BeginDetached(NotificationCatalog.ConnectingToDatabase,
+                NotificationKind.Metadata, origin, NotificationLevel.Info,
+                _connectionSource.DatabaseName, source: SourceName)
+            : null;
+    }
+
+    /// <summary>
+    /// 記一次快取命中；只進診斷統計，永不上畫面。
+    /// </summary>
+    /// <remarks>
+    /// <c>Trace</c> 只有詳細度明選「全部」才放行。少了這一條就答不出「哪些動作在重複」
+    /// ——畫面上只看得到真的查了資料庫的那幾次，而重複的按鍵大多是命中快取。
+    /// </remarks>
+    private void NoteCacheHit(NotificationOrigin origin, string subject)
+    {
+        using (NotificationCenter.Default.Begin(NotificationCatalog.CacheHit, NotificationKind.Metadata,
+                   origin, NotificationLevel.Trace, subject, source: SourceName))
+        {
+        }
+    }
+
+    /// <summary>非阻塞地預載第一層；新鮮、退避或已有查詢在途時不另排工作。</summary>
+    /// <remarks>回傳本次啟動的工作供平台觀察例外；不等待其他呼叫端已啟動的載入。</remarks>
+    public Task WarmSnapshotAsync()
+    {
+        if (IsSnapshotFresh || IsInFailureBackoff() || !_snapshotGate.Wait(0))
+        {
+            return Task.CompletedTask;
+        }
+
+        // 取得閘之前，另一條前景或預載查詢可能剛好完成。
+        if (IsSnapshotFresh || IsInFailureBackoff())
+        {
+            _snapshotGate.Release();
+            return Task.CompletedTask;
+        }
+
+        var version = Volatile.Read(ref _snapshotVersion);
+        return Task.Run(() =>
         {
             try
             {
-                // 更新失敗就繼續用舊資料，使用者不需要知道；但仍要記下失敗，
-                // 否則舊資料一過期就變成每一次按鍵排一次註定失敗的背景更新。
-                if (TryLoad(() => LoadSnapshot(CancellationToken.None)) is { } loaded)
-                {
-                    Volatile.Write(ref _snapshot, loaded);
-                    Volatile.Write(ref _failedAtTicks, 0);
-                }
-                else
-                {
-                    RecordFailure();
-                }
-            }
-            catch
-            {
-                // 這是沒有人會接結果的背景工作，程式錯誤在這裡冒出去只會變成
-                // 無人觀察的 Task 例外。Metadata 這一層沒有記錄器可用，
-                // 只能讓它停在這裡；真正的錯誤會在下一次前景載入時原地重現。
+                // 沒有人要求的預載；跨不過降噪門檻，但仍然計數與寫診斷。
+                LoadAndPublishSnapshot(CancellationToken.None, version, NotificationOrigin.Ambient);
             }
             finally
             {
                 _snapshotGate.Release();
             }
         });
+    }
+
+    private SqlDatabaseSnapshot LoadAndPublishSnapshot(CancellationToken cancellationToken, int version,
+        NotificationOrigin origin)
+    {
+        var loaded = TryLoad(NotificationCatalog.LoadingObjects, origin, () => LoadSnapshot(cancellationToken));
+        lock (_detailLock)
+        {
+            if (_snapshotVersion != version)
+            {
+                return CachedSnapshot;
+            }
+
+            if (loaded is null)
+            {
+                // 失敗不覆蓋舊快照；預載與前景讀取共用同一份退避。
+                RecordFailure();
+            }
+            else
+            {
+                // 重新載入的第一層要把系統物件接回去，否則快照一過期，
+                // FROM sys.triggers 的欄位就會在下一次背景更新之後安靜地消失。
+                Volatile.Write(ref _snapshot, loaded.WithSystemObjects(Volatile.Read(ref _systemObjects)));
+                Volatile.Write(ref _failedAtTicks, 0);
+            }
+
+            return CachedSnapshot;
+        }
+    }
+
+    private async Task RefreshSnapshotInBackgroundAsync()
+    {
+        try
+        {
+            await WarmSnapshotAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // 舊快照更新沒有等待者；維持既有降級，契約錯誤留給下次前景載入重現。
+        }
     }
 
     /// <summary>
@@ -286,7 +415,10 @@ public sealed class SqlMetadataCatalog
             }
 
             var loaded = await Task
-                .Run(() => TryLoad(() => LoadSystemObjects(cancellationToken)), cancellationToken)
+                .Run(
+                    () => TryLoad(NotificationCatalog.LoadingSystemObjects, NotificationOrigin.Typing,
+                        () => LoadSystemObjects(cancellationToken)),
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             if (loaded is null)
@@ -295,11 +427,108 @@ public sealed class SqlMetadataCatalog
             }
 
             Volatile.Write(ref _systemObjects, loaded);
+
+            lock (_detailLock)
+            {
+                Volatile.Write(ref _snapshot, CachedSnapshot.WithSystemObjects(loaded));
+            }
+
             return loaded;
         }
         finally
         {
             _systemGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 依名稱解析物件；限定字是系統結構描述而第一層答不出來時，順便把系統物件載進來。
+    /// </summary>
+    /// <remarks>
+    /// 「這個名稱是哪個物件」只有這一個入口能同時回答使用者物件與系統物件：
+    /// 第一層刻意不收 <c>sys</c> 與 <c>INFORMATION_SCHEMA</c>（那一份有一兩千筆），
+    /// 而使用者把 <c>sys.triggers</c> 寫進 <c>FROM</c> 就是指名要它。
+    /// 少了這一支的症狀是那張表的欄位在每一個位置都列不出來——建議清單、
+    /// <c>SELECT *</c> 展開、滑鼠停留與 F12 一起沒有，而畫面上只是「什麼都沒發生」。
+    ///
+    /// 沒有限定字時一個字都不多查：<c>FROM triggers</c> 在 T-SQL 裡本來就不成立，
+    /// 為它載一份一兩千筆的清單只是每一次按鍵多付一輪查詢。
+    /// </remarks>
+    public async Task<IReadOnlyList<SqlObjectInfo>> FindObjectsAsync(
+        string name,
+        string? schemaName,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        var matches = snapshot.Find(name, schemaName);
+
+        if (matches.Count > 0 || !SqlSystemSchemas.IsSystem(schemaName))
+        {
+            return matches;
+        }
+
+        // 併進快照的是這一支自己，載完之後要讀回最新的那一份。
+        await GetSystemObjectsAsync(cancellationToken).ConfigureAwait(false);
+        return CachedSnapshot.Find(name, schemaName);
+    }
+
+    /// <summary>
+    /// 取得定序名單與目前資料庫的定序；第一次被問到才查資料庫。
+    /// </summary>
+    /// <remarks>
+    /// 與系統物件同一種處境：一份幾千筆、只有一個位置用得到、而且不會在一次
+    /// 工作階段中途變動的清單，因此同樣只在真的被問到時才載入、不設有效期。
+    /// 差別在快取的層級——名單屬於伺服器而不是資料庫，跨目錄共用，
+    /// 見 <see cref="SqlServerCollationCache"/>。
+    ///
+    /// 查不到時回傳 <see cref="SqlCollations.Empty"/> 並且<b>不</b>記進快取，
+    /// 與其他層同一條規則。那個位置不會因此空掉：<c>DATABASE_DEFAULT</c> 與
+    /// 這份指令碼已經寫過的定序都不必問伺服器，由 Core 那一側補上。
+    ///
+    /// 連結伺服器的目錄一律回傳空的：定序屬於執行個體，而使用者正在編輯的
+    /// 這份指令碼跑在<b>本機</b>那條連線上。把對面那台的名單列出來，
+    /// 選中的每一個名稱都可能在這裡不存在，而畫面上看不出差別。
+    /// </remarks>
+    public async Task<SqlCollations> GetCollationsAsync(CancellationToken cancellationToken)
+    {
+        if (_qualifier.IsRemote)
+        {
+            return SqlCollations.Empty;
+        }
+
+        if (Volatile.Read(ref _collations) is { } cached)
+        {
+            return cached;
+        }
+
+        await _collationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            if (Volatile.Read(ref _collations) is { } raced)
+            {
+                return raced;
+            }
+
+            var loaded = await Task
+                .Run(
+                    () => TryLoad(NotificationCatalog.LoadingCollations, NotificationOrigin.Typing,
+                        () => LoadCollations(cancellationToken)),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (loaded is null)
+            {
+                return SqlCollations.Empty;
+            }
+
+            SqlServerCollationCache.Set(_connectionSource.ServerCacheKey, loaded.Names);
+            Volatile.Write(ref _collations, loaded);
+            return loaded;
+        }
+        finally
+        {
+            _collationGate.Release();
         }
     }
 
@@ -323,25 +552,41 @@ public sealed class SqlMetadataCatalog
 
     /// <summary>取得單一物件的欄位、參數與定義；結果會被快取。</summary>
     /// <returns>資料庫取不到時為 <c>null</c>；理由見 <see cref="TryLoad{T}"/>。</returns>
+    /// <param name="origin">
+    /// 誰觸發了這一次；同一個查詢在打字路徑與使用者按下去的命令上該有不同的降噪門檻。
+    /// </param>
     public async Task<SqlObjectDetail?> GetDetailAsync(
         SqlObjectInfo objectInfo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NotificationOrigin origin)
     {
         if (objectInfo is null)
         {
             throw new ArgumentNullException(nameof(objectInfo));
         }
 
+        SqlObjectDetail? hit;
+
         lock (_detailLock)
         {
-            if (_details.TryGetValue(objectInfo.ObjectId, out var cached))
-            {
-                return cached;
-            }
+            _details.TryGetValue(objectInfo.ObjectId, out hit);
+        }
+
+        if (hit is not null)
+        {
+            // 記在鎖外：通知會廣播出去，而那條路上有 UI 派送——不該壓在明細鎖裡。
+            NoteCacheHit(origin, objectInfo.QualifiedName);
+            return hit;
         }
 
         var detail = await Task
-            .Run(() => TryLoad(() => LoadDetail(objectInfo, cancellationToken)), cancellationToken)
+            .Run(
+                () => TryLoad(
+                    NotificationCatalog.LoadingColumns,
+                    origin,
+                    () => LoadDetail(objectInfo, cancellationToken),
+                    objectInfo.QualifiedName),
+                cancellationToken)
             .ConfigureAwait(false);
 
         if (detail is null)
@@ -369,25 +614,35 @@ public sealed class SqlMetadataCatalog
     /// 只有使用者主動打開結構面板時才會走到這裡，因此可以放心多查兩次；
     /// 按鍵路徑上的 <see cref="GetDetailAsync"/> 不受影響。
     /// </remarks>
-    /// <returns>資料庫取不到時為 <c>null</c>；理由見 <see cref="TryLoad{T}"/>。</returns>
+    /// <returns>
+    /// 第二層都取不到時為 <c>null</c>；理由見 <see cref="TryLoad{T}"/>。第二層拿到了
+    /// 而第四層失敗時回傳一份標記為不完整的結構，不是 <c>null</c>——說明見下方。
+    /// </returns>
+    /// <param name="origin"><inheritdoc cref="GetDetailAsync" path="/param[@name='origin']"/></param>
     public async Task<SqlObjectStructure?> GetStructureAsync(
         SqlObjectInfo objectInfo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NotificationOrigin origin)
     {
         if (objectInfo is null)
         {
             throw new ArgumentNullException(nameof(objectInfo));
         }
 
+        SqlObjectStructure? hit;
+
         lock (_detailLock)
         {
-            if (_structures.TryGetValue(objectInfo.ObjectId, out var cached))
-            {
-                return cached;
-            }
+            _structures.TryGetValue(objectInfo.ObjectId, out hit);
         }
 
-        if (await GetDetailAsync(objectInfo, cancellationToken).ConfigureAwait(false) is not { } detail)
+        if (hit is not null)
+        {
+            NoteCacheHit(origin, objectInfo.QualifiedName);
+            return hit;
+        }
+
+        if (await GetDetailAsync(objectInfo, cancellationToken, origin).ConfigureAwait(false) is not { } detail)
         {
             return null;
         }
@@ -395,17 +650,35 @@ public sealed class SqlMetadataCatalog
         // 索引與外來鍵只有本身就是一張資料表的那幾類查得出東西。資料表值函式
         // 這一輪也有資料行了，但它的指令碼來自定義本文，索引寫不進
         // CREATE FUNCTION——為它多跑一次第四層查詢，換不到任何顯示得出來的分頁。
-        var structure = objectInfo.Kind.IsTableShaped()
-            ? await Task
-                .Run(() => TryLoad(() => LoadStructure(detail, cancellationToken)), cancellationToken)
-                .ConfigureAwait(false)
-            : new SqlObjectStructure(detail);
-
-        if (structure is null)
+        if (!objectInfo.Kind.IsTableShaped())
         {
-            return null;
+            return Cache(objectInfo, new SqlObjectStructure(detail));
         }
 
+        var structure = await Task
+            .Run(
+                () => TryLoad(
+                    NotificationCatalog.LoadingIndexes,
+                    origin,
+                    () => LoadStructure(detail, cancellationToken),
+                    objectInfo.QualifiedName),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        // 第四層失敗不回 null。回 null 的話呼叫端分不出「連不上」與「這一條查詢
+        // 壞了」，而結構預覽對 null 只有一句「沒有可用的連線」——第二層明明已經
+        // 把欄位畫出來了，那句話會把它整片蓋掉，並且把使用者送去查一個好好的連線。
+        // 改成回傳只有第二層、且標記為不完整的結構：給人看的欄位留著，
+        // 要拿去執行的指令碼由 CanBuildExecutableScript 擋下並說明原因。
+        //
+        // 這一份不進快取——失敗不進快取，否則連線恢復之後仍然拿到殘缺的那一份。
+        return structure is null
+            ? new SqlObjectStructure(detail, structureUnavailable: true)
+            : Cache(objectInfo, structure);
+    }
+
+    private SqlObjectStructure Cache(SqlObjectInfo objectInfo, SqlObjectStructure structure)
+    {
         lock (_detailLock)
         {
             if (_structures.Count >= MaximumCachedDetails)
@@ -441,10 +714,54 @@ public sealed class SqlMetadataCatalog
                 objectId)
             : new List<SqlForeignKeyRow>();
 
+        // 擴充屬性與索引、外來鍵同一層，走同一條連線：分開載入等於在使用者
+        // 打開結構的那一刻多開一次連線，而那三份資料一定是一起要的。
+        var extendedProperties = ReadList(
+            connection,
+            SqlMetadataQueries.ExtendedProperties,
+            SqlMetadataReader.ReadExtendedProperty,
+            cancellationToken,
+            objectId);
+
+        // 檢視與資料表型別都沒有 CHECK 條件約束，少一次來回。
+        var checkConstraints = detail.Object.Kind == SqlObjectKind.Table
+            ? ReadList(
+                connection,
+                SqlMetadataQueries.CheckConstraints,
+                SqlMetadataReader.ReadCheckConstraint,
+                cancellationToken,
+                objectId)
+            : new List<SqlCheckConstraint>();
+
+        // 只有資料表有檔案群組。檢視、資料表型別與指令碼宣告的東西問不到那一列，
+        // 而查詢成功卻沒有列與查詢失敗在這裡是同一個結果：什麼都不寫。
+        var storage = detail.Object.Kind == SqlObjectKind.Table
+            ? ReadList(
+                connection,
+                SqlMetadataQueries.TableStorage,
+                SqlMetadataReader.ReadTableStorage,
+                cancellationToken,
+                objectId)
+            : new List<SqlTableStorage>();
+
+        // 只有資料表掛得住觸發程序，而且只有指令碼要它——結構面板不列。
+        var triggers = detail.Object.Kind == SqlObjectKind.Table
+            ? ReadList(
+                connection,
+                SqlMetadataQueries.Triggers,
+                SqlMetadataReader.ReadTrigger,
+                cancellationToken,
+                objectId)
+            : new List<SqlTriggerInfo>();
+
         return new SqlObjectStructure(
             detail,
             SqlIndexInfo.FromRows(indexRows),
-            SqlForeignKeyInfo.FromRows(foreignKeyRows));
+            SqlForeignKeyInfo.FromRows(foreignKeyRows),
+            extendedProperties,
+            checkConstraints,
+            storage.Count > 0 ? storage[0] : SqlTableStorage.None,
+            triggers);
     }
 
     private bool IsFresh(SqlDatabaseSnapshot snapshot)
@@ -504,7 +821,7 @@ public sealed class SqlMetadataCatalog
     /// </remarks>
     private List<string> ReadDatabases(IDbConnection connection, CancellationToken cancellationToken)
     {
-        return TryLoad(() => ReadList(
+        return TryLoad(NotificationCatalog.LoadingDatabases, NotificationOrigin.Typing, () => ReadList(
             connection,
             SqlMetadataQueries.Databases,
             record => record.GetString(0),
@@ -518,11 +835,42 @@ public sealed class SqlMetadataCatalog
     /// </remarks>
     private List<string> ReadLinkedServers(IDbConnection connection, CancellationToken cancellationToken)
     {
-        return TryLoad(() => ReadList(
+        return TryLoad(NotificationCatalog.LoadingLinkedServers, NotificationOrigin.Typing, () => ReadList(
             connection,
             SqlMetadataQueries.LinkedServers,
             record => record.GetString(0),
             cancellationToken)) ?? new List<string>();
+    }
+
+    private SqlCollations LoadCollations(CancellationToken cancellationToken)
+    {
+        using var connection = _connectionSource.OpenConnection();
+
+        // 同一台伺服器已經問過就不再問第二次；那一份與連到哪個資料庫無關。
+        var names = SqlServerCollationCache.TryGet(_connectionSource.ServerCacheKey, out var shared)
+            ? shared
+            : ReadList(
+                connection,
+                SqlMetadataQueries.Collations,
+                record => record.GetString(0),
+                cancellationToken);
+
+        return new SqlCollations(names, ReadDatabaseCollation(connection, cancellationToken));
+    }
+
+    /// <remarks>
+    /// 與資料庫清單同理：這一個查不到不該讓整份名單跟著沒有。少了它只是
+    /// 「排在最前面的那一個不見了」，而整份名單沒有的話那個位置只剩兩個字。
+    /// </remarks>
+    private string? ReadDatabaseCollation(IDbConnection connection, CancellationToken cancellationToken)
+    {
+        var rows = TryLoad(NotificationCatalog.LoadingDatabaseCollation, NotificationOrigin.Typing, () => ReadList(
+            connection,
+            SqlMetadataQueries.DatabaseCollation,
+            record => record.IsDBNull(0) ? null : record.GetString(0),
+            cancellationToken));
+
+        return rows is { Count: > 0 } ? rows[0] : null;
     }
 
     private List<SqlObjectInfo> LoadSystemObjects(CancellationToken cancellationToken)
@@ -542,14 +890,22 @@ public sealed class SqlMetadataCatalog
         using var connection = _connectionSource.OpenConnection();
         var objectId = objectInfo.ObjectId;
 
+        // sys.columns 只收使用者物件：sys.triggers、INFORMATION_SCHEMA.TABLES 這些
+        // 系統檢視的資料行一列都不在上面，拿它去問的結果是「查詢成功，但沒有欄位」，
+        // 而那與權限不足看起來一模一樣。
         var columns = objectInfo.Kind.HasCatalogColumns()
             ? ReadList(
                 connection,
-                SqlMetadataQueries.Columns,
+                SqlMetadataQueries.ColumnsFor(objectInfo.SchemaName),
                 SqlMetadataReader.ReadColumn,
                 cancellationToken,
                 objectId)
             : new List<SqlColumnInfo>();
+
+        // 說明與資料行同一層：滑鼠停留提示只讀快取、不等查詢，併進第四層的話
+        // 提示上只有「剛好開過結構」的物件才有說明，而畫面上看不出那個差別。
+        // 資料行的說明沒有這一次來回，它跟著 sys.columns 的 LEFT JOIN 一起回來。
+        var description = ReadObjectDescription(connection, objectId, cancellationToken);
 
         if (!objectInfo.Kind.IsModule())
         {
@@ -557,7 +913,8 @@ public sealed class SqlMetadataCatalog
                 objectInfo,
                 columns,
                 new List<SqlParameterInfo>(),
-                LoadSynthesizedDefinition(connection, objectInfo, cancellationToken));
+                LoadSynthesizedDefinition(connection, objectInfo, cancellationToken),
+                description);
         }
 
         var parameters = ReadList(
@@ -571,7 +928,27 @@ public sealed class SqlMetadataCatalog
         var value = command.ExecuteScalar();
         var definition = value is string text && !string.IsNullOrWhiteSpace(text) ? text : null;
 
-        return new SqlObjectDetail(objectInfo, columns, parameters, definition);
+        return new SqlObjectDetail(objectInfo, columns, parameters, definition, description);
+    }
+
+    /// <remarks>
+    /// 一列都沒有就是沒有掛說明，與查詢失敗分得開——失敗在
+    /// <see cref="TryLoad{T}"/> 就整份第二層降級成「這一輪沒有資料」了，
+    /// 走不到這裡。
+    /// </remarks>
+    private string? ReadObjectDescription(
+        IDbConnection connection,
+        int objectId,
+        CancellationToken cancellationToken)
+    {
+        var rows = ReadList(
+            connection,
+            SqlMetadataQueries.ObjectDescription,
+            record => record.IsDBNull(0) ? null : record.GetString(0),
+            cancellationToken,
+            objectId);
+
+        return rows.Count > 0 ? rows[0] : null;
     }
 
     /// <summary>

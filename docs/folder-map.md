@@ -19,8 +19,10 @@
 | `Statements/` | INSERT／MERGE／EXEC／函式展開與預留值 |
 | `Wildcards/` | `SELECT *` 的判斷與展開後的排版 |
 | `Settings/` | 設定 POCO、moniker、數值範圍與讀取 |
+| `Scripting/` | 指令碼選項、三組風格與它們的序列化 |
 | `Diagnostics/` | 版本、健康檢查與匿名診斷摘要 |
 | `Json/` | 最小 JSON 讀寫（Snippet 檔與註冊檔測試用） |
+| `SqlMemory/` | SQL Memory 契約、版本引擎、背景寫入、維護策略、宿主協調與瀏覽器模型 |
 
 ## SqlAssist.Metadata（netstandard2.0，只依賴 `System.Data`）
 
@@ -29,8 +31,16 @@
 | `Model/` | 物件、欄位、參數、索引、外來鍵的模型 |
 | `Querying/` | 分層的中繼資料查詢與資料列對應 |
 | `Caching/` | 依「伺服器＋資料庫」快取，並協調分層載入 |
-| `Formatting/` | 型別、欄位呈現與可執行指令碼樣板 |
+| `Formatting/` | 型別、欄位呈現，以及重建物件定義的排版與批次樣板 |
+| `Analysis/` | 結構健檢的規則與分析器 |
 | `ResultGrid/` | 格線模型、值轉字面值、`#temp` 與 `IN` |
+
+## SQL Memory 儲存
+
+| 專案 | 職責 |
+| --- | --- |
+| `SqlAssist.SqlMemory.Sqlite` | `SqliteDatabase`（連線、pragma、schema 身分）與各聚合的 store：擷取與歷程、收藏、維護、租約 |
+| `SqlAssist.SqlMemory.Isolation` | 隔離 AppDomain、跨界 worker 與儲存自我測試 |
 
 ## SqlAssist.Ssms22（net48 VSIX，只做接線）
 
@@ -39,11 +49,14 @@
 | `Completion/` | 非同步 IntelliSense、提交、展開與重開 |
 | `Editor/` | 編輯器接線、Tab／Enter、寫回、物件定位與殼層命令 |
 | `QuickInfo/` | 滑鼠停留提示 |
+| `Signatures/` | 純量函式的參數提示（平台簽章提示的來源與目前引數） |
 | `Preview/` | 浮動結構預覽內容與視窗機制 |
 | `Wildcards/` | `SELECT *` 的展開與可展開提示（Tab 由 `Editor/` 分派） |
 | `Snippets/` | 片段檔、管理員視窗與 Expansion Session |
 | `Settings/` | Unified Settings 讀取、預覽視窗尺寸，以及推給 SSMS 的語言偏好 |
 | `Connections/` | 取得 SSMS 查詢視窗的連線，以及另開一個沿用連線的查詢視窗 |
 | `Commands/` | 命令識別碼、工具選單與診斷視窗 |
+| `Notifications/` | 通知卡片的呈現、表面、宿主優先序與全域控制器，以及 WPF 視窗宿主 |
 | `ResultGrid/` | 讀取選取範圍並輸出到視窗或剪貼簿 |
+| `SqlMemory/` | SQL Memory 的設定與計時器接線、編輯器擷取事件、工具窗與對話框 |
 | `UI/` | 全擴充共用外觀與佈景筆刷 |

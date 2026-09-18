@@ -15,16 +15,14 @@ namespace SqlAssist.Core.Tests.Completion;
 /// </remarks>
 public sealed class SqlInsertionTextTests
 {
-    // 這幾份是「物件名要怎麼寫」的固定裝置：資料來源別名是另一件事，
-    // 預設開著會把每一條預期的字串都拖下水。關掉它，讓各測試只測自己那件事。
     private static readonly SqlAssistSettings Qualified =
-        new() { QualifyObjectNames = true, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
+        new() { QualifyObjectNames = true, UseSquareBrackets = false };
 
     private static readonly SqlAssistSettings Unqualified =
-        new() { QualifyObjectNames = false, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
+        new() { QualifyObjectNames = false, UseSquareBrackets = false };
 
     private static readonly SqlAssistSettings Bracketed =
-        new() { QualifyObjectNames = true, UseSquareBrackets = true, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
+        new() { QualifyObjectNames = true, UseSquareBrackets = true };
 
     private static SqlSuggestion Table(string name, string? schema = "dbo") =>
         new(name, name, "Table", name, SuggestionKind.Table, schemaName: schema);
@@ -96,7 +94,7 @@ public sealed class SqlInsertionTextTests
     [Fact]
     public void 路徑的中間段只寫名稱本身()
     {
-        var schema = new SqlSuggestion("dbo", "dbo.", "Schema", "dbo", SuggestionKind.Schema, schemaName: "dbo");
+        var schema = new SqlSuggestion("dbo", "dbo", "Schema", "dbo", SuggestionKind.Schema, schemaName: "dbo");
         var database = new SqlSuggestion("LibArchive", "LibArchive", "Database", "LibArchive", SuggestionKind.Database);
         var server = new SqlSuggestion("LibMirror", "LibMirror", "Linked server", "LibMirror", SuggestionKind.LinkedServer);
 

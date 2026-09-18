@@ -22,9 +22,12 @@ public sealed class SqlAssistRegistrationTests
     /// 改名等於讓所有既有使用者的設定回退到預設值。
     /// </summary>
     [Theory]
+    [InlineData("sqlAssist.notifications.verbosity", "quiet", "normal", "verbose", "all")]
     [InlineData("sqlAssist.insertion.wildcardLayout", "oneLineWhenShort", "onePerLine", "fillWidth")]
     [InlineData("sqlAssist.structure.previewMode", "delay", "rightArrow", "off")]
     [InlineData("sqlAssist.structure.previewPlacement", "stacked", "beside")]
+    [InlineData("sqlAssist.structure.scriptStyle", "fidelity", "ssmsNative", "minimal")]
+    [InlineData("sqlAssist.sqlMemory.storageLimit", "mb256", "mb512", "gb1", "unlimited")]
     public void 列舉的字面值不變(string moniker, params string[] expected)
     {
         using var document = RegistrationManifest.Open();

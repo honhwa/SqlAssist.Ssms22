@@ -56,6 +56,8 @@ public sealed class SqlObjectModelTests
     [InlineData(SqlObjectKind.View, true)]
     [InlineData(SqlObjectKind.Synonym, true)]
     [InlineData(SqlObjectKind.InlineTableFunction, true)]
+    [InlineData(SqlObjectKind.TemporaryTable, true)]
+    [InlineData(SqlObjectKind.CommonTableExpression, true)]
     [InlineData(SqlObjectKind.Procedure, false)]
     [InlineData(SqlObjectKind.ScalarFunction, false)]
     public void 判斷是否為資料來源(SqlObjectKind kind, bool expected)
@@ -77,6 +79,9 @@ public sealed class SqlObjectModelTests
     [InlineData(SqlObjectKind.ScalarFunction, false)]
     [InlineData(SqlObjectKind.Procedure, false)]
     [InlineData(SqlObjectKind.Synonym, false)]
+    [InlineData(SqlObjectKind.TemporaryTable, false)]
+    [InlineData(SqlObjectKind.TableVariable, false)]
+    [InlineData(SqlObjectKind.CommonTableExpression, false)]
     public void 判斷sys_columns查不查得到資料行(SqlObjectKind kind, bool expected)
     {
         Assert.Equal(expected, kind.HasCatalogColumns());
@@ -93,6 +98,9 @@ public sealed class SqlObjectModelTests
     [InlineData(SqlObjectKind.InlineTableFunction, false)]
     [InlineData(SqlObjectKind.TableValuedFunction, false)]
     [InlineData(SqlObjectKind.Procedure, false)]
+    [InlineData(SqlObjectKind.TemporaryTable, true)]
+    [InlineData(SqlObjectKind.TableVariable, true)]
+    [InlineData(SqlObjectKind.CommonTableExpression, true)]
     public void 判斷物件本身是不是一組資料行(SqlObjectKind kind, bool expected)
     {
         Assert.Equal(expected, kind.IsTableShaped());
@@ -108,6 +116,9 @@ public sealed class SqlObjectModelTests
     [InlineData(SqlObjectKind.TableType, false)]
     [InlineData(SqlObjectKind.InlineTableFunction, false)]
     [InlineData(SqlObjectKind.TableValuedFunction, false)]
+    [InlineData(SqlObjectKind.TemporaryTable, true)]
+    [InlineData(SqlObjectKind.TableVariable, true)]
+    [InlineData(SqlObjectKind.CommonTableExpression, false)]
     public void 判斷插不插得進去(SqlObjectKind kind, bool expected)
     {
         Assert.Equal(expected, kind.IsInsertTarget());
@@ -164,9 +175,32 @@ public sealed class SqlObjectModelTests
     [InlineData(SqlObjectKind.Synonym, true)]
     [InlineData(SqlObjectKind.Sequence, true)]
     [InlineData(SqlObjectKind.Unknown, false)]
+    [InlineData(SqlObjectKind.TemporaryTable, true)]
+    [InlineData(SqlObjectKind.TableVariable, true)]
+
+    // CTE 的宣告不是一句可以單獨執行的敘述：它得接著一段查詢，
+    // 而鏈在一起的 WITH a AS (…), b AS (…) 只取出 b 更是可能少了 a。
+    [InlineData(SqlObjectKind.CommonTableExpression, false)]
     public void 判斷這一類寫不寫得出可執行的指令碼(SqlObjectKind kind, bool expected)
     {
         Assert.Equal(expected, kind.HasExecutableScript());
+    }
+
+    /// <remarks>
+    /// 這三種的 <c>object_id</c> 一律是 0，而中繼資料的第二、三層快取正是照編號
+    /// 存的。放行的症狀是兩個不同的暫存資料表互相蓋掉對方的欄位，
+    /// 外加每一次都白跑一趟查不到東西的查詢。
+    /// </remarks>
+    [Theory]
+    [InlineData(SqlObjectKind.TemporaryTable, true)]
+    [InlineData(SqlObjectKind.TableVariable, true)]
+    [InlineData(SqlObjectKind.CommonTableExpression, true)]
+    [InlineData(SqlObjectKind.Table, false)]
+    [InlineData(SqlObjectKind.TableType, false)]
+    [InlineData(SqlObjectKind.Unknown, false)]
+    public void 判斷是不是指令碼自己宣告的(SqlObjectKind kind, bool expected)
+    {
+        Assert.Equal(expected, kind.IsScriptDeclared());
     }
 
     [Theory]
@@ -233,6 +267,30 @@ public sealed class SqlObjectModelTests
         Assert.Equal(
             "#StationStock",
             new SqlObjectInfo(0, string.Empty, "#StationStock", SqlObjectKind.Table).QualifiedName);
+    }
+
+    /// <summary>
+    /// 完整名稱拆成前綴與名稱兩段，而且拆出來還是同一個。
+    /// </summary>
+    /// <remarks>
+    /// 結構預覽的標題要把結構描述畫成淡色、名稱畫成粗體，只能分兩段畫。它自己
+    /// 拼一次的症狀是 <c>[].[#TempTest]</c>——那宣稱有一個叫空字串的結構描述。
+    /// </remarks>
+    [Theory]
+    [InlineData("dbo", "Lib_Reader", "[dbo].", "[Lib_Reader]")]
+    [InlineData("", "#Loan", "", "#Loan")]
+    [InlineData("", "@rows", "", "@rows")]
+    public void 完整名稱拆得成標題的兩段(
+        string schemaName,
+        string name,
+        string expectedPrefix,
+        string expectedName)
+    {
+        var info = new SqlObjectInfo(0, schemaName, name, SqlObjectKind.Table);
+
+        Assert.Equal(expectedPrefix, info.SchemaPrefix);
+        Assert.Equal(expectedName, info.QuotedName);
+        Assert.Equal(info.QualifiedName, info.SchemaPrefix + info.QuotedName);
     }
 
     [Theory]
@@ -305,6 +363,60 @@ public sealed class SqlObjectModelTests
 
         Assert.Single(matches);
         Assert.Equal("sales", matches[0].SchemaName);
+    }
+
+    /// <summary>
+    /// 系統物件只有被限定字指名時才找得到。
+    /// </summary>
+    /// <remarks>
+    /// 第一層刻意不收 sys 與 INFORMATION_SCHEMA（那一份有一兩千筆），
+    /// 但使用者把 sys.triggers 寫進 FROM 就是指名要它——找不到的症狀是那張表的
+    /// 欄位在建議清單、SELECT * 展開、滑鼠停留與 F12 上一起消失。
+    /// </remarks>
+    [Theory]
+    [InlineData("sys")]
+    [InlineData("SYS")]
+    [InlineData("INFORMATION_SCHEMA")]
+    public void 限定在系統結構描述時找得到系統物件(string schemaName)
+    {
+        var snapshot = Snapshot(new SqlObjectInfo(1, "dbo", "Lib_Reader", SqlObjectKind.Table))
+            .WithSystemObjects(new[]
+            {
+                new SqlObjectInfo(11, "sys", "triggers", SqlObjectKind.View),
+                new SqlObjectInfo(12, "INFORMATION_SCHEMA", "triggers", SqlObjectKind.View)
+            });
+
+        var match = Assert.Single(snapshot.Find("TRIGGERS", schemaName));
+
+        Assert.Equal(schemaName, match.SchemaName, ignoreCase: true);
+    }
+
+    /// <remarks>
+    /// <c>FROM triggers</c> 在 T-SQL 裡本來就不成立；答得出來只會是我們自己編的。
+    /// 系統物件也不該混進列給使用者看的那一份清單——那裡打第一個字元時，
+    /// 真正要找的東西會被 sp_ 開頭的名稱淹掉。
+    /// </remarks>
+    [Fact]
+    public void 沒有限定字時找不到系統物件()
+    {
+        var snapshot = Snapshot(new SqlObjectInfo(1, "dbo", "Lib_Reader", SqlObjectKind.Table))
+            .WithSystemObjects(new[] { new SqlObjectInfo(11, "sys", "triggers", SqlObjectKind.View) });
+
+        Assert.Empty(snapshot.Find("triggers"));
+        Assert.Empty(snapshot.Find("triggers", "dbo"));
+        Assert.Single(snapshot.Objects);
+        Assert.Single(snapshot.Find("Lib_Reader"));
+    }
+
+    /// <remarks>還沒載入那一份時，快照仍然是同一個物件，不必白配置一份索引。</remarks>
+    [Fact]
+    public void 沒有系統物件時不換掉快照()
+    {
+        var snapshot = Snapshot(new SqlObjectInfo(1, "dbo", "Lib_Reader", SqlObjectKind.Table));
+
+        Assert.Same(snapshot, snapshot.WithSystemObjects(null));
+        Assert.Same(snapshot, snapshot.WithSystemObjects(System.Array.Empty<SqlObjectInfo>()));
+        Assert.Empty(snapshot.SystemObjects);
     }
 
     [Fact]

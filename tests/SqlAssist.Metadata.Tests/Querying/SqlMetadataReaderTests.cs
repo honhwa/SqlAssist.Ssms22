@@ -126,6 +126,41 @@ public sealed class SqlMetadataReaderTests
         Assert.Equal("[UserId] int IDENTITY NOT NULL -- PK", line);
     }
 
+    /// <summary>
+    /// 資料行的說明跟著資料行一起回來。
+    /// </summary>
+    /// <remarks>
+    /// 說明掛在 <c>sys.columns</c> 那條查詢的最後一欄（<c>LEFT JOIN</c> 多一欄，
+    /// 不是多一輪來回）。順序對不上的症狀不是編譯錯誤，而是提示上出現另一個欄位的
+    /// 說明——那比沒有說明糟。
+    /// </remarks>
+    [Fact]
+    public void 讀取欄位說明()
+    {
+        var record = new FakeDataRecord(
+            1, "Id", "int", (short)4, (byte)10, (byte)0,
+            false, true, false, true, null, null, false,
+            null, null, null, null, false, false, false, false,
+            "讀者編號");
+
+        Assert.Equal("讀者編號", SqlMetadataReader.ReadColumn(record).Description);
+    }
+
+    /// <remarks>
+    /// 指令碼宣告的資料表與這裡的假資料列都只組得出前面那幾欄。多讀一欄拿到的是
+    /// <c>IndexOutOfRangeException</c>——那不是 <c>DbException</c>，不會被降級成
+    /// 「這一輪沒有資料」，而會一路冒到平台邊界去。
+    /// </remarks>
+    [Fact]
+    public void 沒有說明那一欄時不當機()
+    {
+        var record = new FakeDataRecord(
+            1, "Id", "int", (short)4, (byte)10, (byte)0,
+            false, true, false, true, null, null, false);
+
+        Assert.Null(SqlMetadataReader.ReadColumn(record).Description);
+    }
+
     [Fact]
     public void 讀取計算欄位的運算式()
     {
@@ -247,5 +282,190 @@ public sealed class SqlMetadataReaderTests
             0, "", "int", (short)4, (byte)10, (byte)0, false);
 
         Assert.Equal("(傳回值)", SqlMetadataReader.ReadParameter(record).Name);
+    }
+
+    [Fact]
+    public void 讀取索引選項與檔案群組()
+    {
+        // 前 10 欄與舊查詢相同，之後是選項、統計資料、壓縮與資料空間。
+        var record = new FakeDataRecord(
+            2, "IX_Loan_1", false, false, false, "NONCLUSTERED", null, "Status", false, false,
+            (byte)80, true, false, true, false, false, true, "PAGE", "FG_Loan", "FG", null);
+
+        var row = SqlMetadataReader.ReadIndexRow(record);
+
+        Assert.Equal((byte)80, row.Options.FillFactor);
+        Assert.True(row.Options.IsPadded);
+        Assert.False(row.Options.AllowPageLocks);
+        Assert.True(row.Options.NoRecompute);
+        Assert.Equal("PAGE", row.Options.DataCompression);
+        Assert.Equal("FG_Loan", row.DataSpace?.Name);
+        Assert.False(row.DataSpace?.IsPartitionScheme);
+    }
+
+    /// <remarks>
+    /// ALLOW_ROW_LOCKS 與 ALLOW_PAGE_LOCKS 的預設是 ON。讀不到時給錯的話，
+    /// 每一個索引都會多出一個 = OFF，而那會靜靜地改掉那張表的鎖定行為。
+    /// </remarks>
+    [Fact]
+    public void 只給得出舊欄位的索引列拿到預設選項()
+    {
+        var record = new FakeDataRecord(
+            2, "IX_Loan_1", false, false, false, "NONCLUSTERED", null, "Status", false, false);
+
+        var row = SqlMetadataReader.ReadIndexRow(record);
+
+        Assert.True(row.Options.AllowRowLocks);
+        Assert.True(row.Options.AllowPageLocks);
+        Assert.False(row.Options.IsPadded);
+        Assert.Empty(row.Options.DescribeNonDefaults());
+        Assert.Null(row.DataSpace);
+    }
+
+    [Fact]
+    public void 讀取資料表的檔案群組與LOB檔案群組()
+    {
+        var record = new FakeDataRecord("PRIMARY", "FG", "PRIMARY", true, null, true);
+
+        var storage = SqlMetadataReader.ReadTableStorage(record);
+
+        Assert.Equal("PRIMARY", storage.DataSpace?.Name);
+        Assert.Equal("PRIMARY", storage.LobFilegroupName);
+        Assert.True(storage.UsesAnsiNulls);
+        Assert.True(storage.UsesQuotedIdentifier);
+    }
+
+    [Fact]
+    public void 讀取分割配置時一併帶回分割資料行()
+    {
+        var record = new FakeDataRecord("ps_Loan", "PS", null, true, "LoanTime", true);
+
+        var storage = SqlMetadataReader.ReadTableStorage(record);
+
+        Assert.True(storage.DataSpace?.IsPartitionScheme);
+        Assert.Equal("LoanTime", storage.DataSpace?.PartitionColumnName);
+        Assert.Null(storage.LobFilegroupName);
+    }
+
+    /// <remarks>
+    /// 猜一個 [PRIMARY] 出來是指令碼在說謊：那張表可能建在別的檔案群組上。
+    /// </remarks>
+    [Fact]
+    public void 查不到檔案群組時整個為null()
+    {
+        var record = new FakeDataRecord(null, null, null, false, null, false);
+
+        var storage = SqlMetadataReader.ReadTableStorage(record);
+
+        Assert.Null(storage.DataSpace);
+        Assert.Null(storage.LobFilegroupName);
+        Assert.False(storage.UsesAnsiNulls);
+    }
+
+    [Theory]
+    [InlineData(0, null, SqlExtendedPropertyLevel.Table)]
+    [InlineData(1, "LoanUser", SqlExtendedPropertyLevel.Column)]
+    [InlineData(2, "IX_Loan_1", SqlExtendedPropertyLevel.Index)]
+    [InlineData(3, "DF_Loan_IsActive", SqlExtendedPropertyLevel.Constraint)]
+    public void 擴充屬性的層級依查詢自己編的號對應(
+        int level, string? target, SqlExtendedPropertyLevel expected)
+    {
+        var record = new FakeDataRecord(level, "MS_Description", "借閱主表", 0, target);
+
+        var property = SqlMetadataReader.ReadExtendedProperty(record);
+
+        Assert.Equal(expected, property.Level);
+        Assert.Equal("MS_Description", property.Name);
+        Assert.Equal(target, property.TargetName);
+    }
+
+    /// <remarks>
+    /// 沒見過的類別號一律當成資料表層級：多寫一筆掛在資料表上的說明，
+    /// 比整份指令碼因為一個新類別而失敗好。
+    /// </remarks>
+    [Fact]
+    public void 認不得的擴充屬性層級退回資料表()
+    {
+        var record = new FakeDataRecord(99, "MS_Description", "說明", 0, null);
+
+        Assert.Equal(
+            SqlExtendedPropertyLevel.Table,
+            SqlMetadataReader.ReadExtendedProperty(record).Level);
+    }
+
+    [Fact]
+    public void 沒有值的擴充屬性讀成空字串而不是null()
+    {
+        var record = new FakeDataRecord(0, "MS_Description", null, 0, null);
+
+        Assert.Equal(string.Empty, SqlMetadataReader.ReadExtendedProperty(record).Value);
+    }
+
+    [Fact]
+    public void 讀取識別資料行的種子與遞增量以及預設值條件約束的名稱()
+    {
+        // 前 13 欄與舊查詢相同，之後是定序、識別值、預設值名稱與三個旗標。
+        var record = new FakeDataRecord(
+            1, "LoanId", "int", (short)4, (byte)10, (byte)0,
+            false, true, false, true, null, null, false,
+            null, "1", "1", "DF_Loan_LoanId", false, false, false, false);
+
+        var script = SqlMetadataReader.ReadColumn(record).Script;
+
+        Assert.Equal("1", script.IdentitySeed);
+        Assert.Equal("1", script.IdentityIncrement);
+        Assert.Equal("DF_Loan_LoanId", script.DefaultConstraintName);
+        Assert.False(script.DefaultIsSystemNamed);
+    }
+
+    [Fact]
+    public void 讀取資料行定序與稀疏及唯一識別旗標()
+    {
+        var record = new FakeDataRecord(
+            4, "BorrowerName", "nvarchar", (short)100, (byte)0, (byte)0,
+            true, false, false, false, null, null, false,
+            "Chinese_Taiwan_Stroke_CI_AS", null, null, null, false, false, true, true);
+
+        var script = SqlMetadataReader.ReadColumn(record).Script;
+
+        Assert.Equal("Chinese_Taiwan_Stroke_CI_AS", script.CollationName);
+        Assert.True(script.IsSparse);
+        Assert.True(script.IsRowGuidCol);
+        Assert.Equal("nvarchar", script.TypeName);
+        Assert.Equal((short)100, script.MaxLength);
+    }
+
+    /// <remarks>
+    /// 指令碼宣告的資料表與舊的假資料列只組得出前 13 欄。多讀一欄拿到的是
+    /// IndexOutOfRangeException，那不是 DbException，不會被降級成
+    /// 「這一輪沒有資料」，而會一路冒到平台邊界去。
+    /// </remarks>
+    [Fact]
+    public void 只給得出舊欄位的資料列讀得到空的指令碼細節()
+    {
+        var record = new FakeDataRecord(
+            1, "LoanId", "int", (short)4, (byte)10, (byte)0,
+            false, true, false, true, null, null, false);
+
+        var script = SqlMetadataReader.ReadColumn(record).Script;
+
+        Assert.Null(script.CollationName);
+        Assert.Null(script.IdentitySeed);
+        Assert.False(script.IsSparse);
+        Assert.Equal("int", script.TypeName);
+    }
+
+    [Fact]
+    public void 系統配的預設值名稱看得出來是系統配的()
+    {
+        var record = new FakeDataRecord(
+            5, "IsReturned", "bit", (short)1, (byte)1, (byte)0,
+            false, false, false, false, "((0))", null, false,
+            null, null, null, "DF__Loan__IsRet__2A4B", true, false, false, false);
+
+        var script = SqlMetadataReader.ReadColumn(record).Script;
+
+        Assert.True(script.DefaultIsSystemNamed);
+        Assert.Equal("DF__Loan__IsRet__2A4B", script.DefaultConstraintName);
     }
 }

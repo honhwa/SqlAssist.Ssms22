@@ -52,7 +52,12 @@ public static class SqlKeywordPositionAnalyzer
             ["WHEN"] = SqlKeywordPosition.Predicate,
             ["AND"] = SqlKeywordPosition.Predicate,
             ["OR"] = SqlKeywordPosition.Predicate,
-            ["NOT"] = SqlKeywordPosition.Predicate,
+
+            // NOT 與 ON 同一條理由：文法允許兩個位置就報兩個，不必挑一個猜。
+            // WHERE NOT | 開的是一個述詞，而 x NOT | 是運算子的一半——IN、LIKE、
+            // BETWEEN 都掛在 ExpressionTail，只給述詞起點的症狀是
+            // a.Big5Code NOT | 之後打不出 IN。
+            ["NOT"] = SqlKeywordPosition.Predicate | SqlKeywordPosition.ExpressionTail,
 
             ["ORDER"] = SqlKeywordPosition.ByAnchor,
             ["GROUP"] = SqlKeywordPosition.ByAnchor,
@@ -197,11 +202,12 @@ public static class SqlKeywordPositionAnalyzer
             return SqlKeywordPosition.None;
         }
 
-        return AddStatementStartOnNewLine(position, textBeforeToken);
+        return AddStatementStartOnNewLine(position, tokens, textBeforeToken);
     }
 
     /// <summary>子句尾端又換了行時，這裡同時也可能是下一個敘述的開頭。</summary>
     private const SqlKeywordPosition ClauseTailPositions =
+        SqlKeywordPosition.SelectListTail |
         SqlKeywordPosition.TableSourceTail |
         SqlKeywordPosition.ExpressionTail |
         SqlKeywordPosition.OrderByTail;
@@ -220,37 +226,42 @@ public static class SqlKeywordPositionAnalyzer
     /// 這些續寫子句的字一個都不能少。猜錯敘述邊界的代價必須是清單多幾個字，
     /// 不能是少幾個字。
     ///
-    /// 只認 <see cref="ClauseTailPositions"/> 那三個「子句已經寫完」的尾端。
-    /// <see cref="SqlKeywordPosition.SelectListTail"/> 不在裡面：<c>SELECT a</c>
-    /// 換行之後幾乎總是接著寫下一個欄位或 <c>FROM</c>，在那裡放進 64 個語句開頭的字
-    /// 與 35 筆片段，使用者真正要的欄位就被擠下去了。
+    /// 選取清單尾端也可能結束敘述：<c>SELECT dbo.fn_Fee('')</c> 不需要 FROM。
+    /// 舊版為了減少候選而排除它，導致函式、常數與變數查詢後都必須補分號才能打片段。
+    /// 不依函式名稱特判，也不放行成 Any；保留尾端旗標，讓 FROM 與下一句同時可選。
     ///
     /// 換行是唯一的線索，理由與 <see cref="StaysOnSameLine"/> 相同，只是方向相反：
     /// 同一行代表他還在寫同一個子句。
     /// </remarks>
     private static SqlKeywordPosition AddStatementStartOnNewLine(
         SqlKeywordPosition position,
+        IReadOnlyList<SqlToken> tokens,
         string textBeforeToken)
     {
-        return (position & ClauseTailPositions) != SqlKeywordPosition.None &&
-               StartsOnNewLine(textBeforeToken)
+        if ((position & SqlKeywordPosition.StatementStart) != SqlKeywordPosition.None ||
+            (position & ClauseTailPositions) == SqlKeywordPosition.None ||
+            tokens.Count == 0 ||
+            !StartsOnNewLine(tokens[tokens.Count - 1].End, textBeforeToken))
+        {
+            return position;
+        }
+
+        // 函式引數、子查詢與 CTE 還在括號內時，換行不代表可以開始獨立敘述。
+        return SqlTokenNavigator.FindUnclosedParenthesis(tokens, tokens.Count - 1) < 0
             ? position | SqlKeywordPosition.StatementStart
             : position;
     }
 
     /// <summary>游標與前一個詞元之間隔了至少一個換行。</summary>
-    private static bool StartsOnNewLine(string textBeforeToken)
+    private static bool StartsOnNewLine(int previousTokenEnd, string textBeforeToken)
     {
-        for (var index = textBeforeToken.Length - 1; index >= 0; index--)
+        // 詞法分析已略過註解；直接查看詞元後的間隙，避免區塊註解遮住換行，
+        // 也不會把字串或加引號名稱內的換行誤認成敘述邊界。
+        for (var index = previousTokenEnd; index < textBeforeToken.Length; index++)
         {
             var character = textBeforeToken[index];
 
-            if (!char.IsWhiteSpace(character))
-            {
-                return false;
-            }
-
-            if (character == '\n')
+            if (character is '\r' or '\n')
             {
                 return true;
             }
@@ -337,7 +348,7 @@ public static class SqlKeywordPositionAnalyzer
     /// </summary>
     /// <remarks>
     /// 這三處以前一律回 <see cref="SqlKeywordPosition.Any"/>，代價是 191 個關鍵字與
-    /// 45 筆片段全部進場——使用者在 <c>ADD </c> 之後看到的是整個資料庫，而文法上
+    /// 49 筆片段全部進場——使用者在 <c>ADD </c> 之後看到的是整個資料庫，而文法上
     /// 對的只有九個字。
     ///
     /// 認的是「往回正好是 <c>ALTER TABLE</c> 加一個名稱單位」而不是「這份指令碼裡
@@ -428,6 +439,23 @@ public static class SqlKeywordPositionAnalyzer
             return IsBareAtSign(token.Value)
                 ? SqlKeywordPosition.None
                 : FindClausePosition(tokens, last);
+        }
+
+        // 尾端的點號是使用者正在打的那個名稱的一部分（dbo.、a.），不是一個算完的
+        // 運算元：位置由整個名稱之前的東西決定，與名稱只打了一半沒有關係。
+        // 少了這一條，限定字之後一律是 Any——症狀是 FROM a, dbo. 在位置上與
+        // SELECT dbo. 沒有差別，而前者要的只有資料來源。
+        //
+        // 前面不是識別字時照舊：LibArchive.. 的空段不是限定字，而 1.5 的小數點
+        // 根本走不到這裡——詞法分析把它掃成一個數值詞元。
+        if (token.IsPunctuation(".") &&
+            last >= 1 &&
+            tokens[last - 1].Kind == SqlTokenKind.Identifier)
+        {
+            return AnalyzeAt(
+                tokens,
+                SqlTokenNavigator.SkipQualifiedNameBackward(tokens, last - 1) - 1,
+                followAlias);
         }
 
         if (token.Kind is SqlTokenKind.Punctuation or SqlTokenKind.Operator)

@@ -105,11 +105,16 @@ public static class SqlAssistDiagnosticSections
                     Join(
                         SqlAssistDiagnosticReport.FormatState(settings.ExpandProcedureCall),
                         settings.IncludeOptionalParameters ? "含選擇性參數" : "只含必填參數")),
-                Row("自訂函式補引數", SqlAssistDiagnosticReport.FormatState(settings.ExpandFunctionCall))
+                Row(
+                    "自訂函式補括號",
+                    Join(
+                        SqlAssistDiagnosticReport.FormatState(settings.ExpandFunctionCall),
+                        settings.ExpandFunctionArguments ? "括號裡填引數" : "只補空括號"))
             }),
             new SqlAssistDiagnosticSection("物件結構", new[]
             {
                 Row("滑鼠停留提示", SqlAssistDiagnosticReport.FormatState(settings.HoverEnabled)),
+                Row("函式參數提示", SqlAssistDiagnosticReport.FormatState(settings.ParameterHintEnabled)),
                 Row("浮動預覽", SqlAssistDiagnosticReport.FormatPreview(settings)),
                 Row("預覽位置", SqlAssistDiagnosticReport.FormatPreviewPlacement(settings.PreviewPlacement)),
                 Row("預覽字級", settings.PreviewFontSize.ToString("0.#", CultureInfo.InvariantCulture))

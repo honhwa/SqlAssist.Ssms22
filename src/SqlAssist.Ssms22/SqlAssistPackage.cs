@@ -6,8 +6,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Shell;
 using SqlAssist.Core.Diagnostics;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Ssms22.Commands;
+using SqlAssist.Ssms22.Connections;
+using SqlAssist.Ssms22.Editor;
+using SqlAssist.Ssms22.Notifications;
+using SqlAssist.Ssms22.SqlMemory;
 using SqlAssist.Ssms22.Settings;
+using SqlAssist.Ssms22.UI;
 
 namespace SqlAssist.Ssms22;
 
@@ -15,11 +21,13 @@ namespace SqlAssist.Ssms22;
 // 版號一變，殼層下次載入就重建命令表快取。新增命令、選單項目或鍵繫結時**一定**要
 // 加一：不加的話換掉 DLL 也沒有用，殼層仍在用舊的命令表——症狀是新的選單項目不出現、
 // 新綁的鍵沒反應，而且沒有任何錯誤。與 MEF 快取是同一類的坑。
-[ProvideMenuResource("Menus.ctmenu", 14)]
+[ProvideMenuResource("Menus.ctmenu", 29)]
 [ProvideAutoLoad(NoSolutionUiContextGuid, PackageAutoLoadFlags.BackgroundLoad)]
 // 設定全部由 Unified Settings 提供：這個屬性在 pkgdef 寫下 SettingsManifests 項目，
 // 殼層啟動時就會讀進註冊檔，不必等套件載入。
 [ProvideSettingsManifest(PackageRelativeManifestFile = SettingsManifestFile)]
+[ProvideToolWindow(typeof(SqlMemoryToolWindow), Style = VsDockStyle.Linked,
+    Orientation = ToolWindowOrientation.Right, Window = "DocumentWell", DockedWidth = 440, Width = 440)]
 [Guid(PackageGuidString)]
 public sealed class SqlAssistPackage : AsyncPackage
 {
@@ -39,11 +47,17 @@ public sealed class SqlAssistPackage : AsyncPackage
         CancellationToken cancellationToken,
         IProgress<ServiceProgressData> progress)
     {
+        NotificationCenter.Default.Completed += OnNotificationCompleted;
+        using var notification = NotificationCenter.Default.Begin(NotificationCatalog.InitializingPackage,
+            NotificationKind.Package, NotificationOrigin.Startup, NotificationLevel.Info);
         try
         {
             // SSMS 啟動且沒有方案時自動載入，確保工具選單的命令處理器已完成註冊。
             await base.InitializeAsync(cancellationToken, progress);
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
+            VsThemeBrushes.Initialize();
+            // 工具窗由殼層在套件初始化之後才建立；接在這裡，任何視窗的圖示插槽都不會先建成空的。
+            SqlIcons.RegisterImages();
 
             // 命令的勾選狀態要靠設定回答，所以設定必須先接上。
             SqlAssistSettingsStore.Initialize(this);
@@ -53,16 +67,21 @@ public sealed class SqlAssistPackage : AsyncPackage
 
             if (commandService is null)
             {
+                notification.Fail();
                 SqlAssistDiagnostics.WriteAlways("AsyncPackage 無法取得 OleMenuCommandService");
                 return;
             }
 
             SqlAssistCommands.Register(this, commandService);
+            // 設定接上之後才接 SQL Memory：它整組由設定驅動，預設是關的。
+            SqlMemoryHost.Initialize(this);
             SqlAssistRuntimeState.MarkPackageReady();
             SqlAssistDiagnostics.WriteAlways($"AsyncPackage {PackageVersion} 已載入，工具選單已註冊");
         }
         catch (Exception exception)
         {
+            if (exception is OperationCanceledException) notification.Cancel();
+            else notification.Fail();
             // 即使套件載入失敗，也要留下可由診斷腳本讀取的原因。
             // 不走 SqlAssistPlatformGuard：那一族會吞掉例外，而殼層要靠它知道
             // 這個套件沒載入成功；記錄完仍然重擲。
@@ -83,11 +102,23 @@ public sealed class SqlAssistPackage : AsyncPackage
             assembly.GetName().Version?.ToString());
     }
 
+    private static void OnNotificationCompleted(NotificationItem item) =>
+        SqlAssistPlatformGuard.Probe("記錄通知結果", () => SqlAssistDiagnostics.Write(
+            $"通知 id={item.Id} kind={item.Kind} severity={item.Severity} status={item.Status} elapsedMs={(item.Finished - item.Started)?.TotalMilliseconds:0}"));
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
+            NotificationCenter.Default.Completed -= OnNotificationCompleted;
+            SqlAssistPlatformGuard.Run("解除 SSMS 連線變更事件", SqlEditorConnectionWatcher.Shutdown);
+            // 排空背景寫入器並放開 SQLite 檔案；排在設定與診斷收尾之前。
+            SqlAssistPlatformGuard.Run("停止 SQL Memory", SqlMemoryHost.Shutdown);
+            SqlAssistPlatformGuard.Run("釋放通知提示", NotificationSurfaceController.Default.Shutdown);
             SqlAssistSettingsStore.Shutdown();
+            VsThemeBrushes.Shutdown();
+            // 診斷是批次寫檔的，最後一批還在佇列裡；卸載時要倒完才輪得到殼層關閉。
+            SqlAssistDiagnostics.Flush();
         }
 
         base.Dispose(disposing);

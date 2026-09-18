@@ -36,8 +36,54 @@ internal static class CommandIds
     /// <summary>選單項目，同時也是設定頁上的按鈕（註冊檔寫成十進位的 521）。</summary>
     public const int ManageSnippets = 0x0209;
 
+    /// <summary>
+    /// 以片段包住選取範圍；入口是 Ctrl+Alt+S 與查詢視窗的右鍵選單。
+    /// </summary>
+    /// <remarks>
+    /// 鍵繫結是 Ctrl+Alt+S 而不是 Ctrl+K, Ctrl+S：後者在 SSMS 上解析得到的是它
+    /// 自己的 <c>Edit.SurroundWith</c>，實測搶不到。使用者若把
+    /// <c>Edit.SurroundWith</c> 綁到某個鍵，<c>SqlShellCommandFilter</c> 那條路
+    /// 也接得住，終點是同一份實作。
+    /// </remarks>
+    public const int SurroundWith = 0x020B;
+
+    /// <summary>只用內建資料驗證真正宿主內的 SQLite 載入；不擷取使用者 SQL。</summary>
+    public const int SqlMemorySelfTest = 0x020C;
+
     /// <summary>設定頁上的按鈕，不出現在選單（註冊檔寫成十進位的 520）。</summary>
     public const int OpenDiagnosticsLog = 0x0208;
+
+    /// <summary>
+    /// SQL Memory 的手動整理，掛在設定頁的「SQL Memory」分類上（註冊檔寫成十進位的 525）。
+    /// </summary>
+    /// <remarks>完整 VACUUM 只由使用者按；背景排程只做 WAL 截斷。</remarks>
+    public const int CompactSqlMemory = 0x020D;
+    public const int ShowSqlHistory = 0x020E;
+    public const int ShowSqlFavorites = 0x020F;
+
+    public const int PickBlockAccent = 0x0210;
+    public const int PickBlockKeywordForeground = 0x0211;
+    public const int PickBlockKeywordBackground = 0x0212;
+    public const int PickBlockSymbolForeground = 0x0213;
+    public const int PickBlockSymbolBackground = 0x0214;
+
+    /// <summary>
+    /// 把查詢視窗目前的 SQL 加進 SQL Memory 的收藏；這個 ID 用於查詢視窗右鍵選單。
+    /// </summary>
+    /// <remarks>
+    /// 刻意沒有鍵繫結：它會開一個對話框，不是編輯途中連按的動作，綁鍵只是多佔一組快捷鍵。
+    /// 有選取就收選取，與選取執行同一條界線。
+    /// </remarks>
+    public const int AddToFavorites = 0x0215;
+
+    /// <summary>工具選單的無圖示入口；執行與狀態共用 <see cref="AddToFavorites"/>。</summary>
+    public const int AddToFavoritesFromTools = 0x0216;
+
+    /// <summary>工具選單的無圖示入口；執行與狀態共用 <see cref="SurroundWith"/>。</summary>
+    public const int SurroundWithFromTools = 0x0217;
+
+    /// <summary>開啟 SQL Memory 工具窗的用量頁；容量接近上限的通知也導到這裡。</summary>
+    public const int ShowSqlMemoryUsage = 0x0218;
 
     /// <summary>
     /// 結果格線的內部探測，只在「詳細記錄」打開時出現。

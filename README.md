@@ -54,7 +54,7 @@ by the SSMS grid.
 
 <p align="center"><img src="docs/images/result-grid-utility.png" width="820" alt="Result-grid menu for export, profiling, and full cell content"></p>
 
-Also included: T-SQL snippets with Tab Stops, automatic bracket/quote pairing, and feature toggles.
+Also included: T-SQL snippets with Tab Stops and surround-with, bracket/quote pairing, and toggles.
 
 ## Install
 
@@ -75,4 +75,4 @@ Requires **Windows x64** and **SSMS 22.9.x**.
 
 [Getting Started](docs/getting-started.md) covers setup and updates; [documentation](docs/index.md#主題)
 covers features, settings, and development. Contributors begin with [CLAUDE.md](CLAUDE.md).
-[MIT License](LICENSE).
+[Apache License 2.0](LICENSE).

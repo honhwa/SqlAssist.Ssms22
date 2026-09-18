@@ -1,14 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.VisualStudio.PlatformUI;
 using SqlAssist.Core.Diagnostics;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Ssms22.UI;
 
 namespace SqlAssist.Ssms22.Commands;
@@ -18,12 +21,16 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
 {
     private static readonly SqlAssistChrome.Metrics Metrics = SqlAssistChrome.DefaultMetrics;
 
+    private const string CountOrderText = "依次數";
+    private const string ElapsedOrderText = "依總耗時";
+
     private readonly SqlAssistDiagnosticSnapshot _snapshot;
     private readonly IReadOnlyList<SqlAssistHealthCheck> _health;
     private readonly SqlAssistHealthSummary _summary;
     private readonly Func<bool> _openSettings;
     private readonly Action _openLog;
     private readonly TextBlock _statusText;
+    private readonly ImageSource? _logoSource;
 
     public SqlAssistAboutWindow(
         SqlAssistDiagnosticSnapshot snapshot,
@@ -39,32 +46,23 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         _health = SqlAssistDiagnosticReport.EvaluateHealth(snapshot);
         _summary = SqlAssistDiagnosticReport.Summarize(snapshot, _health);
 
-        Title = "SqlAssist — 關於與診斷";
-        Width = 820;
-        Height = 680;
-        MinWidth = 680;
-        MinHeight = 540;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = VsThemeBrushes.WindowBackground;
-        Foreground = VsThemeBrushes.WindowForeground;
-        FontFamily = SqlAssistChrome.InterfaceFont;
-        FontSize = Metrics.Body;
+        SqlAssistDialogs.Configure(this, "SqlAssist — 關於與診斷", 820, 680, minWidth: 680, minHeight: 540);
 
-        var logo = TryLoadLogo();
-        Icon = logo;
+        // 原生標題列與內容標誌均使用 SqlAssist 產品圖示（高 DPI 下自動平滑渲染）。
+        _logoSource = TryLoadLogo();
+        Icon = _logoSource;
         _statusText = SqlAssistChrome.CreateStatusText(Metrics);
-        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
-        Content = BuildLayout(logo);
+        Content = BuildLayout();
     }
 
-    private Grid BuildLayout(ImageSource? logo)
+    private Grid BuildLayout()
     {
-        var root = new Grid { Margin = new Thickness(18) };
+        var root = new Grid { Margin = SqlAssistChrome.DialogPadding };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var header = BuildHeader(logo);
+        var header = BuildHeader();
         Grid.SetRow(header, 0);
         root.Children.Add(header);
 
@@ -79,48 +77,13 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         return root;
     }
 
-    private Border BuildHeader(ImageSource? logo)
+    private Border BuildHeader()
     {
         var layout = new Grid();
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        FrameworkElement mark;
-
-        if (logo is not null)
-        {
-            mark = new Image
-            {
-                Source = logo,
-                Width = 72,
-                Height = 72,
-                Stretch = Stretch.Uniform,
-                SnapsToDevicePixels = true
-            };
-        }
-        else
-        {
-            mark = new Border
-            {
-                Width = 72,
-                Height = 72,
-                Background = VsThemeBrushes.AccentBackground,
-                BorderBrush = VsThemeBrushes.AccentBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(16),
-                Child = new TextBlock
-                {
-                    Text = "SA",
-                    FontFamily = SqlAssistChrome.InterfaceFont,
-                    FontSize = 24,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = VsThemeBrushes.ListForeground,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            };
-        }
-
+        var mark = SqlAssistChrome.CreateBrandMark(_logoSource);
         Grid.SetColumn(mark, 0);
         layout.Children.Add(mark);
 
@@ -132,24 +95,21 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         copy.Children.Add(new TextBlock
         {
             Text = _snapshot.ProductName,
-            FontSize = Metrics.Title + 4,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = VsThemeBrushes.ListForeground
-        });
+            FontSize = Metrics.Title,
+            FontWeight = FontWeights.SemiBold
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground));
         copy.Children.Add(new TextBlock
         {
             Text = _snapshot.Description,
             FontSize = Metrics.Caption,
-            Foreground = VsThemeBrushes.DimForeground,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 3, 0, 8)
-        });
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground));
 
         var badges = new StackPanel { Orientation = Orientation.Horizontal };
         badges.Children.Add(SqlAssistChrome.CreateBadge(
             $"版本 {_snapshot.BuildVersion.DisplayVersion}",
-            Metrics,
-            accent: true));
+            Metrics));
 
         // 抬頭的徽章三個分頁都看得到，所以放最短的那一句；完整結論在「概覽」上方。
         var statusBadge = SqlAssistChrome.CreateBadge(
@@ -162,25 +122,25 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         Grid.SetColumn(copy, 1);
         layout.Children.Add(copy);
 
-        var surface = SqlAssistChrome.CreateSurface(layout);
-        surface.Padding = new Thickness(18);
-        return surface;
+        // 品牌資訊留在原生標題列下的一列，不再額外包成大型展示卡。
+        return new Border { Child = layout };
     }
 
     private TabControl BuildTabs()
     {
         var tabs = new TabControl
         {
-            Background = VsThemeBrushes.WindowBackground,
             BorderThickness = default,
             Padding = default,
             FontFamily = SqlAssistChrome.InterfaceFont,
             Template = SqlAssistChrome.CreateTabControlTemplate()
-        };
+        }.WithTheme(TabControl.BackgroundProperty, ThemeBrush.WindowBackground);
 
         tabs.Items.Add(CreateTab("概覽", BuildOverview()));
         tabs.Items.Add(CreateTab("設定摘要", BuildSettings()));
         tabs.Items.Add(CreateTab("診斷", BuildDiagnostics()));
+        tabs.Items.Add(CreateTab("工作階段統計", BuildNotificationDigest()));
+        tabs.Items.Add(CreateTab("通知失敗", BuildNotificationFailures()));
         return tabs;
     }
 
@@ -191,7 +151,6 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         content.Children.Add(CreateSection(
             "關於 SqlAssist",
             null,
-            CreateInfoRow("版本", _snapshot.BuildVersion.DisplayVersion),
             CreateInfoRow(
                 "Build",
                 $"{_snapshot.BuildVersion.FullVersion} · commit {_snapshot.BuildVersion.ShortCommitId}"),
@@ -273,9 +232,94 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         return CreateScrollViewer(content);
     }
 
-    /// <remarks>
-    /// 這裡刻意不再放一次狀態徽章：抬頭已經有一個，而且三個分頁都看得到。
-    /// </remarks>
+    /// <summary>回答「哪些動作在重複」：統計不受通知可見度影響，隱藏的一樣計入。</summary>
+    private UIElement BuildNotificationDigest()
+    {
+        var content = CreateTabPanel();
+        content.Children.Add(SqlAssistChrome.CreateHint(
+            "本次工作階段每一件事的呼叫次數與耗時。被通知設定隱藏的、只進統計的與快取命中都逐次計入，" +
+            "畫面上合併成一列的重複也是。不保存 SQL、連線字串或例外內容。", Metrics));
+
+        var order = SqlAssistChrome.CreateComboBox(Metrics);
+        order.Items.Add(CountOrderText);
+        order.Items.Add(ElapsedOrderText);
+        order.SelectedIndex = 0;
+        order.Width = 132;
+        AutomationProperties.SetName(order, "工作階段統計的排序依據");
+
+        var chooser = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 12) };
+        var label = SqlAssistChrome.CreateLabel("排序", Metrics);
+        label.Margin = new Thickness(0, 0, 8, 0);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        chooser.Children.Add(label);
+        chooser.Children.Add(order);
+        content.Children.Add(chooser);
+
+        var rows = new StackPanel();
+        content.Children.Add(rows);
+        // 切換排序順便重讀統計；這一頁沒有自己的計時器，數字停在最後一次互動。
+        order.SelectionChanged += (_, _) => FillNotificationDigest(rows, order.SelectedIndex);
+        FillNotificationDigest(rows, order.SelectedIndex);
+        return CreateScrollViewer(content);
+    }
+
+    private void FillNotificationDigest(Panel rows, int selectedOrder)
+    {
+        try
+        {
+            rows.Children.Clear();
+            var entries = NotificationCenter.Default.Digest.Snapshot(selectedOrder == 1
+                ? NotificationDigestOrder.TotalElapsed
+                : NotificationDigestOrder.Count);
+            if (entries.Count == 0)
+            {
+                rows.Children.Add(SqlAssistChrome.CreateHint("目前沒有統計資料。", Metrics));
+                return;
+            }
+
+            foreach (var entry in entries)
+            {
+                rows.Children.Add(CreateInfoRow(
+                    entry.IsOther ? "其他" : NotificationKindToggle.For(entry.Kind).Title,
+                    DescribeDigestEntry(entry)));
+            }
+        }
+        catch (Exception exception)
+        {
+            // 使用者剛切換的排序不能沒有反應；這裡不走安靜略過的平台探測。
+            ReportActionFailure("排序工作階段統計", exception);
+        }
+    }
+
+    private static string DescribeDigestEntry(NotificationDigestEntry entry)
+    {
+        var headline = entry.Subject.Length == 0 ? entry.Title : entry.Title + " · " + entry.Subject;
+        var stats = $"{entry.Count} 次 · 總 {FormatMilliseconds(entry.Total)}" +
+            $" · 平均 {FormatMilliseconds(entry.Average)} · 最大 {FormatMilliseconds(entry.Max)}";
+        if (entry.Failed > 0) stats += $" · 失敗 {entry.Failed}";
+        if (entry.Degraded > 0) stats += $" · 降級 {entry.Degraded}";
+        return headline + Environment.NewLine + stats;
+    }
+
+    /// <summary>統一用毫秒，讓不同量級的兩列仍然可以直接比大小。</summary>
+    private static string FormatMilliseconds(TimeSpan elapsed) =>
+        elapsed.TotalMilliseconds.ToString("N0", CultureInfo.CurrentCulture) + " ms";
+
+    private UIElement BuildNotificationFailures()
+    {
+        var content = CreateTabPanel();
+        content.Children.Add(SqlAssistChrome.CreateHint(
+            "本次工作階段最近 30 項失敗；重新開啟此視窗可更新。不保存 SQL、連線字串或例外內容。", Metrics));
+        var failures = SqlAssist.Core.Notifications.NotificationCenter.Default.RecentFailures;
+        if (failures.Count == 0)
+            content.Children.Add(SqlAssistChrome.CreateHint("目前沒有失敗紀錄。", Metrics));
+        foreach (var item in failures.Reverse())
+            content.Children.Add(CreateInfoRow(item.Finished?.ToLocalTime().ToString("HH:mm:ss") ?? "",
+                $"{item.Title} · {NotificationCatalog.Provenance(item)}\n{item.Kind} / {item.Severity} · #{item.Id} · {(item.Finished - item.Started)?.TotalMilliseconds:0} ms"));
+        return CreateScrollViewer(content);
+    }
+
+    /// <remarks>不重複抬頭已顯示的狀態徽章。</remarks>
     private Border CreateHealthSummary()
     {
         var copy = new StackPanel();
@@ -284,45 +328,35 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
             Text = _summary.Headline,
             FontSize = Metrics.Title + 1,
             FontWeight = FontWeights.SemiBold,
-            Foreground = VsThemeBrushes.ListForeground,
             TextWrapping = TextWrapping.Wrap
-        });
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground));
         copy.Children.Add(new TextBlock
         {
             Text = _summary.Detail,
             FontSize = Metrics.Caption,
-            Foreground = VsThemeBrushes.DimForeground,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 4, 0, 0)
-        });
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground));
 
-        var surface = SqlAssistChrome.CreateSurface(copy);
-        surface.Padding = new Thickness(16);
-        surface.Margin = new Thickness(0, 0, 0, 12);
-        return surface;
+        return new Border
+        {
+            Child = copy,
+            Margin = new Thickness(0, 0, 0, 24)
+        };
     }
 
     private DockPanel BuildFooter()
     {
-        var footer = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
-        var actions = new StackPanel { Orientation = Orientation.Horizontal };
-        actions.Children.Add(CreateButton("複製診斷資訊", OnCopyDiagnostics));
-        actions.Children.Add(CreateButton("開啟紀錄檔", OnOpenLog));
-        actions.Children.Add(CreateButton("開啟設定", OnOpenSettings));
-
+        var utilities = new[]
+        {
+            CreateButton("複製診斷資訊", OnCopyDiagnostics),
+            CreateButton("開啟紀錄檔", OnOpenLog),
+            CreateButton("開啟設定", OnOpenSettings)
+        };
         var close = CreateButton("關閉", (_, _) => Close(), primary: true);
         close.IsDefault = true;
         close.IsCancel = true;
-        close.Margin = default;
-
-        DockPanel.SetDock(actions, Dock.Left);
-        DockPanel.SetDock(close, Dock.Right);
-        footer.Children.Add(actions);
-        footer.Children.Add(close);
-
-        _statusText.Margin = new Thickness(12, 0, 12, 0);
-        footer.Children.Add(_statusText);
-        return footer;
+        return SqlAssistChrome.CreateDialogFooter(utilities, _statusText, close);
     }
 
     private void OnCopyDiagnostics(object sender, RoutedEventArgs eventArgs)
@@ -394,14 +428,14 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         return new TabItem
         {
             Header = header,
-            Content = content,
+            Content = SqlAssistChrome.CreateSurface(content),
             Template = SqlAssistChrome.CreateTabItemTemplate()
         };
     }
 
     private static StackPanel CreateTabPanel()
     {
-        return new StackPanel { Margin = new Thickness(14, 2, 14, 0) };
+        return new StackPanel { Margin = new Thickness(16, 12, 16, 0) };
     }
 
     private static ScrollViewer CreateScrollViewer(UIElement content)
@@ -438,9 +472,8 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
             Text = title,
             FontSize = Metrics.Title,
             FontWeight = FontWeights.SemiBold,
-            Foreground = VsThemeBrushes.ListForeground,
             Margin = new Thickness(0, 0, 0, string.IsNullOrWhiteSpace(description) ? 8 : 2)
-        });
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground));
 
         if (!string.IsNullOrWhiteSpace(description))
         {
@@ -448,10 +481,9 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
             {
                 Text = description,
                 FontSize = Metrics.Caption,
-                Foreground = VsThemeBrushes.DimForeground,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, children.Length == 0 ? 0 : 9)
-            });
+            }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground));
         }
 
         foreach (var child in children)
@@ -459,10 +491,12 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
             content.Children.Add(child);
         }
 
-        var surface = SqlAssistChrome.CreateSurface(content);
-        surface.Padding = new Thickness(16, 13, 16, 14);
-        surface.Margin = new Thickness(0, 0, 0, 12);
-        return surface;
+        // 區塊靠字重與留白分層；整頁不再重複套外框。
+        return new Border
+        {
+            Child = content,
+            Margin = new Thickness(0, 0, 0, 24)
+        };
     }
 
     private static Grid CreateInfoRow(string label, string value, bool useCodeFont = false)
@@ -475,19 +509,17 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         {
             Text = label,
             FontSize = Metrics.Caption,
-            Foreground = VsThemeBrushes.DimForeground,
             VerticalAlignment = VerticalAlignment.Top
-        });
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground));
 
         var valueText = new TextBlock
         {
             Text = value,
             FontFamily = useCodeFont ? SqlAssistChrome.CodeFont : SqlAssistChrome.InterfaceFont,
             FontSize = useCodeFont ? Metrics.Caption : Metrics.Body,
-            Foreground = VsThemeBrushes.ListForeground,
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Top
-        };
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
         Grid.SetColumn(valueText, 1);
         row.Children.Add(valueText);
         return row;
@@ -503,24 +535,21 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         row.Children.Add(new TextBlock
         {
             Text = Glyph(check.Level),
-            FontWeight = FontWeights.SemiBold,
-            Foreground = VsThemeBrushes.ListForeground
-        });
+            FontWeight = FontWeights.SemiBold
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground));
 
         var state = new StackPanel();
         state.Children.Add(new TextBlock
         {
             Text = check.Name,
             FontSize = Metrics.Body,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = VsThemeBrushes.ListForeground
-        });
+            FontWeight = FontWeights.SemiBold
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground));
         state.Children.Add(new TextBlock
         {
             Text = check.Status,
-            FontSize = Metrics.Caption,
-            Foreground = VsThemeBrushes.DimForeground
-        });
+            FontSize = Metrics.Caption
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground));
         Grid.SetColumn(state, 1);
         row.Children.Add(state);
 
@@ -528,10 +557,9 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
         {
             Text = check.Detail,
             FontSize = Metrics.Caption,
-            Foreground = VsThemeBrushes.DimForeground,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(8, 1, 0, 0)
-        };
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground);
         Grid.SetColumn(detail, 2);
         row.Children.Add(detail);
         return row;
@@ -566,7 +594,7 @@ internal sealed class SqlAssistAboutWindow : DialogWindow
             () =>
             {
                 var directory = Path.GetDirectoryName(typeof(SqlAssistAboutWindow).Assembly.Location);
-                var path = Path.Combine(directory ?? string.Empty, "logo.png");
+                var path = Path.Combine(directory ?? string.Empty, "SqlAssist.Icon.512.png");
 
                 if (!File.Exists(path))
                 {

@@ -15,18 +15,41 @@
     <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
     <SsmsInstallDir Condition="'$(SsmsInstallDir)' == ''">C:\Program Files\Microsoft SQL Server Management Studio 22\Release</SsmsInstallDir>
     <Platforms>AnyCPU;x64</Platforms>
+    <!-- SSMS 安裝目錄裡的組件彼此就有一堆版本不一致（System.Text.Json、Numerics.Vectors…），
+         加上我們刻意參考契約版本而非宿主的修補版本，RAR 的 MSB3277 在這個專案永遠會出現，
+         早已沒有訊號價值——0.17.1 那次真正的版本問題就是被它蓋掉的。降為訊息，把關改由
+         tools/Test-VsixPackage.ps1 直接讀產出組件的參考版本負責。 -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SqlAssist.Core\SqlAssist.Core.csproj" />
     <ProjectReference Include="..\SqlAssist.Metadata\SqlAssist.Metadata.csproj" />
+    <ProjectReference Include="..\SqlAssist.SqlMemory.Isolation\SqlAssist.SqlMemory.Isolation.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.5.40034" PrivateAssets="all" />
+    <!-- 取 NuGet 的契約版本（組件版本 10.0.0.0），與 SSMS 編輯器組件自己引用的版本一致，
+         並以 ExcludeAssets="runtime" 讓它不進 VSIX；執行期一律用 SSMS 已載入的那份。
+         **禁止**改抓 PublicAssemblies 的 DLL：那會把建置機當下的修補版本（例如 10.0.0.10）
+         寫進參考，而 Ssms.exe.config 的 bindingRedirect 只涵蓋到宿主自己那份，裝到較舊的
+         SSMS 上就是 FileNotFoundException，且只有用到的功能會整組失效——SSMS 22.9 帶的是
+         10.0.0.8，22.10 已經是 10.0.0.10。 -->
+    <PackageReference Include="System.Collections.Immutable" Version="10.0.0" ExcludeAssets="runtime" />
+    <!-- SQLite 的 BCL 相依一律由 SSMS 提供，不讓 NuGet 的副本進入擴充載入範圍。 -->
+    <PackageReference Include="System.Memory" Version="4.6.3" ExcludeAssets="runtime" />
+    <PackageReference Include="System.Buffers" Version="4.6.1" ExcludeAssets="runtime" />
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.2" ExcludeAssets="runtime" />
+    <PackageReference Include="SQLite" Version="3.53.4" GeneratePathProperty="true" ExcludeAssets="runtime" />
+    <PackageReference Include="SQLitePCLRaw.core" Version="3.0.5" GeneratePathProperty="true" />
+    <PackageReference Include="SQLitePCLRaw.config.e_sqlite3" Version="3.0.5" GeneratePathProperty="true" />
+    <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" Version="3.0.5" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- 直接參考 SSMS 22 的 18.x 編輯器介面，避免以 VS 17 組件編譯後發生版本不符。 -->
     <Reference Include="System.ComponentModel.Composition" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
     <Reference Include="Microsoft.VisualStudio.CoreUtility">
       <HintPath>$(SsmsInstallDir)\Common7\IDE\CommonExtensions\Microsoft\Editor\Microsoft.VisualStudio.CoreUtility.dll</HintPath>
       <Private>false</Private>
@@ -65,22 +88,19 @@
       <HintPath>$(SsmsInstallDir)\Common7\IDE\CommonExtensions\Microsoft\Editor\Microsoft.VisualStudio.Language.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="System.Collections.Immutable">
-      <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\System.Collections.Immutable.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <!-- System.Collections.Immutable 的公開簽章用到 Span<>，編譯期必須看得到。 -->
-    <Reference Include="System.Memory">
-      <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\System.Memory.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="System.Runtime.CompilerServices.Unsafe">
-      <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <!-- 分類篩選鈕的圖示；KnownImageIds 只是常數與目錄 GUID，殼層本來就載入這個組件。 -->
+    <!-- 補全、結構預覽與 QuickInfo 共用殼層圖示目錄及原生 Image Service。 -->
     <Reference Include="Microsoft.VisualStudio.ImageCatalog">
       <HintPath>$(SsmsInstallDir)\Common7\IDE\Microsoft.VisualStudio.ImageCatalog.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.VisualStudio.Imaging">
+      <HintPath>$(SsmsInstallDir)\Common7\IDE\Microsoft.VisualStudio.Imaging.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.VisualStudio.Imaging.Interop.14.0.DesignTime">
+      <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Imaging.Interop.14.0.DesignTime.dll</HintPath>
+      <!-- SSMS 22 的 VS 18.x 組件直接參考此 Interop；內嵌會觸發 CS1762，須沿用殼層型別。 -->
+      <EmbedInteropTypes>false</EmbedInteropTypes>
       <Private>false</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Utilities">
@@ -89,6 +109,11 @@
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Shell.15.0">
       <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Shell.15.0.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Fluent 主題的公開語意色；由 SSMS 提供，不把殼層組件包進 VSIX。 -->
+    <Reference Include="Microsoft.VisualStudio.Shell.Styles">
+      <HintPath>$(SsmsInstallDir)\Common7\IDE\Microsoft.VisualStudio.Shell.Styles.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <!--
@@ -159,6 +184,34 @@
 
   <ItemGroup>
     <None Include="source.extension.vsixmanifest" />
+    <Content Include="..\..\ThirdPartyLicenses.txt">
+      <Link>ThirdPartyLicenses.txt</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+    <Content Include="..\SqlAssist.SqlMemory.Isolation\SqlMemory.Isolation.config">
+      <Link>SqlMemory.Isolation.config</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- VSIX 不會自動保留 NuGet native runtime；只封裝 SSMS 使用的 x64 版本。 -->
+    <Content Include="$(PkgSQLite)\runtimes\win-x64\native\e_sqlite3.dll">
+      <Link>e_sqlite3.dll</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- SQLitePCLRaw 由 provider 間接／反射載入，VSSDK 不會將 CopyLocal 等同封裝。 -->
+    <Content Include="$(PkgSQLitePCLRaw_core)\lib\netstandard2.0\SQLitePCLRaw.core.dll">
+      <Link>SQLitePCLRaw.core.dll</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+    <Content Include="$(PkgSQLitePCLRaw_config_e_sqlite3)\lib\net471\SQLitePCLRaw.batteries_v2.dll">
+      <Link>SQLitePCLRaw.batteries_v2.dll</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+    <Content Include="$(PkgSQLitePCLRaw_provider_e_sqlite3)\lib\net471\SQLitePCLRaw.provider.e_sqlite3.dll">
+      <Link>SQLitePCLRaw.provider.e_sqlite3.dll</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
     <VSCTCompile Include="Menus.vsct">
       <ResourceName>Menus.ctmenu</ResourceName>
     </VSCTCompile>
@@ -176,11 +229,12 @@
       同一張圖放兩份的下場一律是其中一份改了另一份沒改。
       Link 決定它在 VSIX 裡的檔名，manifest 的 Icon／PreviewImage 就是照這個名字找。
     -->
-    <Content Include="..\..\docs\images\logo.png">
-      <Link>logo.png</Link>
+    <Content Include="..\..\docs\images\SqlAssist.Icon.512.png">
+      <Link>SqlAssist.Icon.512.png</Link>
       <IncludeInVSIX>true</IncludeInVSIX>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Resource Include="Resources\SqlAssist.Icon.16.png" />
   </ItemGroup>
 
   <Target Name="ValidateSsmsReferences" BeforeTargets="ResolveReferences">

@@ -25,11 +25,6 @@ internal static class SqlSnippetStore
         "SqlAssist",
         "snippets.json");
 
-    public static string LegacyBackupPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "SqlAssist",
-        "snippets.v1.backup.json");
-
     public static string? LastError { get; private set; }
 
     public static bool IsReadOnly
@@ -122,6 +117,34 @@ internal static class SqlSnippetStore
 
     private static SqlSnippetConfiguration Load()
     {
+        var configuration = LoadConfiguration();
+        ReportRuleViolations(configuration);
+        return configuration;
+    }
+
+    /// <summary>
+    /// 逐筆記下手改檔案帶進來的規則違規。
+    /// </summary>
+    /// <remarks>
+    /// 不切唯讀也不丟掉那一筆：整份 JSON 壞掉才需要保護原檔，單筆違規只是
+    /// 那一筆會出怪事（撞關鍵字的捷徑吃掉補全、重複的包夾錨點複製兩份）。
+    /// 紀錄留給診斷，標示留給管理介面——兩邊都沒有的話，症狀要等到使用者
+    /// 自己撞上才會出現，而那時看起來像產品壞了。
+    /// </remarks>
+    private static void ReportRuleViolations(SqlSnippetConfiguration configuration)
+    {
+        foreach (var entry in configuration.Entries)
+        {
+            if (entry.ValidationError is { } violation)
+            {
+                SqlAssistDiagnostics.WriteAlways(
+                    $"Snippet「{entry.Snippet.Shortcut}」不符規則：{violation}（{FilePath}）");
+            }
+        }
+    }
+
+    private static SqlSnippetConfiguration LoadConfiguration()
+    {
         var defaults = SqlSnippetDefaults.Current;
 
         if (SqlSnippetDefaults.LastError is { } resourceError)
@@ -151,15 +174,6 @@ internal static class SqlSnippetStore
                 return SqlSnippetMerger.Merge(defaults, document);
             }
 
-            if (document.Version == 1)
-            {
-                WriteLegacyBackupOnce();
-                document = SqlSnippetMerger.MigrateVersion1(document, defaults);
-                WriteDocument(document);
-                SqlAssistDiagnostics.WriteAlways(
-                    $"已把 Snippet v1 遷移成 v2；原檔保留於 {LegacyBackupPath}");
-            }
-
             _readOnly = false;
             LastError = null;
             return SqlSnippetMerger.Merge(defaults, document);
@@ -178,32 +192,6 @@ internal static class SqlSnippetStore
             LastError = exception.Message;
             SqlAssistDiagnostics.WriteAlways($"讀取 Snippet 失敗：{exception}");
             return SqlSnippetMerger.Merge(defaults, SqlSnippetDocument.Empty);
-        }
-    }
-
-    private static void WriteLegacyBackupOnce()
-    {
-        if (File.Exists(LegacyBackupPath))
-        {
-            return;
-        }
-
-        var directory = Path.GetDirectoryName(LegacyBackupPath);
-
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        // File.Copy 保留原始位元組與編碼；overwrite=false 也讓兩個 SSMS 行程
-        // 同時遷移時不會覆蓋先完成的那一份。
-        try
-        {
-            File.Copy(FilePath, LegacyBackupPath, overwrite: false);
-        }
-        catch (IOException) when (File.Exists(LegacyBackupPath))
-        {
-            // 另一個 SSMS 行程先完成了同一份冪等遷移；既有備份才是應保留的那份。
         }
     }
 

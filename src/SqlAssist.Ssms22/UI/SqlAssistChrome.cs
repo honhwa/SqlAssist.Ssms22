@@ -1,14 +1,25 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using SqlAssist.Core.Settings;
 
 namespace SqlAssist.Ssms22.UI;
+
+/// <summary>
+/// 動作的語意色調；只換停駐與按下的配對色，靜止外觀仍是同一顆按鈕。
+/// </summary>
+/// <remarks>
+/// 語意色是稀少的警示，不是分類標籤：每顆按鈕都上色，紅色就不再讀成「小心」。
+/// 新增一種色調＝加一個列舉值、在 <see cref="ThemePalette"/> 推導一組角色，呼叫端不必自己配色。
+/// </remarks>
+internal enum SqlActionTone { Neutral, Danger, Favorite }
 
 /// <summary>
 /// 整個擴充共用的外觀。
@@ -18,16 +29,13 @@ namespace SqlAssist.Ssms22.UI;
 /// 都從這裡取字型、字級、控制項樣板與間距。分成兩份的話，改一邊忘了另一邊
 /// 的症狀是「兩個視窗長得像但又不完全一樣」——那比一開始就不統一更難看。
 ///
-/// 樣板全部用 <see cref="FrameworkElementFactory"/> 在程式碼裡組出來，
-/// 整份原始碼沒有任何 XAML：為了幾個樣板引入資源字典會讓顏色的來源分裂成兩套，
-/// 字典裡只能用 <c>DynamicResource</c> 查主題鍵，那條路沒有備援，
-/// SSMS 還沒併入主題字典時會直接解析成透明。顏色一律從
-/// <see cref="VsThemeBrushes"/> 取，備援才有地方寫。
+/// 樣板只持有語意資源鍵，不保存建立當下的 Brush。動態資源及備援由同一份
+/// ThemeResourceSet 提供，主題切換不用重建控制項、樣板或資料列。
 ///
 /// 版面的原則是「用留白分層，不用線條」：層次靠間距與極淡的底色，
 /// 只有需要框住一整塊內容時才畫一條細線。
 /// </remarks>
-internal static class SqlAssistChrome
+internal static partial class SqlAssistChrome
 {
     /// <summary>介面字型；沒有 Variable 字族的機器會退回 Segoe UI。</summary>
     public static readonly FontFamily InterfaceFont = new("Segoe UI Variable Text, Segoe UI");
@@ -86,18 +94,219 @@ internal static class SqlAssistChrome
     /// </remarks>
     public static Metrics DefaultMetrics { get; } = new(SqlAssistLimits.DefaultPreviewFontSize);
 
+    private static volatile SqlAssistSettings _settings = new();
+
+    /// <summary>由設定服務每次重讀後推入；UI 層不直接認識平台的設定服務，才能單獨編進測試。</summary>
+    internal static void UseSettings(SqlAssistSettings settings) => _settings = settings;
+
+    /// <summary>自製介面現在該不該播動畫；每一個動畫表面都問這一處，不自行讀 Windows 偏好。</summary>
+    public static bool MotionEnabled => MotionPolicy(_settings.Animations, _settings.IgnoreWindowsAnimationSetting,
+        SystemParameters.ClientAreaAnimation, SystemParameters.HighContrast);
+
+    // 高對比與總開關優先；覆寫只略過 Windows 動畫偏好，不寫回 OS。
+    internal static bool MotionPolicy(bool enabled, bool ignoreWindows, bool windowsAnimation, bool highContrast) =>
+        enabled && !highContrast && (ignoreWindows || windowsAnimation);
+
+    /// <summary>內容表面出現時的淡入長度；共用一個數字，改一處就是全部。</summary>
+    public static readonly TimeSpan AppearDuration = TimeSpan.FromMilliseconds(120);
+
+    private static readonly CubicEase AppearEase = FrozenEaseOut();
+
+    /// <summary>
+    /// 內容表面的出現：只做透明度，不縮放也不位移。
+    /// </summary>
+    /// <remarks>
+    /// 浮動預覽與 SQL Memory 的復原卡片共用這一個出現動畫。內容本身沒有狀態要說，
+    /// 放大或回彈只是在搶讀 SQL 的注意力；120 毫秒短到不擋操作，仍看得出它是長出來的。
+    ///
+    /// 結束後把屬性交還基底值（<see cref="FillBehavior.Stop"/>），關著動畫時也先清掉上一次的：
+    /// 保留結束值的動畫會壓過之後的直接指定，「關掉動畫」就會變成關不掉。
+    /// </remarks>
+    /// <param name="motion">null 讀全域動畫設定；測試明確指定，不受執行環境的 Windows 動畫偏好左右。</param>
+    public static void PlayAppear(UIElement element, bool? motion = null)
+    {
+        element.BeginAnimation(UIElement.OpacityProperty, null);
+        if (!(motion ?? MotionEnabled))
+        {
+            element.Opacity = 1;
+            return;
+        }
+
+        element.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, AppearDuration)
+        {
+            EasingFunction = AppearEase,
+            FillBehavior = FillBehavior.Stop
+        });
+    }
+
+    private static CubicEase FrozenEaseOut()
+    {
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        ease.Freeze();
+        return ease;
+    }
+
+    /// <summary>視窗內的產品標誌：優先呈現產品圖示，保留小尺寸辨識度並跟隨 Fluent 配色。</summary>
+    public static Border CreateBrandMark(ImageSource? imageSource = null)
+    {
+        UIElement content;
+        if (imageSource != null)
+        {
+            var image = new Image
+            {
+                Source = imageSource,
+                Stretch = Stretch.Uniform
+            };
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+            content = image;
+        }
+        else
+        {
+            // 在未提供圖示來源時以向量路徑作為安全後備。
+            var glyph = new Canvas { Width = 48, Height = 48 };
+            var database = new Path
+            {
+                Data = Geometry.Parse(
+                    "M10,14 C10,9.3 28,9.3 28,14 L28,32 C28,36.7 10,36.7 10,32 Z " +
+                    "M10,14 C10,18.7 28,18.7 28,14 M10,23 C10,27.7 28,27.7 28,23"),
+                StrokeThickness = 2,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                StrokeLineJoin = PenLineJoin.Round
+            }.WithTheme(Shape.StrokeProperty, ThemeBrush.ListForeground);
+            var caret = new Path
+            {
+                Data = Geometry.Parse("M33,19 H38 M35.5,19 V34 M33,34 H38"),
+                StrokeThickness = 2,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                StrokeLineJoin = PenLineJoin.Round
+            }.WithTheme(Shape.StrokeProperty, ThemeBrush.AccentBorder);
+            glyph.Children.Add(database);
+            glyph.Children.Add(caret);
+            content = new Viewbox { Child = glyph, Stretch = Stretch.Uniform };
+        }
+
+        return new Border
+        {
+            Width = 48,
+            Height = 48,
+            CornerRadius = new CornerRadius(12),
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Child = content
+        }.WithTheme(Border.BackgroundProperty, ThemeBrush.AccentBackground)
+            .WithTheme(Border.BorderBrushProperty, ThemeBrush.Hairline);
+    }
+
     /// <summary>一塊內容的底：底色比視窗淺一階，四周一條細線。</summary>
     public static Border CreateSurface(UIElement? child = null)
     {
         return new Border
         {
-            Background = VsThemeBrushes.ListBackground,
-            BorderBrush = VsThemeBrushes.Hairline,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(InnerRadius + 1),
             SnapsToDevicePixels = true,
             Child = child
+        }.WithTheme(Border.BackgroundProperty, ThemeBrush.ListBackground)
+            .WithTheme(Border.BorderBrushProperty, ThemeBrush.Hairline);
+    }
+
+    /// <summary>
+    /// 右下角的調整大小握把。
+    /// </summary>
+    /// <remarks>
+    /// 給沒有原生標題列的浮動內容用：整塊 14×14 都要抓得到，所以底是透明的
+    /// <see cref="Border"/> 而不是只有兩條線——只有線條可以命中的話，使用者會覺得
+    /// 這個角落時靈時不靈。實際的縮放交給呼叫端，這裡只提供外觀與游標。
+    /// </remarks>
+    public static Thumb CreateResizeGrip()
+    {
+        var area = new FrameworkElementFactory(typeof(Border));
+        area.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+
+        var lines = new FrameworkElementFactory(typeof(Path));
+        lines.SetValue(Path.DataProperty, Geometry.Parse("M12,4 L4,12 M12,8 L8,12"));
+        lines.SetValue(Shape.StrokeThicknessProperty, 1.0);
+        lines.SetValue(Shape.StrokeStartLineCapProperty, PenLineCap.Round);
+        lines.SetValue(Shape.StrokeEndLineCapProperty, PenLineCap.Round);
+        lines.SetResourceReference(Shape.StrokeProperty, ThemeBrush.DimForeground);
+        area.AppendChild(lines);
+
+        return new Thumb
+        {
+            Width = 14,
+            Height = 14,
+            Margin = new Thickness(0, 0, 2, 2),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Cursor = System.Windows.Input.Cursors.SizeNWSE,
+            Focusable = false,
+            ToolTip = "拖曳調整大小",
+            Template = new ControlTemplate(typeof(Thumb)) { VisualTree = area }
         };
+    }
+
+    /// <summary>
+    /// 小型限高區塊的覆蓋式捲軸：3 DIP 握把疊在內容右緣，不佔版面寬度。
+    /// </summary>
+    /// <remarks>
+    /// 只有縱向捲軸、沒有軌道點擊，命中範圍也小，所以只給高度有限的輔助區塊；
+    /// 對話框、資料格與編輯區維持 SSMS 原生捲軸。內容右緣要自留空隙，握把才不會壓字。
+    /// </remarks>
+    public static void ApplyOverlayScroll(ScrollViewer scroll)
+    {
+        scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        scroll.Template = CreateOverlayScrollTemplate();
+    }
+
+    private static ControlTemplate CreateOverlayScrollTemplate()
+    {
+        var root = new FrameworkElementFactory(typeof(Grid));
+        var presenter = new FrameworkElementFactory(typeof(ScrollContentPresenter)) { Name = "PART_ScrollContentPresenter" };
+        presenter.SetBinding(ContentPresenter.ContentProperty, TemplatedParent(nameof(ContentControl.Content)));
+        presenter.SetBinding(ContentPresenter.ContentTemplateProperty, TemplatedParent(nameof(ContentControl.ContentTemplate)));
+        presenter.SetBinding(ScrollContentPresenter.CanContentScrollProperty, TemplatedParent(nameof(ScrollViewer.CanContentScroll)));
+        root.AppendChild(presenter);
+
+        // 本地值蓋過 VsThemeBrushes 發布的原生 ScrollBar 樣式，否則寬度與樣板會被換回去。
+        var bar = new FrameworkElementFactory(typeof(ScrollBar)) { Name = "PART_VerticalScrollBar" };
+        bar.SetValue(FrameworkElement.WidthProperty, 3d);
+        bar.SetValue(FrameworkElement.MinWidthProperty, 0d);
+        bar.SetValue(FrameworkElement.MaxWidthProperty, 3d);
+        bar.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Right);
+        bar.SetValue(FrameworkElement.CursorProperty, System.Windows.Input.Cursors.Arrow);
+        bar.SetValue(ScrollBar.OrientationProperty, Orientation.Vertical);
+        bar.SetValue(RangeBase.MinimumProperty, 0d);
+        bar.SetBinding(RangeBase.MaximumProperty, TemplatedParent(nameof(ScrollViewer.ScrollableHeight)));
+        bar.SetBinding(ScrollBar.ViewportSizeProperty, TemplatedParent(nameof(ScrollViewer.ViewportHeight)));
+        bar.SetBinding(RangeBase.ValueProperty,
+            new Binding(nameof(ScrollViewer.VerticalOffset)) { RelativeSource = RelativeSource.TemplatedParent, Mode = BindingMode.OneWay });
+        bar.SetBinding(UIElement.VisibilityProperty, TemplatedParent(nameof(ScrollViewer.ComputedVerticalScrollBarVisibility)));
+        bar.SetValue(Control.TemplateProperty, new ControlTemplate(typeof(ScrollBar))
+        {
+            VisualTree = new FrameworkElementFactory(typeof(OverlayScrollTrack)) { Name = "PART_Track" }
+        });
+        root.AppendChild(bar);
+        return new ControlTemplate(typeof(ScrollViewer)) { VisualTree = root };
+    }
+
+    /// <summary><see cref="Track.Thumb"/> 不是相依性屬性，樣板工廠設不到，只能由子類別自己放。</summary>
+    private sealed class OverlayScrollTrack : Track
+    {
+        public OverlayScrollTrack()
+        {
+            IsDirectionReversed = true;
+            var grip = new FrameworkElementFactory(typeof(Border)) { Name = "grip" };
+            grip.SetValue(Border.CornerRadiusProperty, new CornerRadius(1.5));
+            grip.SetResourceReference(Border.BackgroundProperty, ThemeBrush.ScrollThumb);
+            var template = new ControlTemplate(typeof(Thumb)) { VisualTree = grip };
+            AddTrigger(template, UIElement.IsMouseOverProperty, Border.BackgroundProperty, ThemeBrush.DimForeground, "grip");
+            AddTrigger(template, Thumb.IsDraggingProperty, Border.BackgroundProperty, ThemeBrush.ListForeground, "grip");
+            Thumb = new Thumb { MinHeight = 16, Cursor = System.Windows.Input.Cursors.Hand, Template = template };
+        }
     }
 
     /// <summary>區塊標題：靠字重而不是字級把段落分開。</summary>
@@ -109,9 +318,8 @@ internal static class SqlAssistChrome
             FontFamily = InterfaceFont,
             FontSize = metrics.Caption,
             FontWeight = FontWeights.SemiBold,
-            Foreground = VsThemeBrushes.ListForeground,
             Margin = new Thickness(0, 12, 0, 4)
-        };
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
     }
 
     /// <summary>欄位底下的說明；永遠比它說明的東西淡。</summary>
@@ -122,10 +330,17 @@ internal static class SqlAssistChrome
             Text = text,
             FontFamily = InterfaceFont,
             FontSize = metrics.Caption,
-            Foreground = VsThemeBrushes.DimForeground,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(2, 5, 0, 0)
-        };
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground);
+    }
+
+    /// <summary>單行脈絡資訊；不再用第二個標題搶走內容的閱讀空間。</summary>
+    public static TextBlock CreateMetadataText(string text, Metrics metrics)
+    {
+        var metadata = CreateStatusText(metrics);
+        metadata.Text = text;
+        return metadata;
     }
 
     /// <summary>短狀態用的圓角徽章；不能只靠顏色傳達狀態，文字仍是必要內容。</summary>
@@ -133,8 +348,6 @@ internal static class SqlAssistChrome
     {
         return new Border
         {
-            Background = accent ? VsThemeBrushes.AccentBackground : VsThemeBrushes.BadgeBackground,
-            BorderBrush = accent ? VsThemeBrushes.AccentBorder : VsThemeBrushes.Hairline,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(InnerRadius),
             Padding = new Thickness(8, 2, 8, 3),
@@ -142,10 +355,10 @@ internal static class SqlAssistChrome
             {
                 Text = text,
                 FontFamily = InterfaceFont,
-                FontSize = metrics.Caption,
-                Foreground = VsThemeBrushes.ListForeground
-            }
-        };
+                FontSize = metrics.Caption
+            }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground)
+        }.WithTheme(Border.BackgroundProperty, accent ? ThemeBrush.AccentBackground : ThemeBrush.BadgeBackground)
+            .WithTheme(Border.BorderBrushProperty, accent ? ThemeBrush.AccentBorder : ThemeBrush.Hairline);
     }
 
     /// <summary>
@@ -155,28 +368,47 @@ internal static class SqlAssistChrome
     /// 帶邊框的方鈕每一個都是四條線，一排三個就是十二條。
     /// 平常只留文字，需要按的時候才提示可按——與「用留白分層」是同一條原則。
     /// </remarks>
-    public static ControlTemplate CreateGhostButtonTemplate()
+    public static ControlTemplate CreateGhostButtonTemplate(SqlActionTone tone = SqlActionTone.Neutral)
     {
-        return CreateButtonTemplate(Brushes.Transparent);
+        return CreateButtonTemplate(primary: false, tone);
     }
 
     /// <summary>
     /// 主要動作用的按鈕。
     /// </summary>
     /// <remarks>
-    /// 刻意不用飽和的強調色：那塊藍上面的字仍然是主題的前景色，
-    /// 深淺兩種主題總有一種讀不清楚。這裡只是把幽靈按鈕的靜止狀態
-    /// 從透明換成極淡的底色——同一套語言裡的一階，不是另一種控制項。
+    /// 使用經過對比檢查的淡主題強調色，不讓飽和底色與一般前景互相衝突。
+    /// 只把幽靈按鈕的靜止狀態從透明換成淡底，不另立一套控制項。
     /// </remarks>
     public static ControlTemplate CreatePrimaryButtonTemplate()
     {
-        return CreateButtonTemplate(VsThemeBrushes.SegmentTrack);
+        return CreateButtonTemplate(primary: true, SqlActionTone.Neutral);
     }
 
-    private static ControlTemplate CreateButtonTemplate(Brush resting)
+    private static ControlTemplate CreateButtonTemplate(bool primary, SqlActionTone tone)
     {
+        // 色調只換互動狀態用的三個角色；中性仍走選取色，樣板結構與觸發器完全相同。
+        var (hover, pressed, paired) = tone switch
+        {
+            SqlActionTone.Danger => (ThemeBrush.DangerBackground, ThemeBrush.DangerPressed, ThemeBrush.DangerForeground),
+            SqlActionTone.Favorite => (ThemeBrush.FavoriteBackground, ThemeBrush.FavoritePressed, ThemeBrush.FavoriteForeground),
+            _ => (ThemeBrush.RowSelected, ThemeBrush.RowPressed, ThemeBrush.SelectedForeground)
+        };
         var background = new FrameworkElementFactory(typeof(Border)) { Name = "bg" };
-        background.SetValue(Border.BackgroundProperty, resting);
+        // ContentPresenter 的附加前景預設是黑色；明確承接控制項，互動 trigger 才能覆寫同一來源。
+        background.SetBinding(TextElement.ForegroundProperty, TemplatedParent(nameof(Control.Foreground)));
+        if (primary)
+        {
+            // 主要動作本身是破壞性時，靜止底色就用語意色；停駐底色與中性主要動作一樣不另外加深。
+            background.SetResourceReference(Border.BackgroundProperty, tone == SqlActionTone.Danger ? hover : ThemeBrush.AccentBackground);
+        }
+        else
+        {
+            background.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        }
+
+        background.SetValue(Border.BorderBrushProperty, Brushes.Transparent);
+        background.SetValue(Border.BorderThicknessProperty, new Thickness(1));
         background.SetValue(Border.CornerRadiusProperty, new CornerRadius(InnerRadius));
         background.SetBinding(Border.PaddingProperty, TemplatedParent(nameof(Control.Padding)));
 
@@ -189,11 +421,24 @@ internal static class SqlAssistChrome
 
         AddTrigger(
             template, UIElement.IsMouseOverProperty,
-            Border.BackgroundProperty, VsThemeBrushes.RowSelected, "bg");
+            Border.BackgroundProperty, hover, "bg");
 
-        AddTrigger(
-            template, ButtonBase.IsPressedProperty,
-            Border.BackgroundProperty, VsThemeBrushes.RowPressed, "bg");
+        AddTrigger(template, UIElement.IsMouseOverProperty,
+            TextElement.ForegroundProperty, paired, "bg");
+        AddTrigger(template, UIElement.IsMouseOverProperty,
+            Control.ForegroundProperty, paired);
+        AddTrigger(template, UIElement.IsKeyboardFocusWithinProperty,
+            Border.BackgroundProperty, hover, "bg");
+        AddTrigger(template, UIElement.IsKeyboardFocusWithinProperty,
+            TextElement.ForegroundProperty, paired, "bg");
+        AddTrigger(template, UIElement.IsKeyboardFocusWithinProperty,
+            Control.ForegroundProperty, paired);
+        AddTrigger(template, UIElement.IsKeyboardFocusWithinProperty,
+            Border.BorderBrushProperty, ThemeBrush.Border, "bg");
+
+        // 按下的回饋優先於焦點，否則滑鼠按下取得焦點後會把 pressed 底色蓋回去。
+        AddTrigger(template, ButtonBase.IsPressedProperty,
+            Border.BackgroundProperty, pressed, "bg");
 
         var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
         disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.4, "bg"));
@@ -211,28 +456,73 @@ internal static class SqlAssistChrome
     /// </remarks>
     public static Button CreateButton(string text, Metrics metrics, bool primary = false)
     {
+        // 預設前景不可放 local value，否則樣板的 hover／focus 配對色無法覆寫。
+        var style = new Style(typeof(Button));
+        style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.ListForeground));
         return new Button
         {
             Content = text,
             Padding = new Thickness(12, 4, 12, 5),
             FontFamily = InterfaceFont,
-            FontSize = metrics.Body,
-            Foreground = VsThemeBrushes.ListForeground,
+            FontSize = metrics.Body, Style = style,
             Template = primary ? CreatePrimaryButtonTemplate() : CreateGhostButtonTemplate()
         };
+    }
+
+    /// <summary>精簡確認內容：影響說明與單一頁尾，不重複原生標題列。</summary>
+    public static Grid CreateConfirmationContent(
+        string message, string detail, string action, out Button confirm, out Button cancel)
+    {
+        var root = new Grid { Margin = DialogPadding };
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var body = new StackPanel();
+        body.Children.Add(new TextBlock
+        {
+            Text = message,
+            FontFamily = InterfaceFont,
+            FontSize = DefaultMetrics.Body,
+            TextWrapping = TextWrapping.Wrap
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.WindowForeground));
+        var hint = CreateHint(detail, DefaultMetrics);
+        hint.Margin = new Thickness(0, 8, 0, 0);
+        body.Children.Add(hint);
+        // 長片段名稱只捲動訊息本身，避免把取消按鈕推到視窗外。
+        root.Children.Add(new ScrollViewer
+        {
+            Content = body,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MaxHeight = 240,
+            Focusable = false
+        });
+
+        cancel = CreateButton("取消", DefaultMetrics);
+        // Enter 與 Esc 都先保留草稿；只有明確移到動作按鈕後才允許破壞性操作。
+        cancel.IsDefault = true;
+        cancel.IsCancel = true;
+        confirm = CreateButton(action, DefaultMetrics, primary: true);
+        var footer = CreateDialogFooter(null, cancel, confirm);
+        Grid.SetRow(footer, 1);
+        root.Children.Add(footer);
+        System.Windows.Input.FocusManager.SetFocusedElement(root, cancel);
+        return root;
     }
 
     /// <summary>底部那一條回饋訊息；平常是空的，所以永遠比內容淡。</summary>
     public static TextBlock CreateStatusText(Metrics metrics)
     {
-        return new TextBlock
+        var status = new TextBlock
         {
             FontFamily = InterfaceFont,
             FontSize = metrics.Caption,
-            Foreground = VsThemeBrushes.DimForeground,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
-        };
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.DimForeground);
+        status.SetBinding(FrameworkElement.ToolTipProperty,
+            new Binding(nameof(TextBlock.Text)) { RelativeSource = RelativeSource.Self });
+        return status;
     }
 
     /// <summary>
@@ -246,9 +536,9 @@ internal static class SqlAssistChrome
     /// 唯讀與可編輯、選取單位、捲軸與內容選單留給呼叫端：那些是各自的行為，
     /// 不是外觀。字級可以事後覆寫，浮動預覽的字級是設定項。
     /// </remarks>
-    public static DataGrid CreateDataGrid(Metrics metrics, Brush background)
+    public static DataGrid CreateDataGrid(Metrics metrics, bool transparent = false)
     {
-        return new DataGrid
+        var grid = new DataGrid
         {
             AutoGenerateColumns = false,
             CanUserAddRows = false,
@@ -259,10 +549,6 @@ internal static class SqlAssistChrome
             // 格線是最吵的一種分隔方式：一百多列就是一百多條線。
             // 層次改交給交替底色，那是不用畫線也看得出來的。
             GridLinesVisibility = DataGridGridLinesVisibility.None,
-            Background = background,
-            Foreground = VsThemeBrushes.ListForeground,
-            RowBackground = background,
-            AlternatingRowBackground = VsThemeBrushes.RowAlternate,
             AlternationCount = 2,
             BorderThickness = default,
             FontFamily = InterfaceFont,
@@ -270,7 +556,21 @@ internal static class SqlAssistChrome
             RowHeight = metrics.RowHeight,
             ColumnHeaderStyle = CreateColumnHeaderStyle(metrics),
             CellStyle = CreateCellStyle()
-        };
+        }.WithTheme(DataGrid.ForegroundProperty, ThemeBrush.ListForeground)
+            .WithTheme(DataGrid.AlternatingRowBackgroundProperty, ThemeBrush.RowAlternate);
+
+        if (transparent)
+        {
+            grid.Background = Brushes.Transparent;
+            grid.RowBackground = Brushes.Transparent;
+        }
+        else
+        {
+            grid.WithTheme(Control.BackgroundProperty, ThemeBrush.ListBackground)
+                    .WithTheme(DataGrid.RowBackgroundProperty, ThemeBrush.ListBackground);
+        }
+
+        return grid;
     }
 
     /// <summary>
@@ -281,14 +581,21 @@ internal static class SqlAssistChrome
     /// <c>PART_ContentHost</c> 的，換掉樣板之後那條路就斷了——程式碼欄位明明設了
     /// <see cref="ScrollBarVisibility.Auto"/> 卻捲不動，就是漏掉這兩條繫結。
     /// </remarks>
-    public static ControlTemplate CreateTextBoxTemplate()
+    public static ControlTemplate CreateTextBoxTemplate() => CreateTextBoxTemplate(typeof(TextBox));
+
+    /// <param name="targetType">
+    /// 套用樣板的控制項型別。<see cref="RichTextBox"/> 與 <see cref="TextBox"/> 的外框
+    /// 完全相同，但 <c>ControlTemplate</c> 的 TargetType 必須對得上，否則套不上去。
+    /// </param>
+    public static ControlTemplate CreateTextBoxTemplate(Type targetType)
     {
         var field = new FrameworkElementFactory(typeof(Border)) { Name = "field" };
         field.SetBinding(Border.BackgroundProperty, TemplatedParent(nameof(Control.Background)));
-        field.SetValue(Border.BorderBrushProperty, VsThemeBrushes.Hairline);
+        field.SetResourceReference(Border.BorderBrushProperty, ThemeBrush.Hairline);
         field.SetValue(Border.BorderThicknessProperty, new Thickness(1));
         field.SetValue(Border.CornerRadiusProperty, new CornerRadius(InnerRadius));
-        field.SetBinding(Border.PaddingProperty, TemplatedParent(nameof(Control.Padding)));
+        // TextBox 的文字視圖已套用 Padding；外框再套一次會讓輸入框過高、左右縮排加倍。
+        field.SetValue(Border.PaddingProperty, default(Thickness));
         field.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
 
         var host = new FrameworkElementFactory(typeof(ScrollViewer)) { Name = "PART_ContentHost" };
@@ -302,15 +609,15 @@ internal static class SqlAssistChrome
             TemplatedParent(nameof(TextBoxBase.VerticalScrollBarVisibility)));
         field.AppendChild(host);
 
-        var template = new ControlTemplate(typeof(TextBox)) { VisualTree = field };
+        var template = new ControlTemplate(targetType) { VisualTree = field };
 
         AddTrigger(
             template, UIElement.IsMouseOverProperty,
-            Border.BorderBrushProperty, VsThemeBrushes.Border, "field");
+            Border.BorderBrushProperty, ThemeBrush.Border, "field");
 
         AddTrigger(
             template, UIElement.IsKeyboardFocusWithinProperty,
-            Border.BorderBrushProperty, VsThemeBrushes.AccentBorder, "field");
+            Border.BorderBrushProperty, ThemeBrush.AccentBorder, "field");
 
         var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
         disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.5, "field"));
@@ -326,14 +633,86 @@ internal static class SqlAssistChrome
         {
             FontFamily = InterfaceFont,
             FontSize = metrics.Body,
-            Background = VsThemeBrushes.ListBackground,
-            Foreground = VsThemeBrushes.ListForeground,
-            CaretBrush = VsThemeBrushes.ListForeground,
-            SelectionBrush = VsThemeBrushes.RowSelected,
             Padding = new Thickness(8, 5, 8, 6),
             BorderThickness = new Thickness(1),
             Template = CreateTextBoxTemplate()
+        }.WithTheme(TextBox.BackgroundProperty, ThemeBrush.ListBackground)
+            .WithTheme(TextBox.ForegroundProperty, ThemeBrush.ListForeground)
+            .WithTheme(TextBox.CaretBrushProperty, ThemeBrush.ListForeground)
+            .WithTheme(TextBox.SelectionBrushProperty, ThemeBrush.RowSelected);
+    }
+
+    /// <summary>
+    /// 唯讀的程式碼檢視區：與輸入欄位同一個外框，但內容可以分段上色。
+    /// </summary>
+    /// <remarks>
+    /// 用 <see cref="RichTextBox"/> 而不是 <see cref="TextBox"/>，是因為預覽要用顏色
+    /// 分出「原本的 SQL」與「片段新增的外框」，而 <c>TextBox</c> 只有一種前景色。
+    /// 仍然可以選取與複製——那是這個區塊最常見的下一步，<c>TextBlock</c> 做不到。
+    /// 不換行：SQL 折行之後對不齊，寬度不夠時用水平捲軸。
+    /// </remarks>
+    public static RichTextBox CreateCodeViewer(Metrics metrics)
+    {
+        var viewer = new RichTextBox
+        {
+            FontFamily = CodeFont,
+            FontSize = metrics.Body,
+            Padding = new Thickness(8, 5, 8, 6),
+            BorderThickness = new Thickness(1),
+            IsReadOnly = true,
+            IsDocumentEnabled = false,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Template = CreateTextBoxTemplate(typeof(RichTextBox))
         };
+        viewer.WithTheme(RichTextBox.BackgroundProperty, ThemeBrush.ListBackground)
+            .WithTheme(RichTextBox.ForegroundProperty, ThemeBrush.ListForeground)
+            .WithTheme(RichTextBox.SelectionBrushProperty, ThemeBrush.RowSelected);
+        return viewer;
+    }
+
+    /// <summary>
+    /// 把整份文件換成一段程式碼；不換行、不留段落間距。
+    /// </summary>
+    /// <remarks>
+    /// 頁寬要自己算：<see cref="FlowDocument"/> 預設照可視寬度折行，SQL 一折就對不齊。
+    /// 但固定給一個很大的值會讓水平捲軸永遠都在，所以照最長的一行估——等寬字型的
+    /// 前進寬度約是字級的 0.62 倍，寧可估寬一點點，也不要估窄而折行。
+    /// </remarks>
+    public static void SetCode(RichTextBox viewer, string text, IEnumerable<Inline> content)
+    {
+        var paragraph = new Paragraph { Margin = default };
+        paragraph.Inlines.AddRange(content);
+        viewer.Document = new FlowDocument(paragraph)
+        {
+            PagePadding = default,
+            PageWidth = Math.Max(1, LongestLine(text) * viewer.FontSize * 0.62),
+            FontFamily = viewer.FontFamily,
+            FontSize = viewer.FontSize
+        };
+        viewer.ScrollToHome();
+    }
+
+    private static int LongestLine(string text)
+    {
+        var longest = 0;
+        var current = 0;
+        foreach (var character in text)
+        {
+            if (character == '\n' || character == '\r')
+            {
+                current = 0;
+                continue;
+            }
+
+            current++;
+            if (current > longest)
+            {
+                longest = current;
+            }
+        }
+
+        return longest;
     }
 
     /// <summary>下拉選單的字型、色彩與基本尺寸。</summary>
@@ -345,11 +724,10 @@ internal static class SqlAssistChrome
             Padding = new Thickness(8, 3, 8, 3),
             FontFamily = InterfaceFont,
             FontSize = metrics.Body,
-            Foreground = VsThemeBrushes.ListForeground,
-            Background = VsThemeBrushes.ListBackground,
-            BorderBrush = VsThemeBrushes.Hairline,
             BorderThickness = new Thickness(1)
-        };
+        }.WithTheme(ComboBox.ForegroundProperty, ThemeBrush.ListForeground)
+            .WithTheme(ComboBox.BackgroundProperty, ThemeBrush.ListBackground)
+            .WithTheme(ComboBox.BorderBrushProperty, ThemeBrush.Hairline);
     }
 
     /// <summary>
@@ -369,8 +747,8 @@ internal static class SqlAssistChrome
         box.SetValue(FrameworkElement.WidthProperty, 14.0);
         box.SetValue(FrameworkElement.HeightProperty, 14.0);
         box.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
-        box.SetValue(Border.BackgroundProperty, VsThemeBrushes.SegmentTrack);
-        box.SetValue(Border.BorderBrushProperty, VsThemeBrushes.Hairline);
+        box.SetResourceReference(Border.BackgroundProperty, ThemeBrush.SegmentTrack);
+        box.SetResourceReference(Border.BorderBrushProperty, ThemeBrush.Hairline);
         box.SetValue(Border.BorderThicknessProperty, new Thickness(1));
         box.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
         box.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 8, 0));
@@ -378,7 +756,7 @@ internal static class SqlAssistChrome
 
         var check = new FrameworkElementFactory(typeof(Path)) { Name = "check" };
         check.SetValue(Path.DataProperty, Geometry.Parse("M 2,6.5 L 4.8,9.3 L 10,3.2"));
-        check.SetValue(Shape.StrokeProperty, VsThemeBrushes.ListForeground);
+        check.SetResourceReference(Shape.StrokeProperty, ThemeBrush.ListForeground);
         check.SetValue(Shape.StrokeThicknessProperty, 1.6);
         check.SetValue(Shape.StrokeStartLineCapProperty, PenLineCap.Round);
         check.SetValue(Shape.StrokeEndLineCapProperty, PenLineCap.Round);
@@ -399,12 +777,15 @@ internal static class SqlAssistChrome
 
         AddTrigger(
             template, UIElement.IsMouseOverProperty,
-            Border.BorderBrushProperty, VsThemeBrushes.Border, "box");
+            Border.BorderBrushProperty, ThemeBrush.Border, "box");
+
+        AddTrigger(template, UIElement.IsKeyboardFocusWithinProperty,
+            Border.BorderBrushProperty, ThemeBrush.AccentBorder, "box");
 
         var isChecked = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
         isChecked.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "check"));
-        isChecked.Setters.Add(new Setter(Border.BackgroundProperty, VsThemeBrushes.AccentBackground, "box"));
-        isChecked.Setters.Add(new Setter(Border.BorderBrushProperty, VsThemeBrushes.AccentBorder, "box"));
+        isChecked.Setters.Add(ThemeResourceSet.Setter(Border.BackgroundProperty, ThemeBrush.AccentBackground, "box"));
+        isChecked.Setters.Add(ThemeResourceSet.Setter(Border.BorderBrushProperty, ThemeBrush.AccentBorder, "box"));
         template.Triggers.Add(isChecked);
 
         return template;
@@ -424,18 +805,21 @@ internal static class SqlAssistChrome
 
         AddTrigger(
             template, UIElement.IsMouseOverProperty,
-            Border.BackgroundProperty, VsThemeBrushes.RowHover, "row");
+            Border.BackgroundProperty, ThemeBrush.RowHover, "row");
+        AddTrigger(template, UIElement.IsMouseOverProperty,
+            TextElement.ForegroundProperty, ThemeBrush.SelectedForeground, "row");
 
         // 選取寫在滑鼠之後：兩個條件同時成立時，後宣告的那一個才是使用者要看的。
         var selected = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
-        selected.Setters.Add(new Setter(Border.BackgroundProperty, VsThemeBrushes.RowSelected, "row"));
+        selected.Setters.Add(ThemeResourceSet.Setter(Border.BackgroundProperty, ThemeBrush.RowSelected, "row"));
+        selected.Setters.Add(ThemeResourceSet.Setter(TextElement.ForegroundProperty, ThemeBrush.SelectedForeground, "row"));
         template.Triggers.Add(selected);
 
         var style = new Style(typeof(ListBoxItem));
         style.Setters.Add(new Setter(Control.TemplateProperty, template));
         style.Setters.Add(new Setter(Control.FontFamilyProperty, InterfaceFont));
         style.Setters.Add(new Setter(Control.FontSizeProperty, metrics.Body));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, VsThemeBrushes.ListForeground));
+        style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.ListForeground));
         style.Setters.Add(new Setter(
             Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
         return style;
@@ -453,18 +837,18 @@ internal static class SqlAssistChrome
     /// <see cref="FrameworkElementFactory"/> 沒辦法宣告資料列定義，
     /// 而「頂端一條、其餘填滿」本來就是停駐面板在做的事。
     /// </remarks>
-    public static ControlTemplate CreateTabControlTemplate()
+    public static ControlTemplate CreateTabControlTemplate(bool compact = false)
     {
         var layout = new FrameworkElementFactory(typeof(DockPanel));
         layout.SetValue(DockPanel.LastChildFillProperty, true);
 
         var track = new FrameworkElementFactory(typeof(Border));
         track.SetValue(DockPanel.DockProperty, Dock.Top);
-        track.SetValue(Border.BackgroundProperty, VsThemeBrushes.SegmentTrack);
+        track.SetResourceReference(Border.BackgroundProperty, ThemeBrush.SegmentTrack);
         track.SetValue(Border.CornerRadiusProperty, new CornerRadius(7));
         track.SetValue(Border.PaddingProperty, new Thickness(2));
         track.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Left);
-        track.SetValue(FrameworkElement.MarginProperty, new Thickness(14, 0, 14, 10));
+        track.SetValue(FrameworkElement.MarginProperty, compact ? new Thickness(0) : new Thickness(14, 0, 14, 10));
 
         var headers = new FrameworkElementFactory(typeof(TabPanel));
         headers.SetValue(Panel.IsItemsHostProperty, true);
@@ -486,12 +870,14 @@ internal static class SqlAssistChrome
     {
         var segment = new FrameworkElementFactory(typeof(Border)) { Name = "segment" };
         segment.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        segment.SetValue(Border.BorderBrushProperty, Brushes.Transparent);
+        segment.SetValue(Border.BorderThicknessProperty, new Thickness(1));
         segment.SetValue(Border.CornerRadiusProperty, new CornerRadius(InnerRadius));
         segment.SetValue(Border.PaddingProperty, new Thickness(12, 3, 12, 4));
 
         var label = new FrameworkElementFactory(typeof(ContentPresenter)) { Name = "label" };
         label.SetBinding(ContentPresenter.ContentProperty, TemplatedParent(nameof(TabItem.Header)));
-        label.SetValue(TextElement.ForegroundProperty, VsThemeBrushes.DimForeground);
+        label.SetResourceReference(TextElement.ForegroundProperty, ThemeBrush.DimForeground);
         label.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
         segment.AppendChild(label);
 
@@ -500,30 +886,41 @@ internal static class SqlAssistChrome
         // 滑鼠掃過只把字提亮，不加底色——底色是「被選中」的專屬訊號。
         AddTrigger(
             template, UIElement.IsMouseOverProperty,
-            TextElement.ForegroundProperty, VsThemeBrushes.ListForeground, "label");
+            TextElement.ForegroundProperty, ThemeBrush.ListForeground, "label");
+        AddTrigger(template, UIElement.IsMouseOverProperty,
+            Control.ForegroundProperty, ThemeBrush.ListForeground);
 
         var selected = new Trigger { Property = TabItem.IsSelectedProperty, Value = true };
-        selected.Setters.Add(new Setter(Border.BackgroundProperty, VsThemeBrushes.ListBackground, "segment"));
-        selected.Setters.Add(new Setter(TextElement.ForegroundProperty, VsThemeBrushes.ListForeground, "label"));
+        selected.Setters.Add(ThemeResourceSet.Setter(Border.BackgroundProperty, ThemeBrush.ListBackground, "segment"));
+        selected.Setters.Add(ThemeResourceSet.Setter(Border.BorderBrushProperty, ThemeBrush.Hairline, "segment"));
+        selected.Setters.Add(ThemeResourceSet.Setter(TextElement.ForegroundProperty, ThemeBrush.ListForeground, "label"));
+        selected.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.ListForeground));
         template.Triggers.Add(selected);
 
         return template;
     }
 
     /// <summary>欄位標題：一條細線把它跟資料分開，字比資料更小也更淡。</summary>
-    public static Style CreateColumnHeaderStyle(Metrics metrics)
+    public static Style CreateColumnHeaderStyle(
+        Metrics metrics,
+        HorizontalAlignment alignment = HorizontalAlignment.Left,
+        string? tooltip = null)
     {
         var style = new Style(typeof(DataGridColumnHeader));
         style.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
-        style.Setters.Add(new Setter(Control.BorderBrushProperty, VsThemeBrushes.Hairline));
+        style.Setters.Add(ThemeResourceSet.Setter(Control.BorderBrushProperty, ThemeBrush.Hairline));
         style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 0, 1)));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, VsThemeBrushes.DimForeground));
+        style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.DimForeground));
         style.Setters.Add(new Setter(Control.FontFamilyProperty, InterfaceFont));
         style.Setters.Add(new Setter(Control.FontSizeProperty, metrics.ColumnHeader));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 0, 10, 0)));
         style.Setters.Add(new Setter(FrameworkElement.HeightProperty, metrics.RowHeight + 2));
         style.Setters.Add(new Setter(
-            Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Left));
+            Control.HorizontalContentAlignmentProperty, alignment));
+        if (tooltip is not null)
+        {
+            style.Setters.Add(new Setter(FrameworkElement.ToolTipProperty, tooltip));
+        }
         return style;
     }
 
@@ -535,20 +932,24 @@ internal static class SqlAssistChrome
         style.Setters.Add(new Setter(Control.BorderThicknessProperty, default(Thickness)));
 
         var selected = new Trigger { Property = DataGridCell.IsSelectedProperty, Value = true };
-        selected.Setters.Add(new Setter(Control.BackgroundProperty, VsThemeBrushes.RowSelected));
-        selected.Setters.Add(new Setter(Control.ForegroundProperty, VsThemeBrushes.ListForeground));
+        selected.Setters.Add(ThemeResourceSet.Setter(Control.BackgroundProperty, ThemeBrush.RowSelected));
+        selected.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.SelectedForeground));
         style.Triggers.Add(selected);
 
         return style;
     }
 
     /// <summary>資料格裡的文字：垂直置中，左右留出與標題一致的內距。</summary>
-    public static Style CreateCellTextStyle()
+    public static Style CreateCellTextStyle(TextAlignment alignment = TextAlignment.Left)
     {
         var style = new Style(typeof(TextBlock));
         style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(10, 0, 10, 0)));
         style.Setters.Add(new Setter(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center));
         style.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
+        style.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, alignment));
+        // 省略只影響版面；完整值仍可從 Tooltip 讀取，不必拉寬整張表。
+        style.Setters.Add(new Setter(FrameworkElement.ToolTipProperty,
+            new Binding(nameof(TextBlock.Text)) { RelativeSource = RelativeSource.Self }));
         return style;
     }
 
@@ -562,10 +963,10 @@ internal static class SqlAssistChrome
     public static Style CreateCellEditorStyle()
     {
         var style = new Style(typeof(TextBox));
-        style.Setters.Add(new Setter(Control.BackgroundProperty, VsThemeBrushes.ListBackground));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, VsThemeBrushes.ListForeground));
-        style.Setters.Add(new Setter(TextBoxBase.CaretBrushProperty, VsThemeBrushes.ListForeground));
-        style.Setters.Add(new Setter(TextBoxBase.SelectionBrushProperty, VsThemeBrushes.RowSelected));
+        style.Setters.Add(ThemeResourceSet.Setter(Control.BackgroundProperty, ThemeBrush.ListBackground));
+        style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.ListForeground));
+        style.Setters.Add(ThemeResourceSet.Setter(TextBoxBase.CaretBrushProperty, ThemeBrush.ListForeground));
+        style.Setters.Add(ThemeResourceSet.Setter(TextBoxBase.SelectionBrushProperty, ThemeBrush.RowSelected));
         style.Setters.Add(new Setter(Control.BorderThicknessProperty, default(Thickness)));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 0, 8, 0)));
         style.Setters.Add(new Setter(
@@ -582,11 +983,11 @@ internal static class SqlAssistChrome
         ControlTemplate template,
         DependencyProperty property,
         DependencyProperty target,
-        object targetValue,
-        string targetName)
+        ThemeBrush targetValue,
+        string? targetName = null)
     {
         var trigger = new Trigger { Property = property, Value = true };
-        trigger.Setters.Add(new Setter(target, targetValue, targetName));
+        trigger.Setters.Add(ThemeResourceSet.Setter(target, targetValue, targetName));
         template.Triggers.Add(trigger);
     }
 }

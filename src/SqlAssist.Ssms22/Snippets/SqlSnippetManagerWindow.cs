@@ -170,6 +170,9 @@ internal sealed class SnippetDraft : INotifyPropertyChanged
             if (Set(ref _code, value))
             {
                 SyncPlaceholders();
+
+                // 標題帶著「不符規則」的標記，而包夾錨點那一條看的是樣板。
+                Notify(nameof(Caption));
             }
         }
     }
@@ -212,6 +215,20 @@ internal sealed class SnippetDraft : INotifyPropertyChanged
 
     public ObservableCollection<PlaceholderDraft> Placeholders { get; } = new();
 
+    /// <summary>
+    /// 這一筆不符規則的原因；<c>null</c> 代表沒問題。
+    /// </summary>
+    /// <remarks>
+    /// 每次讀都重算而不是從載入時的結果抄一份：使用者改掉捷徑或樣板之後標記要
+    /// 當場消失，才看得出「這樣改就對了」。判斷與存檔、載入同一份
+    /// （<see cref="SqlSnippetValidation"/>），所以清單上沒有標記的那一筆不會
+    /// 在按下儲存時突然被退回。
+    /// </remarks>
+    public string? ValidationError =>
+        IsDisabled || SqlSnippetValidation.Validate(Shortcut?.Trim(), Code, IsShadowed, out var error)
+            ? null
+            : error;
+
     public string Caption
     {
         get
@@ -225,6 +242,13 @@ internal sealed class SnippetDraft : INotifyPropertyChanged
             if (IsDisabled)
             {
                 return caption + "（已停用）";
+            }
+
+            // 排在「被佔用」前面：不符規則要使用者動手改，而且整份存不回去；
+            // 被佔用改掉撞名的那一筆就自己解除。
+            if (ValidationError is not null)
+            {
+                return caption + "（不符規則）";
             }
 
             if (IsShadowed)
@@ -410,19 +434,7 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
 
     public SqlSnippetManagerWindow()
     {
-        Title = "SqlAssist — 程式碼片段";
-        Width = 940;
-        Height = 700;
-        MinWidth = 760;
-        MinHeight = 520;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = VsThemeBrushes.WindowBackground;
-        Foreground = VsThemeBrushes.WindowForeground;
-        FontFamily = SqlAssistChrome.InterfaceFont;
-        FontSize = Metrics.Body;
-
-        // 版面計算的模式交給排版而不是像素對齊：字距在小字級下才不會忽寬忽窄。
-        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
+        SqlAssistDialogs.Configure(this, "SqlAssist — 程式碼片段", 940, 700, minWidth: 760, minHeight: 520);
 
         var configuration = SqlSnippetStore.Configuration;
         _isReadOnly = SqlSnippetStore.IsReadOnly;
@@ -474,31 +486,30 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
         _codeBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _codeBox.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
         _codeBox.FontFamily = SqlAssistChrome.CodeFont;
-        _codeBox.MinHeight = 120;
+        // 長片段在自己的編輯區捲動，不把整份表單撐成數千像素。
+        _codeBox.MinHeight = 180;
+        _codeBox.MaxHeight = 280;
 
         _followUpBox = new CheckBox
         {
             Content = "展開後立刻再顯示一次建議清單",
-            Foreground = VsThemeBrushes.ListForeground,
             Margin = new Thickness(0, 16, 0, 0),
             Padding = default,
             Template = SqlAssistChrome.CreateCheckBoxTemplate()
-        };
+        }.WithTheme(CheckBox.ForegroundProperty, ThemeBrush.ListForeground);
         _expansionModeBox.SelectionChanged += (_, _) => UpdateFollowUpAvailability();
 
         _destructiveBox = new CheckBox
         {
             Content = "危險操作（無輸入前綴時隱藏）",
-            Foreground = VsThemeBrushes.ListForeground,
             Margin = new Thickness(0, 10, 0, 0),
             Padding = default,
             Template = SqlAssistChrome.CreateCheckBoxTemplate()
-        };
+        }.WithTheme(CheckBox.ForegroundProperty, ThemeBrush.ListForeground);
 
         _placeholderGrid = CreatePlaceholderGrid();
 
         _statusText = SqlAssistChrome.CreateStatusText(Metrics);
-        _statusText.Margin = new Thickness(0, 0, 12, 0);
 
         _editor = BuildEditor();
         _restoreSelectedButton = CreateButton("還原此預設", OnRestoreSelected);
@@ -514,7 +525,7 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
             UpdateEditorEnabled();
         }
 
-        ReportStoreError();
+        ReportLoadState();
 
         if (_isReadOnly)
         {
@@ -534,7 +545,7 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
     /// </remarks>
     private DataGrid CreatePlaceholderGrid()
     {
-        var grid = SqlAssistChrome.CreateDataGrid(Metrics, Brushes.Transparent);
+        var grid = SqlAssistChrome.CreateDataGrid(Metrics, transparent: true);
         grid.MinHeight = 110;
         grid.MaxHeight = 200;
 
@@ -576,31 +587,23 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
     {
         var panel = new StackPanel();
 
-        // 第一個標題不留上緣空白：它上面就是視窗邊，再留一次會歪掉。
-        var shortcutLabel = SqlAssistChrome.CreateLabel("捷徑", Metrics);
-        shortcutLabel.Margin = new Thickness(0, 0, 0, 4);
-        panel.Children.Add(shortcutLabel);
-        panel.Children.Add(_shortcutBox);
+        panel.Children.Add(CreateFieldPair("捷徑", _shortcutBox, "標題", _titleBox));
         panel.Children.Add(SqlAssistChrome.CreateHint(
-            "在編輯器裡打這串字，就會在建議清單裡出現。只能用字母、數字與底線。", Metrics));
-
-        panel.Children.Add(SqlAssistChrome.CreateLabel("標題", Metrics));
-        panel.Children.Add(_titleBox);
+            "輸入捷徑即可顯示建議；捷徑限字母、數字與底線。", Metrics));
 
         panel.Children.Add(SqlAssistChrome.CreateLabel("說明", Metrics));
         panel.Children.Add(_descriptionBox);
 
-        panel.Children.Add(SqlAssistChrome.CreateLabel("分類", Metrics));
-        panel.Children.Add(_categoryBox);
-
-        panel.Children.Add(SqlAssistChrome.CreateLabel("展開模式", Metrics));
-        panel.Children.Add(_expansionModeBox);
+        var choices = CreateFieldPair("分類", _categoryBox, "展開模式", _expansionModeBox);
+        choices.Margin = new Thickness(0, 16, 0, 0);
+        panel.Children.Add(choices);
 
         panel.Children.Add(SqlAssistChrome.CreateLabel("程式碼", Metrics));
         panel.Children.Add(_codeBox);
         panel.Children.Add(SqlAssistChrome.CreateHint(
             "以 $名稱$ 標示佔位符，展開時會換成下面設定的預設值；" +
-            "以 $end$ 標示展開後游標要停的位置。", Metrics));
+            "以 $end$ 標示展開後游標要停的位置。\n" +
+            "加入一個 $surround$ 即可從右鍵包住選取 SQL；其餘欄位要能以 Tab 切換，請選「依序按 Tab 跳轉」。", Metrics));
 
         panel.Children.Add(_destructiveBox);
 
@@ -618,9 +621,33 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
         return panel;
     }
 
+    private static Grid CreateFieldPair(string firstTitle, Control first, string secondTitle, Control second)
+    {
+        var pair = new Grid();
+        pair.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        pair.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+        pair.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        void AddField(string title, Control control, int column)
+        {
+            var field = new StackPanel();
+            var label = SqlAssistChrome.CreateLabel(title, Metrics);
+            label.Margin = new Thickness(0, 0, 0, 4);
+            field.Children.Add(label);
+            field.Children.Add(control);
+            System.Windows.Automation.AutomationProperties.SetName(control, title);
+            Grid.SetColumn(field, column);
+            pair.Children.Add(field);
+        }
+
+        AddField(firstTitle, first, 0);
+        AddField(secondTitle, second, 2);
+        return pair;
+    }
+
     private Grid BuildLayout()
     {
-        var root = new Grid { Margin = new Thickness(16) };
+        var root = new Grid { Margin = SqlAssistChrome.DialogPadding };
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(260) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -632,9 +659,13 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
             Orientation = Orientation.Horizontal,
             Margin = new Thickness(0, 8, 0, 0)
         };
-        listButtons.Children.Add(CreateButton("新增", OnAdd));
-        listButtons.Children.Add(CreateButton("複製", OnDuplicate));
-        listButtons.Children.Add(CreateButton("刪除", OnDelete));
+        foreach (var (text, handler) in new (string, RoutedEventHandler)[] { ("新增", OnAdd), ("複製", OnDuplicate), ("刪除", OnDelete) })
+        {
+            var button = CreateButton(text, handler);
+            button.MinWidth = SqlAssistChrome.DialogButtonMinWidth;
+            button.Margin = new Thickness(listButtons.Children.Count == 0 ? 0 : 8, 0, 0, 0);
+            listButtons.Children.Add(button);
+        }
         DockPanel.SetDock(listButtons, Dock.Bottom);
         left.Children.Add(listButtons);
         left.Children.Add(SqlAssistChrome.CreateSurface(_list));
@@ -657,28 +688,18 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
         Grid.SetColumn(scroll, 1);
         root.Children.Add(scroll);
 
-        var footer = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
-        var actions = new StackPanel { Orientation = Orientation.Horizontal };
-        actions.Children.Add(CreateButton("開啟檔案位置", OnRevealFile));
-        actions.Children.Add(_restoreSelectedButton);
-        actions.Children.Add(CreateButton("還原預設", OnRestoreDefaults));
-
-        var confirm = new StackPanel { Orientation = Orientation.Horizontal };
+        var utilities = new[]
+        {
+            CreateButton("開啟檔案位置", OnRevealFile),
+            _restoreSelectedButton,
+            CreateButton("還原預設", OnRestoreDefaults)
+        };
 
         // 整個視窗只有這一顆按鈕帶底色；主要動作只能有一個，多給一個就沒有主要。
         _saveButton.IsDefault = true;
-        confirm.Children.Add(_saveButton);
-
         var cancel = CreateButton("取消", (_, _) => Close());
         cancel.IsCancel = true;
-        cancel.Margin = default;
-        confirm.Children.Add(cancel);
-
-        DockPanel.SetDock(actions, Dock.Left);
-        DockPanel.SetDock(confirm, Dock.Right);
-        footer.Children.Add(actions);
-        footer.Children.Add(confirm);
-        footer.Children.Add(_statusText);
+        var footer = SqlAssistChrome.CreateDialogFooter(utilities, _statusText, cancel, _saveButton);
 
         Grid.SetRow(footer, 1);
         Grid.SetColumnSpan(footer, 2);
@@ -689,11 +710,8 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
 
     private static Button CreateButton(string text, RoutedEventHandler handler, bool primary = false)
     {
+        // 寬度與間距由擺放的那一列決定：頁尾交給 CreateDialogFooter，清單按鈕列自己排。
         var button = SqlAssistChrome.CreateButton(text, Metrics, primary);
-
-        // 對話框底部那一排要對齊，最窄的按鈕也不能比「取消」窄。
-        button.MinWidth = 78;
-        button.Margin = new Thickness(0, 0, 6, 0);
         button.Click += handler;
         return button;
     }
@@ -717,6 +735,14 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
 
         PushToEditor(Selected);
         UpdateEditorEnabled();
+
+        // 清單上只標得下「不符規則」四個字，原因要選起來才看得到。不改成一直清空
+        // 狀態列：讀檔問題與唯讀原因也顯示在同一行，選個項目就把它抹掉的話，
+        // 使用者再也找不回那句話。
+        if (Selected?.ValidationError is { } violation)
+        {
+            _statusText.Text = $"{violation}修好之前整份存不回檔案。";
+        }
     }
 
     private void PushToEditor(SnippetDraft? draft)
@@ -842,14 +868,16 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
         }
 
         var action = draft.IsBuiltIn ? "停用" : "刪除";
-        var confirmed = MessageBox.Show(
+        var confirmed = SqlAssistConfirmationWindow.Confirm(
             this,
+            $"SqlAssist — {action}片段",
             $"要{action}「{draft.Caption}」嗎？",
-            "SqlAssist",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Question);
+            draft.IsBuiltIn
+                ? "停用後不再出現在建議清單，可隨時重新啟用。按「儲存」後才會寫回檔案。"
+                : "此自訂片段將從清單移除。按「儲存」後才會寫回檔案。",
+            action);
 
-        if (confirmed != MessageBoxResult.OK)
+        if (!confirmed)
         {
             return;
         }
@@ -883,14 +911,14 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
             return;
         }
 
-        var confirmed = MessageBox.Show(
+        var confirmed = SqlAssistConfirmationWindow.Confirm(
             this,
-            "要還原全部 43 筆內建片段並移除自訂片段嗎？按「儲存」之後才會寫回檔案。",
-            "SqlAssist",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning);
+            "SqlAssist — 還原預設片段",
+            $"要還原全部 {SqlSnippetDefaults.Current.Snippets.Count} 筆內建片段並移除自訂片段嗎？",
+            "內建片段的修改與停用狀態也會重設。按「儲存」後才會寫回檔案。",
+            "還原預設");
 
-        if (confirmed != MessageBoxResult.OK)
+        if (!confirmed)
         {
             return;
         }
@@ -1015,34 +1043,42 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
 
         foreach (var draft in _drafts)
         {
-            var shortcut = draft.Shortcut?.Trim() ?? string.Empty;
+            var snippet = draft.ToSnippet();
 
             if (!draft.IsDisabled)
             {
-                // 逐筆累加而不是最後一次檢查：撞名要指得出是哪一筆，
-                // 而「已經收進去的那些」正好就是判斷撞名的依據。
-                //
-                // 被遮住的項目跳過這一關：它的撞名是手改檔案帶進來的，
-                // 擋在這裡只會讓使用者連別的欄位都存不回去。合併時仍會
-                // 挑出同一個贏家，改掉捷徑就自己解除。
-                if (!draft.IsShadowed && !ValidateShortcut(shortcut, taken, out error))
+                // 捷徑格式、關鍵字撞名與包夾錨點走 Core 那一份：載入時用它標示、
+                // 這裡用它擋下，兩邊的判斷必須一樣，否則清單上沒有標記的那一筆
+                // 會在按下儲存時突然被退回。被遮住的項目讓開捷徑那一條——它的
+                // 撞名是手改檔案帶進來的，擋在這裡只會讓使用者連別的欄位都存不回去。
+                if (!SqlSnippetValidation.Validate(snippet.Shortcut, snippet.Code, draft.IsShadowed, out error))
                 {
                     invalid = draft;
+                    error = $"「{draft.Caption}」{error}";
                     return false;
                 }
 
-                if (string.IsNullOrWhiteSpace(draft.Code))
+                // 逐筆累加而不是最後一次檢查：撞名要指得出是哪一筆，
+                // 而「已經收進去的那些」正好就是判斷撞名的依據。
+                if (!draft.IsShadowed && taken.Contains(snippet.Shortcut))
+                {
+                    invalid = draft;
+                    error = $"「{draft.Caption}」捷徑「{snippet.Shortcut}」已經有人用了。";
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(snippet.Code))
                 {
                     invalid = draft;
                     error = $"「{draft.Caption}」還沒有程式碼。";
                     return false;
                 }
 
-                taken.Add(shortcut);
+                taken.Add(snippet.Shortcut);
             }
 
             result.Add(new SqlSnippetConfigurationEntry(
-                draft.ToSnippet(),
+                snippet,
                 draft.IsBuiltIn,
                 draft.IsCustomized,
                 draft.IsDisabled,
@@ -1052,23 +1088,6 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
         entries = result;
         invalid = null;
         error = string.Empty;
-        return true;
-    }
-
-    /// <summary>捷徑的格式與唯一性；格式那一條沿用模型的判斷。</summary>
-    private static bool ValidateShortcut(string shortcut, ICollection<string> taken, out string error)
-    {
-        if (!SqlSnippetLibrary.Empty.ValidateShortcut(shortcut, null, out error))
-        {
-            return false;
-        }
-
-        if (taken.Contains(shortcut))
-        {
-            error = $"捷徑「{shortcut}」已經有人用了。";
-            return false;
-        }
-
         return true;
     }
 
@@ -1097,13 +1116,23 @@ internal sealed class SqlSnippetManagerWindow : DialogWindow
         return prefix;
     }
 
-    private void ReportStoreError()
+    private void ReportLoadState()
     {
         if (SqlSnippetStore.LastError is { } error)
         {
             // 檔案讀壞時畫面仍列內建值，但使用者資料沒有套上；必須講清楚並保持唯讀，
             // 否則看起來像「自訂項目被刪光」，再存一次就真的覆蓋原檔。
             _statusText.Text = $"讀取檔案時發生問題：{error}";
+            return;
+        }
+
+        // 手改檔案帶進來的單筆違規比整份壞掉輕，不切唯讀也不丟掉資料——但要在
+        // 一開啟就講出有幾筆，否則使用者只會在清單裡看到一個標記，不知道去哪裡找。
+        var invalid = _drafts.Count(item => item.ValidationError is not null);
+
+        if (invalid > 0)
+        {
+            _statusText.Text = $"有 {invalid} 筆片段不符規則，已在清單標示；選起來看原因。";
         }
     }
 

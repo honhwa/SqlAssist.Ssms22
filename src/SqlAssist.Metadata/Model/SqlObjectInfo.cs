@@ -87,15 +87,32 @@ public sealed class SqlObjectInfo
 
     public SqlObjectKind Kind { get; }
 
+    /// <summary>加上方括號的結構描述與那個點號，例如 <c>[dbo].</c>；沒有結構描述時是空字串。</summary>
+    /// <remarks>
+    /// 分成兩段是為了結構預覽的標題：它把結構描述畫成淡色、名稱畫成粗體，
+    /// 沒有結構描述時整段前綴都不該出現。自己拼一次的症狀是
+    /// <c>[].[#TempTest]</c>——它宣稱有一個叫空字串的結構描述。
+    /// </remarks>
+    public string SchemaPrefix =>
+        SchemaName.Length == 0 ? string.Empty : SqlIdentifier.Quote(SchemaName) + ".";
+
+    /// <summary>加上方括號的名稱本身。</summary>
+    /// <remarks>
+    /// 沒有結構描述時照 <see cref="SqlIdentifier.QuoteIfNeeded"/> 的規則——那正是
+    /// 暫存資料表與資料表變數，包上方括號的寫法不是假的就是不合法。
+    /// </remarks>
+    public string QuotedName =>
+        SchemaName.Length == 0 ? SqlIdentifier.QuoteIfNeeded(Name) : SqlIdentifier.Quote(Name);
+
     /// <summary>加上方括號的完整名稱，例如 <c>[dbo].[Lib_Reader]</c>。</summary>
     /// <remarks>
-    /// 沒有結構描述時只寫名稱本身，而且照 <see cref="SqlIdentifier.QuoteIfNeeded"/>
-    /// 的規則——那正是暫存資料表與資料表變數，包上方括號的寫法不是假的就是不合法。
+    /// 算一次就留著。通知的主體、紀錄與提示都問這一個，而每一次讀都是三次字串配置；
+    /// 通知的文案契約要求「即使被隱藏也不配置新字串」，靠的就是這一份。
+    /// 物件是不可變的，兩條執行緒同時算出來的也是同一個值。
     /// </remarks>
-    public string QualifiedName =>
-        SchemaName.Length == 0
-            ? SqlIdentifier.QuoteIfNeeded(Name)
-            : $"{SqlIdentifier.Quote(SchemaName)}.{SqlIdentifier.Quote(Name)}";
+    public string QualifiedName => _qualifiedName ??= SchemaPrefix + QuotedName;
+
+    private string? _qualifiedName;
 
     public override string ToString() => QualifiedName;
 }

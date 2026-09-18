@@ -84,26 +84,16 @@ public sealed class SqlSnippetLibrary
     /// <param name="error">不能用時的原因。</param>
     public bool ValidateShortcut(string? shortcut, string? allowedExisting, out string error)
     {
-        if (string.IsNullOrWhiteSpace(shortcut))
+        // 只看一份樣板就能判斷的那幾條在 SqlSnippetValidation：載入時也要跑同一份，
+        // 而載入端沒有「編輯中的這一筆」可以讓開撞名那一條。
+        if (!SqlSnippetValidation.ValidateShortcut(shortcut, out error))
         {
-            error = "捷徑不能空白。";
             return false;
         }
 
-        // 展開器是在「游標前方的那一個詞元」上比對的，含空白或標點的捷徑
-        // 永遠不會被切成同一個詞元，也就永遠展不開。與其存進去再讓使用者
-        // 納悶為什麼沒反應，不如當場擋下來。
-        foreach (var character in shortcut!)
-        {
-            if (!char.IsLetterOrDigit(character) && character != '_')
-            {
-                error = $"捷徑只能用字母、數字與底線，不能有「{character}」。";
-                return false;
-            }
-        }
-
+        // 空白已經被上面那一份規則擋掉了。
         if (!string.Equals(shortcut, allowedExisting, StringComparison.OrdinalIgnoreCase) &&
-            _byShortcut.ContainsKey(shortcut))
+            _byShortcut.ContainsKey(shortcut!))
         {
             error = $"捷徑「{shortcut}」已經有人用了。";
             return false;

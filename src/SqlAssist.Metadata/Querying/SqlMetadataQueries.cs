@@ -1,4 +1,4 @@
-
+using SqlAssist.Core.Keywords;
 
 namespace SqlAssist.Metadata.Querying;
 
@@ -124,6 +124,38 @@ WHERE s.is_linked = 1
 ORDER BY s.name;";
 
     /// <summary>
+    /// 這台伺服器支援的定序名稱。
+    /// </summary>
+    /// <remarks>
+    /// <c>sys.fn_helpcollations()</c> 從 SQL Server 2000 就有，而且不看權限——
+    /// 這是一份與資料無關的常數表。它與物件清單分開快取：名單屬於<b>伺服器</b>，
+    /// 與目前連線的是哪一個資料庫無關，跟著每一份目錄各存一次的話，
+    /// 使用者每打出一個跨資料庫的限定字就多五千多個字串。
+    ///
+    /// 不做成寫死的內建目錄：SQL Server 2019 之後有五千五百筆以上，
+    /// 而每一版都在增加——寫死的那一份會在下一版開始漏掉名稱，
+    /// 而漏掉哪一個使用者完全看不出來。
+    /// </remarks>
+    public const string Collations = @"
+SELECT c.name
+FROM sys.fn_helpcollations() AS c
+ORDER BY c.name;";
+
+    /// <summary>
+    /// 目前這個資料庫的定序。
+    /// </summary>
+    /// <remarks>
+    /// 與定序名單分開查：這一個屬於資料庫，名單屬於伺服器，兩者的快取層級不同。
+    ///
+    /// 走 <c>DATABASEPROPERTYEX</c> 而不是 <c>sys.databases.collation_name</c>：
+    /// 後者在共用主機上讀得到的列只有自己進得去的那幾個，而這條查的正是
+    /// 目前連線的那一個——問自己一定答得出來。查不到時是 NULL，
+    /// 呼叫端當成「這一輪沒有」，不是錯誤。
+    /// </remarks>
+    public const string DatabaseCollation = @"
+SELECT CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), 'Collation'));";
+
+    /// <summary>
     /// 第二層：單一物件的欄位。主索引鍵資訊由 sys.indexes／sys.index_columns 帶出，
     /// 讓滑鼠停留提示能直接標示 PK。
     /// </summary>
@@ -135,8 +167,50 @@ ORDER BY s.name;";
     /// 於是欄位建議、萬用字元展開與結構預覽在那些伺服器上會一起安靜地消失。
     /// <c>COLUMNPROPERTY</c> 對認不得的屬性名稱回傳 NULL，NULL &gt; 0 不成立，
     /// 舊版因此自然得到 0，不必為此再開一條依版本組字串的路。
+    ///
+    /// <c>IsSparse</c> 與 <c>IsRowGuidCol</c> 走同一個函式，理由相同：
+    /// <c>sys.columns.is_sparse</c> 要 SQL Server 2008 才有。
+    ///
+    /// 識別值的種子與遞增量在伺服器端就 <c>CONVERT</c> 成字串：那兩欄是
+    /// <c>sql_variant</c>，用 <c>GetValue</c> 收到的是裝箱的原生型別，
+    /// 一個 <c>decimal(38,0)</c> 的識別資料行會讓任何一種整數轉型當場溢位。
+    ///
+    /// 資料行的說明（<c>MS_Description</c>）掛在這一條上而不是另開一次查詢：
+    /// <c>sys.extended_properties</c> 的鍵是 class＋major_id＋minor_id＋name，
+    /// 四個都給定就最多接得到一列，多的只有一欄，不是多一輪來回。
+    /// 值同樣在伺服器端 <c>CONVERT</c>——它也是 <c>sql_variant</c>。
     /// </remarks>
-    public const string Columns = @"
+    public const string Columns = ColumnsHead + "sys.columns" + ColumnsTail;
+
+    /// <summary>
+    /// 第二層：系統物件的欄位。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="Columns"/> 是同一份本體，只換掉資料行的目錄檢視：
+    /// <c>sys.columns</c> 只收使用者物件，<c>sys.triggers</c>、
+    /// <c>INFORMATION_SCHEMA.TABLES</c> 這一類系統檢視的資料行全都只在
+    /// <c>sys.all_columns</c> 上。抄成第二份完整查詢的症狀是改了一邊另一邊沒改，
+    /// 而少掉的那幾欄在畫面上看不出來。
+    ///
+    /// 反過來讓所有物件都走 <c>sys.all_columns</c> 也不行：那是一個聯集檢視，
+    /// 而這一條在「使用者選了一張表」的路徑上，多付的是每一張使用者資料表。
+    /// </remarks>
+    public const string SystemColumns = ColumnsHead + "sys.all_columns" + ColumnsTail;
+
+    /// <summary>
+    /// 某個結構描述底下的物件該問哪一條欄位查詢。
+    /// </summary>
+    /// <remarks>
+    /// 判斷放在查詢這一邊而不是載入那一邊：那裡拿得到的只有「這個物件是誰」，
+    /// 而「這個名稱要問哪一個目錄檢視」是查詢自己的事，也只有在這裡測得到。
+    /// </remarks>
+    public static string ColumnsFor(string? schemaName)
+    {
+        return SqlSystemSchemas.IsSystem(schemaName) ? SystemColumns : Columns;
+    }
+
+    /// <summary>欄位查詢的前半段，到資料行的目錄檢視名稱為止。</summary>
+    private const string ColumnsHead = @"
 SELECT
     c.column_id,
     c.name AS column_name,
@@ -153,9 +227,29 @@ SELECT
     CONVERT(bit, CASE
         WHEN COLUMNPROPERTY(c.object_id, c.name, 'GeneratedAlwaysType') > 0 THEN 1
         ELSE 0
-    END) AS is_generated_always
-FROM sys.columns AS c
+    END) AS is_generated_always,
+    c.collation_name,
+    CONVERT(nvarchar(64), ic.seed_value) AS identity_seed,
+    CONVERT(nvarchar(64), ic.increment_value) AS identity_increment,
+    dc.name AS default_constraint_name,
+    dc.is_system_named AS default_is_system_named,
+    cc.is_persisted,
+    CONVERT(bit, CASE
+        WHEN COLUMNPROPERTY(c.object_id, c.name, 'IsSparse') > 0 THEN 1
+        ELSE 0
+    END) AS is_sparse,
+    CONVERT(bit, CASE
+        WHEN COLUMNPROPERTY(c.object_id, c.name, 'IsRowGuidCol') > 0 THEN 1
+        ELSE 0
+    END) AS is_row_guid_col,
+    CONVERT(nvarchar(max), ep.value) AS column_description
+FROM ";
+
+    /// <summary>欄位查詢的後半段，從資料行的目錄檢視名稱之後接下去。</summary>
+    private const string ColumnsTail = @" AS c
 INNER JOIN sys.types AS t ON t.user_type_id = c.user_type_id
+LEFT JOIN sys.identity_columns AS ic
+    ON ic.object_id = c.object_id AND ic.column_id = c.column_id
 LEFT JOIN sys.indexes AS pk
     ON pk.object_id = c.object_id AND pk.is_primary_key = 1
 LEFT JOIN sys.index_columns AS pkc
@@ -166,8 +260,38 @@ LEFT JOIN sys.default_constraints AS dc
     ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
 LEFT JOIN sys.computed_columns AS cc
     ON cc.object_id = c.object_id AND cc.column_id = c.column_id
+LEFT JOIN sys.extended_properties AS ep
+    ON ep.class = 1
+   AND ep.major_id = c.object_id
+   AND ep.minor_id = c.column_id
+   AND ep.name = 'MS_Description'
 WHERE c.object_id = @objectId
 ORDER BY c.column_id;";
+
+    /// <summary>
+    /// 第二層：物件自己的 <c>MS_Description</c>。
+    /// </summary>
+    /// <remarks>
+    /// 說明放在第二層而不是跟著第四層的擴充屬性走，理由是<b>誰要看它</b>：
+    /// 滑鼠停留提示只讀快取、不等查詢，而第四層要使用者主動打開結構才載入——
+    /// 併在那裡的話，提示上的說明只有「剛好開過結構」的物件才有，
+    /// 而畫面上看不出那個差別。
+    ///
+    /// 資料行的說明不走這一條，它跟著 <see cref="Columns"/> 的
+    /// <c>LEFT JOIN</c> 一起回來：那是同一列多取一欄，不是多一次來回。
+    /// 這一條問的是資料表本身（<c>minor_id = 0</c>），一列都沒有就是沒有說明。
+    ///
+    /// 只取 <c>MS_Description</c>。其餘擴充屬性一個都不會顯示在提示或預覽上，
+    /// 撈回來只是讓每一次停留多付流量；要寫進指令碼的那一份仍由第四層的
+    /// <see cref="ExtendedProperties"/> 整批取回。
+    /// </remarks>
+    public const string ObjectDescription = @"
+SELECT CONVERT(nvarchar(max), ep.value) AS object_description
+FROM sys.extended_properties AS ep
+WHERE ep.class = 1
+  AND ep.major_id = @objectId
+  AND ep.minor_id = 0
+  AND ep.name = 'MS_Description';";
 
     /// <summary>
     /// 第四層：單一資料表的索引。
@@ -177,6 +301,15 @@ ORDER BY c.column_id;";
     /// <c>type = 0</c> 是堆積，沒有索引名稱也沒有意義，直接排除。
     /// 排序把索引鍵欄位排在 INCLUDE 欄位前面：INCLUDE 欄位的 key_ordinal 是 0，
     /// 只依 key_ordinal 排會讓它們跑到最前面。
+    ///
+    /// <c>STATISTICS_NORECOMPUTE</c> 的來源是 <c>sys.stats.no_recompute</c>，
+    /// 不在 <c>sys.indexes</c> 上——每個索引有一份同號的統計資料，鍵是
+    /// <c>stats_id = index_id</c>。<c>DATA_COMPRESSION</c> 則在
+    /// <c>sys.partitions</c>，只取第一個分割：其餘分割各自可以不同，
+    /// 而那要寫成 <c>ON PARTITIONS (…)</c>，不是這一層能表達的。
+    ///
+    /// 三個 JOIN 都限制成最多一列（<c>stats_id</c>、<c>partition_number = 1</c>、
+    /// <c>partition_ordinal = 1</c>），不會讓每個資料行多出幾列。
     /// </remarks>
     public const string Indexes = @"
 SELECT
@@ -189,16 +322,87 @@ SELECT
     i.filter_definition,
     c.name AS column_name,
     ic.is_descending_key,
-    ic.is_included_column
+    ic.is_included_column,
+    i.fill_factor,
+    i.is_padded,
+    i.ignore_dup_key,
+    i.allow_row_locks,
+    i.allow_page_locks,
+    i.is_disabled,
+    st.no_recompute,
+    p.data_compression_desc,
+    ds.name AS data_space_name,
+    ds.type AS data_space_type,
+    pc.name AS partition_column_name
 FROM sys.indexes AS i
 INNER JOIN sys.index_columns AS ic
     ON ic.object_id = i.object_id AND ic.index_id = i.index_id
 INNER JOIN sys.columns AS c
     ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+LEFT JOIN sys.stats AS st
+    ON st.object_id = i.object_id AND st.stats_id = i.index_id
+LEFT JOIN sys.partitions AS p
+    ON p.object_id = i.object_id AND p.index_id = i.index_id AND p.partition_number = 1
+LEFT JOIN sys.data_spaces AS ds
+    ON ds.data_space_id = i.data_space_id
+LEFT JOIN sys.index_columns AS pic
+    ON pic.object_id = i.object_id AND pic.index_id = i.index_id AND pic.partition_ordinal = 1
+LEFT JOIN sys.columns AS pc
+    ON pc.object_id = pic.object_id AND pc.column_id = pic.column_id
 WHERE i.object_id = @objectId
   AND i.type <> 0
   AND i.name IS NOT NULL
 ORDER BY i.index_id, ic.is_included_column, ic.key_ordinal, ic.index_column_id;";
+
+    /// <summary>
+    /// 第四層：資料表本身的儲存位置與建立時的 SET 選項。
+    /// </summary>
+    /// <remarks>
+    /// 資料表沒有自己的 <c>data_space_id</c>，那個值在它的叢集索引或堆積上
+    /// （<c>index_id</c> 0 或 1）——所以要繞回 <c>sys.indexes</c>。
+    ///
+    /// <c>lob_data_space_id</c> 只有真的有 LOB 資料行時才不是 NULL，
+    /// 而它正是 <c>TEXTIMAGE_ON</c> 的來源。判斷「這張表要不要寫
+    /// <c>TEXTIMAGE_ON</c>」用它，不要自己掃資料行的型別：<c>xml</c>、CLR 型別
+    /// 與 <c>varchar(max)</c> 都算，漏一種就是一份與來源不同的資料表。
+    ///
+    /// 兩個 <c>SET</c> 反推建立當時的值，而不是一律寫 <c>ON</c>：計算資料行、
+    /// 篩選索引與索引檢視對它們的值有要求，一張在 <c>OFF</c> 之下建起來的資料表，
+    /// 用 <c>ON</c> 重建可能直接失敗。
+    ///
+    /// <c>ANSI_NULLS</c> 在 <c>sys.tables.uses_ansi_nulls</c>；<c>QUOTED_IDENTIFIER</c>
+    /// <b>不在任何一個目錄檢視上</b>，只問得到 <c>OBJECTPROPERTY</c>——
+    /// <c>sys.tables</c> 沒有 <c>uses_quoted_identifier</c> 這一欄（那是
+    /// <c>sys.sql_modules</c> 的欄位）。直接 SELECT 它會讓整條查詢變成
+    /// <c>Invalid column name</c>，而那是 <c>DbException</c>，會被降級吃掉，
+    /// 與 <c>COLUMNPROPERTY(…, 'GeneratedAlwaysType')</c> 是同一條規則。
+    ///
+    /// <c>CONVERT(bit, …)</c> 不能省：<c>OBJECTPROPERTY</c> 回傳 <c>int</c>，
+    /// 讀取端要的是 <c>GetBoolean</c>，型別不合會丟 <c>InvalidCastException</c>——
+    /// 那不是 <c>DbException</c>，接不住。跨連結伺服器時它在對方登入的預設資料庫裡
+    /// 找 object_id，多半得到 NULL，讀取端的 fallback 是 <c>true</c>，
+    /// 與 <c>COLUMNPROPERTY</c> 那幾條的降級一致。
+    /// </remarks>
+    public const string TableStorage = @"
+SELECT
+    ds.name AS filegroup_name,
+    ds.type AS filegroup_type,
+    lob.name AS lob_filegroup_name,
+    t.uses_ansi_nulls,
+    pc.name AS partition_column_name,
+    CONVERT(bit, OBJECTPROPERTY(t.object_id, 'IsQuotedIdentOn')) AS uses_quoted_identifier
+FROM sys.tables AS t
+LEFT JOIN sys.indexes AS i
+    ON i.object_id = t.object_id AND i.index_id IN (0, 1)
+LEFT JOIN sys.data_spaces AS ds
+    ON ds.data_space_id = i.data_space_id
+LEFT JOIN sys.data_spaces AS lob
+    ON lob.data_space_id = t.lob_data_space_id
+LEFT JOIN sys.index_columns AS pic
+    ON pic.object_id = i.object_id AND pic.index_id = i.index_id AND pic.partition_ordinal = 1
+LEFT JOIN sys.columns AS pc
+    ON pc.object_id = pic.object_id AND pc.column_id = pic.column_id
+WHERE t.object_id = @objectId;";
 
     /// <summary>第四層：單一資料表向外參考的外來鍵；複合鍵會有多列。</summary>
     public const string ForeignKeys = @"
@@ -223,6 +427,114 @@ INNER JOIN sys.schemas AS rs
     ON rs.schema_id = ro.schema_id
 WHERE fk.parent_object_id = @objectId
 ORDER BY fk.name, fkc.constraint_column_id;";
+
+    /// <summary>
+    /// 第四層：掛在單一資料表上的觸發程序。
+    /// </summary>
+    /// <remarks>
+    /// 定義走 <c>sys.sql_modules</c> 的 <c>LEFT JOIN</c> 而不是 <c>OBJECT_DEFINITION</c>：
+    /// 那是本機函式，加不了限定字，跨到連結伺服器時會在對方登入的預設資料庫裡
+    /// 找 object_id——與模組定義那一條同一個理由。加密的觸發程序那一欄是 NULL，
+    /// 讀取端據此整個跳過。
+    ///
+    /// <c>parent_class = 1</c> 只收掛在物件上的那些；掛在資料庫或伺服器上的
+    /// DDL 觸發程序不屬於任何一張資料表。
+    /// </remarks>
+    public const string Triggers = @"
+SELECT
+    tr.name AS trigger_name,
+    m.definition,
+    tr.is_disabled
+FROM sys.triggers AS tr
+LEFT JOIN sys.sql_modules AS m ON m.object_id = tr.object_id
+WHERE tr.parent_id = @objectId
+  AND tr.parent_class = 1
+  AND tr.is_ms_shipped = 0
+ORDER BY tr.name;";
+
+    /// <summary>
+    /// 第四層：單一資料表上的 <c>CHECK</c> 條件約束。
+    /// </summary>
+    /// <remarks>
+    /// <c>is_disabled</c> 一定要取。停用的條件約束在重建出來的資料表上如果變成
+    /// 啟用的，那張表會開始擋掉來源允許的資料——而那是在資料匯入到一半才發現的
+    /// 那種差異。
+    ///
+    /// <c>parent_column_id</c> 是 0 時代表寫在資料表層級而不是某個資料行上；
+    /// <c>LEFT JOIN</c> 因此接不到列，資料行名稱是 NULL，正好是要的結果。
+    /// </remarks>
+    public const string CheckConstraints = @"
+SELECT
+    cc.name AS constraint_name,
+    cc.definition,
+    cc.is_disabled,
+    cc.is_not_for_replication,
+    cc.is_system_named,
+    c.name AS column_name
+FROM sys.check_constraints AS cc
+LEFT JOIN sys.columns AS c
+    ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+WHERE cc.parent_object_id = @objectId
+ORDER BY cc.name;";
+
+    /// <summary>
+    /// 第四層：單一資料表上的擴充屬性，含資料行、索引與條件約束三層。
+    /// </summary>
+    /// <remarks>
+    /// <c>value</c> 在伺服器端就 <c>CONVERT</c> 成字串：那一欄是 <c>sql_variant</c>，
+    /// 用 <c>GetValue</c> 收到的是裝箱的原生型別，而下游要的一律是寫進指令碼的那串字。
+    /// 與序列的界限值同一個理由。
+    ///
+    /// 三段 <c>UNION</c> 對應三種掛法，而它們的 <c>major_id</c> 根本不是同一個東西：
+    /// 資料表與資料行掛在資料表自己身上（<c>class = 1</c>，<c>minor_id</c> 是
+    /// <c>column_id</c>，0 代表資料表本身）；索引是 <c>class = 7</c>，
+    /// <c>minor_id</c> 是 <c>index_id</c>；條件約束則掛在<b>條件約束自己</b>的
+    /// object_id 上，所以要從 <c>parent_object_id</c> 回頭找。少掉第三段的症狀是
+    /// 條件約束上的說明安靜地消失。
+    ///
+    /// <c>level</c> 這一欄是本查詢自己編的號，不是目錄檢視上的欄位；排序也照它走，
+    /// 讓資料表的說明排在資料行前面——與 SSMS 的輸出順序一致。
+    /// </remarks>
+    public const string ExtendedProperties = @"
+SELECT level, property_name, property_value, minor_id, target_name
+FROM (
+    SELECT
+        CONVERT(int, CASE WHEN ep.minor_id = 0 THEN 0 ELSE 1 END) AS level,
+        ep.name AS property_name,
+        CONVERT(nvarchar(max), ep.value) AS property_value,
+        ep.minor_id,
+        c.name AS target_name
+    FROM sys.extended_properties AS ep
+    LEFT JOIN sys.columns AS c
+        ON c.object_id = ep.major_id AND c.column_id = ep.minor_id
+    WHERE ep.class = 1 AND ep.major_id = @objectId
+    UNION ALL
+    SELECT
+        2 AS level,
+        ep.name AS property_name,
+        CONVERT(nvarchar(max), ep.value) AS property_value,
+        ep.minor_id,
+        i.name AS target_name
+    FROM sys.extended_properties AS ep
+    INNER JOIN sys.indexes AS i
+        ON i.object_id = ep.major_id AND i.index_id = ep.minor_id
+    WHERE ep.class = 7 AND ep.major_id = @objectId
+    UNION ALL
+    SELECT
+        3 AS level,
+        ep.name AS property_name,
+        CONVERT(nvarchar(max), ep.value) AS property_value,
+        0 AS minor_id,
+        o.name AS target_name
+    FROM sys.extended_properties AS ep
+    INNER JOIN sys.objects AS o
+        ON o.object_id = ep.major_id
+    WHERE ep.class = 1
+      AND ep.minor_id = 0
+      AND o.parent_object_id = @objectId
+      AND o.type IN ('C', 'D', 'F', 'PK', 'UQ')
+) AS properties
+ORDER BY level, minor_id, target_name, property_name;";
 
     /// <summary>第二層：單一模組的參數。</summary>
     public const string Parameters = @"

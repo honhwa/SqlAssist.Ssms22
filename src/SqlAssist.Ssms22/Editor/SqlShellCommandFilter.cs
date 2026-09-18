@@ -8,7 +8,9 @@ using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.TextManager.Interop;
 using SqlAssist.Ssms22.Commands;
 using SqlAssist.Ssms22.Completion;
+using SqlAssist.Ssms22.SqlMemory;
 using SqlAssist.Ssms22.Settings;
+using SqlAssist.Ssms22.Snippets;
 
 // Microsoft.VisualStudio.OLE.Interop 自己有一個 IServiceProvider（COM 的那個）與
 // 一個 Constants，跟殼層的同名。這裡要的都是另一邊，明確指名才不會編譯失敗。
@@ -47,6 +49,11 @@ internal sealed class SqlShellCommandFilter : IOleCommandTarget
     private static readonly Guid StandardCommandSet = VSConstants.GUID_VSStandardCommandSet97;
 
     private const uint GoToDefinitionCommandId = (uint)VSConstants.VSStd97CmdID.GotoDefn;
+
+    /// <summary>編輯器命令集，<c>Edit.SurroundWith</c>（Ctrl+K, Ctrl+S）屬於這一組。</summary>
+    private static readonly Guid EditorCommandSet = VSConstants.VSStd2K;
+
+    private const uint SurroundWithCommandId = (uint)VSConstants.VSStd2KCmdID.SURROUNDWITH;
 
     private const int NotSupported = (int)OleConstants.OLECMDERR_E_NOTSUPPORTED;
 
@@ -136,13 +143,48 @@ internal sealed class SqlShellCommandFilter : IOleCommandTarget
     /// </remarks>
     public int QueryStatus(ref Guid pguidCmdGroup, uint cCmds, OLECMD[] prgCmds, IntPtr pCmdText)
     {
-        if (pguidCmdGroup == StandardCommandSet &&
-            cCmds == 1 &&
-            prgCmds[0].cmdID == GoToDefinitionCommandId &&
-            SqlAssistSettingsStore.Current.Enabled)
+        if (cCmds == 1)
         {
-            prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
-            return VSConstants.S_OK;
+            // 清單開著時那些導覽鍵歸清單管；不在這裡認領，編輯器把某個命令回報成停用
+            // （例如沒東西可復原）時殼層就不會派送 Exec，那個鍵會安靜地消失。
+            if (SqlSnippetSurroundPicker.IsOpen)
+            {
+                // ref 參數進不了 Lambda，先落成區域變數；清單沒開就連這一次複製都不做。
+                var group = pguidCmdGroup;
+                var command = prgCmds[0].cmdID;
+                if (SqlAssistPlatformGuard.Run("回報包夾清單的按鍵狀態",
+                        () => SqlSnippetSurroundPicker.TryHandleShellCommand(_textView, group, command, execute: false),
+                        fallback: false))
+                {
+                    prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
+                    return VSConstants.S_OK;
+                }
+            }
+
+            if (pguidCmdGroup == StandardCommandSet)
+            {
+                if (prgCmds[0].cmdID == GoToDefinitionCommandId &&
+                    SqlAssistSettingsStore.Current.Enabled)
+                {
+                    prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
+                    return VSConstants.S_OK;
+                }
+            }
+            else if (pguidCmdGroup == EditorCommandSet)
+            {
+                // 打字用的 TYPECHAR 也在這一組，所以這個分支每個按鍵都會走進來，
+                // 而下一步就只剩一次整數比對——比對不中時什麼都不做就往下轉。
+                // 只在真的做得到時認領：沒有選取或沒有可包夾的片段時讓開，
+                // Ctrl+K, Ctrl+S 就落回 SSMS 自己的行為，而不是變成一個按下去
+                // 什麼都不會發生的鍵。
+                if (prgCmds[0].cmdID == SurroundWithCommandId &&
+                    SqlAssistSettingsStore.Current.Enabled &&
+                    SqlSnippetSurroundAction.IsAvailable(_textView))
+                {
+                    prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
+                    return VSConstants.S_OK;
+                }
+            }
         }
 
         return _next is { } next
@@ -152,11 +194,42 @@ internal sealed class SqlShellCommandFilter : IOleCommandTarget
 
     public int Exec(ref Guid pguidCmdGroup, uint nCmdID, uint nCmdexecopt, IntPtr pvaIn, IntPtr pvaOut)
     {
+        // 包夾清單開著時，殼層仍照「文字編輯器」範圍把 Tab／↑↓／Enter／Delete 解析成
+        // 編輯器命令送到這裡——與焦點在哪個視窗無關，不攔就是直接改到後面那份 SQL。
+        // 排在最前面，代價是每個按鍵多一次靜態欄位讀取，比兩次 GUID 比對還便宜。
+        if (SqlSnippetSurroundPicker.IsOpen)
+        {
+            // ref 參數進不了 Lambda，先落成區域變數；清單沒開就連這一次複製都不做。
+            var group = pguidCmdGroup;
+            if (SqlAssistPlatformGuard.Run("把按鍵交還包夾清單",
+                    () => SqlSnippetSurroundPicker.TryHandleShellCommand(_textView, group, nCmdID, execute: true),
+                    fallback: false))
+            {
+                return VSConstants.S_OK;
+            }
+        }
+
+        // 執行查詢只是記一筆，不認領命令：擷取完照樣往下轉給 SSMS 執行。
+        // 命令識別碼由殼層的名稱對應表換出來，沒換到時這裡只剩一次靜態旗標讀取。
+        if (SqlExecuteCommandMap.Matches(pguidCmdGroup, nCmdID))
+        {
+            var view = _textView;
+            SqlAssistPlatformGuard.Run("記下送出執行的查詢", () => SqlCaptureTracker.NoteExecute(view));
+        }
+
+        // TODO：GOTOBRACE／GOTOBRACE_EXT 於此接共用 BlockMatcher 查詢，QueryStatus 同步認領；不另綁快捷鍵。
         if (pguidCmdGroup == StandardCommandSet && nCmdID == GoToDefinitionCommandId)
         {
             // 這是按鍵路徑，丟出例外就是使用者按一次鍵看到一次錯誤對話框。
             // 沒有接手時往下轉，讓 SSMS 仍有機會處理。
             if (SqlAssistPlatformGuard.Run("處理移至定義命令", TryGoToDefinition, fallback: false))
+            {
+                return VSConstants.S_OK;
+            }
+        }
+        else if (pguidCmdGroup == EditorCommandSet && nCmdID == SurroundWithCommandId)
+        {
+            if (SqlAssistPlatformGuard.Run("處理包夾命令", TrySurroundWith, fallback: false))
             {
                 return VSConstants.S_OK;
             }
@@ -179,6 +252,21 @@ internal sealed class SqlShellCommandFilter : IOleCommandTarget
         return SqlCompletionServices
             .GetDefinitionOpener(_textView, _serviceProvider)
             .TryBegin(_textView.Caret.Position.BufferPosition);
+    }
+
+    /// <remarks>
+    /// 失敗時回 false 讓命令往下轉，不在這裡顯示訊息：這條路徑上的失敗只有
+    /// 「沒有選取」與「沒有可包夾的片段」兩種，而 <c>QueryStatus</c> 已經讓開了，
+    /// 走到這裡代表殼層仍然派送過來——那時候讓 SSMS 接手比彈一句話有用。
+    /// 命令表那一條（工具選單與鍵繫結）才需要說明原因，它由
+    /// <c>SqlAssistCommands</c> 走狀態列回報。
+    /// </remarks>
+    private bool TrySurroundWith()
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+        SqlAssistDiagnostics.Write("包夾命令抵達 SqlAssist（殼層命令濾鏡）");
+
+        return SqlSnippetSurroundAction.TryBegin(_textView, out _);
     }
 
     /// <summary>

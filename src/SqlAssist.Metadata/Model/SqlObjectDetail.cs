@@ -18,12 +18,14 @@ public sealed class SqlObjectDetail
         SqlObjectInfo objectInfo,
         IReadOnlyList<SqlColumnInfo>? columns = null,
         IReadOnlyList<SqlParameterInfo>? parameters = null,
-        string? definition = null)
+        string? definition = null,
+        string? description = null)
     {
         Object = objectInfo ?? throw new ArgumentNullException(nameof(objectInfo));
         Columns = columns ?? NoColumns;
         Parameters = parameters ?? NoParameters;
         Definition = definition;
+        Description = description;
     }
 
     public SqlObjectInfo Object { get; }
@@ -45,6 +47,20 @@ public sealed class SqlObjectDetail
     public string? Definition { get; }
 
     /// <summary>
+    /// 物件自己的 <c>MS_Description</c>；沒有掛說明時為 null。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="SqlColumnInfo.Description"/> 同一層、同一個理由：滑鼠停留提示
+    /// 只讀快取、不等查詢，說明併進第四層的話，提示上只有「剛好開過結構」的物件
+    /// 才有說明，而畫面上看不出那個差別。
+    ///
+    /// 這一份與第四層 <see cref="SqlObjectStructure.ExtendedProperties"/> 裡那一筆
+    /// 同名屬性讀的是同一個目錄檢視，只是問的時機不同：這裡是給人看的一句話，
+    /// 那裡是要寫回 <c>sp_addextendedproperty</c> 的整批屬性。
+    /// </remarks>
+    public string? Description { get; }
+
+    /// <summary>
     /// 組出給預覽窗格與滑鼠停留提示使用的文字。
     /// 本身就是一組資料行的物件顯示欄位結構，其餘顯示定義本文（同義字與序列的
     /// 定義是本擴充自己從目錄檢視組出來的，見 <see cref="Definition"/>）。
@@ -63,6 +79,14 @@ public sealed class SqlObjectDetail
     /// </remarks>
     public string BuildPreview()
     {
+        // 指令碼自己宣告的東西，交得出來最好的一份就是使用者眼前那段宣告的原文。
+        // 只有 CTE 走到這裡——它的宣告不是一句可以單獨執行的敘述，因此不算可執行
+        // 指令碼；暫存資料表與資料表變數在 SqlObjectStructure.BuildScript 就接走了。
+        if (Object.Kind.IsScriptDeclared() && !string.IsNullOrWhiteSpace(Definition))
+        {
+            return Definition!;
+        }
+
         if (Object.Kind.IsTableShaped())
         {
             return BuildColumnPreview();

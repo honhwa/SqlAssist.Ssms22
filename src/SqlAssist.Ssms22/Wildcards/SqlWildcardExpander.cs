@@ -6,6 +6,7 @@ using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Diagnostics;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
 using SqlAssist.Core.Wildcards;
@@ -100,7 +101,11 @@ internal sealed class SqlWildcardExpander
             new Span(target.Start, target.Length),
             SpanTrackingMode.EdgeExclusive);
 
-        if (TryResolveCached(target, settings) is { } columns)
+        // 連線換過時，快取裡那份欄位可能是另一個資料庫裡同名資料表的——展開寫
+        // 回去的是欄位名稱，貼進去之後畫面上看不出來。先換到背景把連線確認完，
+        // 慢一輪也不貼錯。
+        if (!_metadataService.NeedsConnectionConfirmation &&
+            TryResolveCached(target, settings) is { } columns)
         {
             Replace(span, columns, settings);
             return true;
@@ -109,8 +114,10 @@ internal sealed class SqlWildcardExpander
         // 一定要換到背景執行緒：解析連線那一步有 UI 執行緒相依性，實測塞住時要 1908 ms，
         // 在原地開始等於按一次 Tab 就讓編輯器停格將近兩秒。
         SqlAssistPlatformGuard.Begin(
-            "展開萬用字元",
-            () => Task.Run(() => ExpandAsync(target, span, settings)));
+            NotificationCatalog.ExpandingWildcard,
+            () => Task.Run(() => ExpandAsync(target, span, settings)),
+            NotificationKind.Editing, NotificationOrigin.User, NotificationLevel.Info,
+            ActiveSqlEditor.GetDocumentName(_textView));
         return true;
     }
 
@@ -151,6 +158,8 @@ internal sealed class SqlWildcardExpander
 
     private async Task ExpandAsync(SqlWildcardTarget target, ITrackingSpan span, SqlAssistSettings settings)
     {
+        await _metadataService.ConfirmConnectionAsync().ConfigureAwait(false);
+
         var columns = new List<string>();
 
         foreach (var source in target.Sources)

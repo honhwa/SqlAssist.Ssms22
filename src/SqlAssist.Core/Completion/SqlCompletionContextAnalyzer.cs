@@ -103,7 +103,7 @@ public static class SqlCompletionContextAnalyzer
         if (ddlOn >= 0)
         {
             return new SqlCompletionContext(
-                true,
+                isValid: true,
                 tokenStart,
                 prefix,
                 CompletionTarget.DataSource,
@@ -111,7 +111,7 @@ public static class SqlCompletionContextAnalyzer
                 tokens[ddlOn].Start,
                 CompletionIntent.Reference,
                 columnSources: null,
-                keywordPosition: keywordPosition,
+                keywordPosition,
                 qualifierStart: qualifierStart);
         }
 
@@ -119,14 +119,22 @@ public static class SqlCompletionContextAnalyzer
             qualifierPath is null ? beforeToken : beforeQualifier,
             out var targetKeywordStart,
             out var intent);
-        var isValid = prefix.Length > 0 || target != CompletionTarget.Any || qualifierPath is not null;
 
-        // 自動別名只發生在「補完名稱之後文法上接得了別名」的位置：FROM／JOIN／
-        // APPLY／USING／UPDATE 之後，以及這些清單的逗號續列。INSERT INTO 的目標表、
-        // DROP TABLE 那些一樣列資料表、文法上卻不接受別名的位置，被下面的白名單
-        // 自然排除——不必在這一格把每一種反例都寫一遍。
-        var mayAppendTableAlias = IsTableSourceNameSlot(
-            qualifierPath is null ? beforeToken : beforeQualifier);
+        // FROM a, | 與 FROM a, LibArchive.| 都還在同一個資料來源清單裡，而
+        // DetermineTarget 只認得游標前一、兩個詞元的字面值——那裡只有一個逗號。
+        // 位置分析早就回答過同一個問題（逗號回到清單的起點），這裡用它的答案，
+        // 不再自己回頭找一次 FROM。
+        //
+        // 少了這一條，逗號之後的目標是 Any 而前綴是空的，來源根本不參與，
+        // 使用者要多打一個字才有清單，而那一份還缺了只存在於指令碼裡的暫存
+        // 資料表與 CTE；限定字那一支更糟——它會被當成別名，列出一張不存在的
+        // 資料表的欄位，看起來就是「這裡永遠沒有建議」。
+        if (target == CompletionTarget.Any && ContinuesDataSourceList(tokens, keywordPosition))
+        {
+            target = CompletionTarget.DataSource;
+        }
+
+        var isValid = prefix.Length > 0 || target != CompletionTarget.Any || qualifierPath is not null;
 
         return new SqlCompletionContext(
             isValid,
@@ -137,95 +145,8 @@ public static class SqlCompletionContextAnalyzer
             targetKeywordStart,
             intent,
             columnSources: null,
-            keywordPosition: keywordPosition,
-            qualifierStart: qualifierStart,
-            mayAppendTableAlias: mayAppendTableAlias);
-    }
-
-    /// <summary>
-    /// 游標正要輸入資料來源名稱、補完後可以自動接別名嗎？
-    /// </summary>
-    /// <remarks>
-    /// 回傳 true 的兩種形狀：文字尾巴直接是 FROM／JOIN／APPLY／USING／UPDATE，
-    /// 或是 FROM／JOIN／APPLY 清單裡的逗號（<c>FROM dbo.Loan l, |</c>）。
-    /// 逗號那一種要往左找它屬於哪一個清單——SELECT 清單、IN 清單這些也都以逗號
-    /// 分隔，卻是列欄位或值而不是列資料來源的位置。
-    ///
-    /// 不接受別名的反例（INTO、DROP TABLE…）不在白名單上，因此會自然回傳 false；
-    /// 反過來說，這一格只回答「能不能接別名」，不管清單本身列不列資料表。
-    /// </remarks>
-    private static bool IsTableSourceNameSlot(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return false;
-        }
-
-        var trimmed = text.TrimEnd();
-
-        // 直接跟在資料來源關鍵字後面：名稱一個字都還沒打，而補上去的物件
-        // 本身正是這個清單的第一個來源。
-        if (EndsWithKeyword(trimmed, "FROM", out _) ||
-            EndsWithKeyword(trimmed, "JOIN", out _) ||
-            EndsWithKeyword(trimmed, "APPLY", out _) ||
-            EndsWithKeyword(trimmed, "USING", out _) ||
-            EndsWithKeyword(trimmed, "UPDATE", out _))
-        {
-            return true;
-        }
-
-        if (!trimmed.EndsWith(",", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        // 逗號清單：往左找第一個關鍵字，看它是不是資料來源清單的錨點。
-        // 括號、點號與其他非關鍵字一路跳過；真的會經過子查詢的場合（逗號接在
-        // 衍生資料表後面）它的清單錨點仍然是外層的 FROM，結果不會因此翻錯。
-        var tokens = SqlTokenizer.Tokenize(trimmed);
-
-        for (var index = tokens.Count - 2; index >= 0; index--)
-        {
-            var word = tokens[index].Value;
-
-            if (IsTableSourceAnchor(word))
-            {
-                return true;
-            }
-
-            if (IsNonSourceListKeyword(word))
-            {
-                return false;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsTableSourceAnchor(string word) =>
-        word.Equals("FROM", StringComparison.OrdinalIgnoreCase) ||
-        word.Equals("JOIN", StringComparison.OrdinalIgnoreCase) ||
-        word.Equals("APPLY", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsNonSourceListKeyword(string word)
-    {
-        return word.Equals("SELECT", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("WHERE", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("IN", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("INTO", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("ON", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("SET", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("VALUES", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("MERGE", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("INSERT", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("UPDATE", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("DELETE", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("TABLE", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("HAVING", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("GROUP", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("ORDER", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("UNION", StringComparison.OrdinalIgnoreCase) ||
-            word.Equals("WITH", StringComparison.OrdinalIgnoreCase);
+            keywordPosition,
+            qualifierStart: qualifierStart);
     }
 
     /// <summary>
@@ -265,34 +186,39 @@ public static class SqlCompletionContextAnalyzer
             return context;
         }
 
+        // 詞法分析提到這裡：底下三條路各自都要整份詞元，分開切等於同一份文字
+        // 依走哪一條掃兩次。
+        var tokens = SqlTokenizer.Tokenize(sql);
+
         // 變數只需要「這份指令碼裡出現過哪些 @名稱」，同樣不必解析範圍與欄位來源。
         // 資料表變數要多帶一份資料行清單：INSERT INTO @rows 提交之後展的是整句，
         // 而那份清單只存在於 DECLARE @rows TABLE (…) 裡。
         if (context.Target == CompletionTarget.Variable)
         {
-            var variableTokens = SqlTokenizer.Tokenize(sql);
-
             return context.WithScriptSources(SqlScriptVariableSuggestions.Create(
-                variableTokens,
+                tokens,
                 caretPosition,
-                SqlScriptTableCollector.Collect(variableTokens)));
+                SqlScriptTableCollector.Collect(tokens)));
         }
 
-        var tokens = SqlTokenizer.Tokenize(sql);
+        // 定序只要「這份指令碼裡出現過哪些 COLLATE」，敘述有哪些資料來源與欄位
+        // 都無關，底下整趟範圍解析可以省下來。
+        if (context.Target == CompletionTarget.Collation)
+        {
+            return context.WithScriptSources(SqlScriptCollationSuggestions.Create(tokens));
+        }
+
         var scope = SqlScopeAnalyzer.Analyze(tokens, caretPosition);
         var resolver = new SqlColumnSourceResolver(tokens);
         var withScope = context.WithScopeSources(resolver.ResolveAvailable(scope.Tables));
 
         if (context.QualifierPath is null)
         {
-            // CTE 與暫存資料表只存在於這份指令碼裡，中繼資料查不到它們。
+            // CTE、暫存資料表與資料表變數只存在於這份指令碼裡，中繼資料查不到它們。
             // 只在真的要列資料來源時才掃：這條路徑在每一次按鍵上，
             // 而 FROM、JOIN 之後才是唯一用得到這一份的位置。
             return context.Target == CompletionTarget.DataSource
-                ? withScope.WithScriptSources(SqlScriptDataSourceSuggestions.Create(
-                    tokens,
-                    resolver.CommonTableExpressionNames,
-                    resolver.ScriptTables))
+                ? withScope.WithScriptSources(SqlScriptDataSourceSuggestions.Create(tokens, resolver))
                 : withScope;
         }
 
@@ -381,6 +307,34 @@ public static class SqlCompletionContextAnalyzer
             targetKeywordStart: keywordStart,
             intent: intent,
             executedModule: SqlExecutedModule.Find(tokens));
+    }
+
+    /// <summary>
+    /// 游標還在同一個 FROM／JOIN 清單裡，也就是逗號之後的下一個資料來源。
+    /// </summary>
+    /// <remarks>
+    /// 判斷本身不重寫：<see cref="SqlKeywordPositionAnalyzer"/> 的
+    /// <see cref="SqlKeywordPosition.DataSource"/> 說的就是這件事，
+    /// 各寫一份的症狀是關鍵字清單與物件清單對同一個逗號各有一套說法。
+    ///
+    /// 只多問一次括號。位置分析找子句錨點時會穿過還沒關上的左括號——
+    /// <c>SELECT COUNT(a, </c> 的位置本來就該由外層的 SELECT 決定——但那也讓
+    /// <c>INSERT INTO T (a, </c> 的資料行清單拿到資料來源的位置，而那裡要的是
+    /// T 的資料行，不是另一張資料表。括號裡裝的是一個查詢時仍然算數：
+    /// 那是衍生資料表自己的 FROM 清單。
+    /// </remarks>
+    private static bool ContinuesDataSourceList(
+        IReadOnlyList<SqlToken> tokens,
+        SqlKeywordPosition keywordPosition)
+    {
+        if (keywordPosition != SqlKeywordPosition.DataSource)
+        {
+            return false;
+        }
+
+        var unclosed = SqlTokenNavigator.FindUnclosedParenthesis(tokens, tokens.Count - 1);
+
+        return unclosed < 0 || SqlTokenNavigator.OpensQuery(tokens, unclosed);
     }
 
     /// <summary>

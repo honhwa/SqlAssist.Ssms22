@@ -46,6 +46,23 @@ public static class SqlScopeAnalyzer
             "DESC", "PERCENT", "TIES", "FROM", "TABLE", "CASE", "ELSE", "NULL"
         };
 
+    /// <summary>別名後面接得住資料行清單的資料列集函式。</summary>
+    /// <remarks>
+    /// T-SQL 的 <c>table_source</c> 文法裡 <c>rowset_function</c> 與
+    /// <c>derived_table</c> 一樣有 <c>(column_alias …)</c>，<c>user_defined_function</c>
+    /// 沒有——同樣是「名稱加引數清單」的形狀，能不能接資料行清單卻不同，所以這三個
+    /// 名字只能寫死。它們是文法的一部分而不是使用者物件，帶結構描述的
+    /// <c>dbo.OPENROWSET(…)</c> 因此不在此列。
+    ///
+    /// <c>OPENXML</c> 不收：它在文法裡自成一條，後面接的是 <c>WITH (結構描述)</c>
+    /// 而不是資料行清單。
+    /// </remarks>
+    private static readonly HashSet<string> RowsetFunctions =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "OPENROWSET", "OPENQUERY", "OPENDATASOURCE"
+        };
+
     /// <summary>會在後面接資料來源的關鍵字。</summary>
     private static readonly HashSet<string> SourceKeywords =
         new(StringComparer.OrdinalIgnoreCase)
@@ -103,7 +120,7 @@ public static class SqlScopeAnalyzer
             return new SqlStatementScope(Array.Empty<SqlTableReference>(), caretPosition, caretPosition);
         }
 
-        var end = FindScopeEnd(tokens, start);
+        var end = FindStatementEnd(tokens, start);
         var tables = ExtractSources(tokens, start, end);
 
         return new SqlStatementScope(
@@ -216,8 +233,24 @@ public static class SqlScopeAnalyzer
                token.IsKeyword("DELETE");
     }
 
-    private static int FindScopeEnd(IReadOnlyList<SqlToken> tokens, int start)
+    /// <summary>
+    /// 從 <paramref name="start"/> 這個詞法單元起算，這一句敘述到哪裡結束（不含）。
+    /// </summary>
+    /// <remarks>
+    /// 深度 0 的分號、<c>GO</c>、右括號，或下一個敘述開頭的關鍵字；都沒有就到文字結尾。
+    ///
+    /// 公開出來是因為問這個問題的不只範圍分析：<c>SELECT … INTO #tmp</c> 的名冊要
+    /// 知道那句 <c>SELECT</c> 涵蓋到哪裡，才讀得出它投影出來的資料行。各寫一份的
+    /// 症狀是同一段文字在兩處切在不同的地方，而偏掉的那一份沒有任何徵兆——
+    /// 只是資料來源清單多出或少掉幾張表。
+    /// </remarks>
+    public static int FindStatementEnd(IReadOnlyList<SqlToken> tokens, int start)
     {
+        if (tokens is null)
+        {
+            throw new ArgumentNullException(nameof(tokens));
+        }
+
         var depth = 0;
 
         for (var i = start; i < tokens.Count; i++)
@@ -289,6 +322,12 @@ public static class SqlScopeAnalyzer
         var index = start;
         var depth = 0;
 
+        // SELECT … INTO #tmp 的 INTO 接的是一張正要建立的資料表，不是這句查詢讀得到
+        // 的來源。INSERT INTO 的那一個相反——它就是使用者要填資料行的目標，而兩者的
+        // 形狀一模一樣，分辨的憑據只有這句敘述的第一個字。收錯的症狀是 WHERE | 把
+        // 那張表投影出來的欄位跟真正的來源混在一起列出來。
+        var selectInto = start < end && tokens[start].IsKeyword("SELECT");
+
         while (index < end)
         {
             var token = tokens[index];
@@ -316,6 +355,7 @@ public static class SqlScopeAnalyzer
 
             // FROM 與 INTO 後面可以是逗號分隔的清單，JOIN／APPLY／USING 只接一個。
             var allowsList = token.IsKeyword("FROM") || token.IsKeyword("INTO");
+            var collects = !selectInto || !token.IsKeyword("INTO");
             index++;
 
             while (index < end)
@@ -325,7 +365,11 @@ public static class SqlScopeAnalyzer
                     break;
                 }
 
-                references.Add(reference);
+                if (collects)
+                {
+                    references.Add(reference);
+                }
+
                 index = next;
 
                 if (!allowsList || index >= end || !tokens[index].IsPunctuation(","))
@@ -337,7 +381,53 @@ public static class SqlScopeAnalyzer
             }
         }
 
+        RemoveAliasReferences(references);
         return references;
+    }
+
+    /// <summary>
+    /// 把「其實是別名」的那個來源從清單裡拿掉。
+    /// </summary>
+    /// <remarks>
+    /// <c>UPDATE a SET … FROM dbo.Loan a</c> 的 <c>a</c> 不是一張叫 a 的資料表，
+    /// 而是同一句 FROM 子句裡那個別名——<c>DELETE FROM a FROM dbo.Loan a</c> 同理。
+    /// 收成一個具名來源的話，中繼資料層會為一個不存在的名稱查一輪、
+    /// 而且每一次按鍵都查；更糟的是未限定欄位的判斷會因為「有一個來源解析不出來」
+    /// 整段放棄，症狀是 <c>SET |</c> 的欄位停上去什麼提示都沒有。
+    ///
+    /// 判斷條件只有「單段裸名，而且同一句裡有人用這個名字當別名」：帶結構描述的
+    /// <c>UPDATE dbo.Loan</c> 不可能是別名，而 T-SQL 本來就不允許同一句裡有兩個
+    /// 相同的相關名稱，因此不必分辨是哪個關鍵字帶進來的。
+    /// </remarks>
+    private static void RemoveAliasReferences(List<SqlTableReference> references)
+    {
+        if (references.Count < 2)
+        {
+            return;
+        }
+
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var reference in references)
+        {
+            if (!string.IsNullOrEmpty(reference.Alias))
+            {
+                aliases.Add(reference.Alias!);
+            }
+        }
+
+        if (aliases.Count == 0)
+        {
+            return;
+        }
+
+        references.RemoveAll(reference =>
+            string.IsNullOrEmpty(reference.Alias) &&
+            !reference.IsDerived &&
+            reference.SchemaName is null &&
+            reference.DatabaseName is null &&
+            reference.ServerName is null &&
+            aliases.Contains(reference.ObjectName));
     }
 
     private static bool TryParseTableReference(
@@ -361,12 +451,16 @@ public static class SqlScopeAnalyzer
         var derivedName = string.Empty;
         var isDerived = false;
 
+        // 別名後面的資料行清單只接在衍生資料表與資料列集函式後面，見 TryReadColumnList。
+        var takesColumnList = false;
+
         if (first.IsPunctuation("("))
         {
             // 衍生資料表或資料表值建構式：查不到中繼資料，但別名仍要記下來，
             // 否則後面用這個別名限定欄位時會誤判成資料表名稱。
             index = SqlTokenNavigator.SkipParenthesised(tokens, index, end);
             isDerived = true;
+            takesColumnList = true;
         }
         else if (first.Kind == SqlTokenKind.Variable)
         {
@@ -425,6 +519,11 @@ public static class SqlScopeAnalyzer
             if (index < end && tokens[index].IsPunctuation("("))
             {
                 index = SqlTokenNavigator.SkipParenthesised(tokens, index, end);
+
+                // 引數清單跳完的形狀相同，但只有資料列集函式接得住資料行清單。
+                takesColumnList = parts.Count == 1 &&
+                    !first.IsQuoted &&
+                    RowsetFunctions.Contains(parts[0]);
             }
         }
         else
@@ -432,20 +531,21 @@ public static class SqlScopeAnalyzer
             return false;
         }
 
-        // 資料表提示夾在名稱與別名之間：FROM Loans WITH (NOLOCK) o
-        if (index + 1 < end && tokens[index].IsKeyword("WITH") && tokens[index + 1].IsPunctuation("("))
-        {
-            index = SqlTokenNavigator.SkipParenthesised(tokens, index + 1, end);
-        }
+        // 別名之前與之後都要跳：文法把 TABLESAMPLE 與 WITH (…) 排在別名後面，
+        // 而 FROM Loans WITH (NOLOCK) o 這種順序在實際指令碼裡一樣寫得出來。
+        SkipTableSourceTail(tokens, ref index, end);
 
         var alias = TryReadAlias(tokens, ref index, end);
+        var columnNames = ReadAliasParentheses(tokens, ref index, end, takesColumnList && alias is not null);
+
+        SkipTableSourceTail(tokens, ref index, end);
 
         var referenceStart = tokens[start].Start;
         var referenceEnd = tokens[Math.Max(start, index - 1)].End;
 
         reference = isDerived || path is null
-            ? new SqlTableReference(derivedName, alias, referenceStart, referenceEnd)
-            : new SqlTableReference(path, alias, referenceStart, referenceEnd);
+            ? new SqlTableReference(derivedName, alias, referenceStart, referenceEnd, columnNames)
+            : new SqlTableReference(path, alias, referenceStart, referenceEnd, columnNames);
 
         next = index;
         return true;
@@ -479,5 +579,122 @@ public static class SqlScopeAnalyzer
 
         index = cursor + 1;
         return candidate.Value;
+    }
+
+    /// <summary>
+    /// 別名後面那串括號：資料行清單或舊式資料表提示，<b>兩種都要跳完</b>。
+    /// </summary>
+    /// <remarks>
+    /// 「不讀它的內容」與「不跳過它」是兩件事，而只做前者會壞得更難看：剖析停在
+    /// 括號前面，後面那個逗號就不再是來源清單的逗號，
+    /// <c>FROM dbo.Loan l (NOLOCK), dbo.Copy c</c> 的 <c>dbo.Copy</c> 整個消失。
+    /// <c>c.</c> 列不出欄位還算看得出來，<c>SELECT *</c> 展開才是真的糟——它以為只有
+    /// 一個來源，攤出一份少了一半欄位、卻仍然執行得動的選取清單。
+    ///
+    /// 接得住它的只有<b>衍生資料表</b>與 <see cref="RowsetFunctions"/>——T-SQL 的
+    /// <c>table_source</c> 文法裡只有這兩條後面有 <c>(column_alias …)</c>，具名資料表
+    /// 與使用者定義的資料表值函式後面就只有別名。所以別名後面那串括號是不是資料行
+    /// 清單，由<b>來源的形狀</b>決定，不去猜括號裡寫了什麼。
+    ///
+    /// 猜括號內容行不通：<c>FROM dbo.Loan l (NOLOCK)</c> 與
+    /// <c>FROM dbo.fn_Loans(0) f (NOLOCK)</c> 都是舊式資料表提示，形狀與資料行清單
+    /// 一模一樣。實測回報過的症狀是 <c>SELECT * INTO #Temp FROM dbo.fn(x) f (NOLOCK)</c>
+    /// 之後，<c>#Temp</c> 的結構只剩一個叫 NOLOCK 的欄位——而假結構會一路傳到預覽與
+    /// <c>INSERT INTO #Temp</c> 的整句展開。用關鍵字名單分辨也不對：<c>NOLOCK</c>
+    /// 不是保留字，資料行真的叫得出這個名字。
+    ///
+    /// 走到這裡不必再分辨資料表提示與函式引數：<c>WITH (NOLOCK)</c> 與函式自己的
+    /// 引數清單都在別名<b>之前</b>就跳完了。沒有別名也不收，文法要求這串括號接在
+    /// 別名後面。
+    ///
+    /// 括號還沒關上時當成沒寫，並把位置留在原地：使用者正打到一半，而讀一半的清單
+    /// 會覆寫掉主體算得出來的名稱。
+    /// </remarks>
+    private static IReadOnlyList<string> ReadAliasParentheses(
+        IReadOnlyList<SqlToken> tokens,
+        ref int index,
+        int end,
+        bool isColumnList)
+    {
+        if (index >= end || !tokens[index].IsPunctuation("("))
+        {
+            return Array.Empty<string>();
+        }
+
+        var close = SqlTokenNavigator.FindClosingParenthesis(tokens, index, end);
+
+        if (close < 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var names = isColumnList ? ReadColumnList(tokens, index + 1, close) : Array.Empty<string>();
+        index = close + 1;
+        return names;
+    }
+
+    /// <summary>
+    /// 跳過接在資料來源後面的 <c>TABLESAMPLE</c> 與 <c>WITH (…)</c>。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="ReadAliasParentheses"/> 同一個理由：跳不完的話逗號清單就在這裡
+    /// 斷掉。<c>TABLESAMPLE [SYSTEM] (…) [REPEATABLE (…)]</c> 三段都認，因為它們是
+    /// 同一個子句拆出來的，少認一段與完全不認的症狀一模一樣。
+    ///
+    /// 括號配不起來時停在原地，不硬吃到敘述結尾：使用者正打到一半的
+    /// <c>WITH (</c> 後面往往就是他要的東西。
+    /// </remarks>
+    private static void SkipTableSourceTail(IReadOnlyList<SqlToken> tokens, ref int index, int end)
+    {
+        while (index < end &&
+               (tokens[index].IsKeyword("WITH") ||
+                   tokens[index].IsKeyword("TABLESAMPLE") ||
+                   tokens[index].IsKeyword("REPEATABLE")))
+        {
+            var open = index + 1;
+
+            if (open < end && tokens[open].IsKeyword("SYSTEM"))
+            {
+                open++;
+            }
+
+            if (open >= end || !tokens[open].IsPunctuation("("))
+            {
+                return;
+            }
+
+            var close = SqlTokenNavigator.FindClosingParenthesis(tokens, open, end);
+
+            if (close < 0)
+            {
+                return;
+            }
+
+            index = close + 1;
+        }
+    }
+
+    /// <summary>讀出一對括號之間的資料行名稱。</summary>
+    /// <remarks>
+    /// CTE 的 <c>WITH c (a, b)</c> 與資料來源的 <c>AS T (a, b)</c> 是同一串東西，
+    /// 因此只有這一份實作；兩處各寫一份的話，其中一邊多認得一種寫法就會對同一段
+    /// 文字給出不同的欄位。
+    /// </remarks>
+    internal static IReadOnlyList<string> ReadColumnList(
+        IReadOnlyList<SqlToken> tokens,
+        int start,
+        int end)
+    {
+        var names = new List<string>();
+
+        for (var index = start; index < end; index++)
+        {
+            if (tokens[index].Kind == SqlTokenKind.Identifier)
+            {
+                names.Add(tokens[index].Value);
+            }
+        }
+
+        return names;
     }
 }

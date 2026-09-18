@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.SqlServer.Management.UI.VSIntegration;
 using SqlAssist.Core.Completion;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
 using SqlAssist.Metadata.Caching;
@@ -29,7 +30,6 @@ internal sealed class SqlMetadataService : IDisposable
     private readonly object _syncRoot = new();
     private readonly HashSet<string> _warmingDetails = new(StringComparer.OrdinalIgnoreCase);
     private readonly IServiceProvider _serviceProvider;
-    private SsmsConnectionSource? _connectionSource;
     private SqlMetadataCatalog? _catalog;
 
     /// <summary>上一次從編輯器連線算出的快取鍵，用來判斷連線或資料庫有沒有換過。</summary>
@@ -39,6 +39,37 @@ internal sealed class SqlMetadataService : IDisposable
     private DateTimeOffset _catalogCheckedAt;
 
     private int _recheckInFlight;
+
+    /// <summary>使用者按過幾次「重新整理建議」。</summary>
+    /// <remarks>
+    /// 靜態的：那個命令是整個擴充一起清，而每個查詢視窗各有一份服務。
+    /// 少了這一個計數，清空的只有快取內容——USE 換過資料庫之後按下重新整理，
+    /// 重新載入的仍然是<b>舊資料庫</b>的物件，而那正是使用者按它的原因。
+    /// </remarks>
+    private static int _invalidationGeneration;
+
+    /// <summary>這個編輯器已經照第幾次清空確認過連線。</summary>
+    private int _confirmedGeneration;
+
+    /// <summary>SSMS 說這個查詢視窗換過幾次連線。</summary>
+    /// <remarks>
+    /// 由 <see cref="SqlEditorConnectionWatcher"/> 在 UI 執行緒上加一。事件是
+    /// 「該再問一次」的訊號，不是答案——真的去問 SSMS 留在背景路徑上。
+    /// </remarks>
+    private int _connectionEvents;
+
+    /// <summary>這個編輯器已經照第幾次連線事件確認過。</summary>
+    private int _confirmedConnectionEvents;
+
+    /// <summary>這個查詢視窗在 SSMS 裡的識別；還沒取得過焦點時為 null。</summary>
+    /// <remarks>
+    /// 有它就問得到<b>這一個</b>視窗的連線；沒有就只能問作用中的那一個，
+    /// 而使用者切到別的分頁時，那會把別的視窗的連線寫進這一份服務。
+    /// </remarks>
+    private string? _editorMoniker;
+
+    /// <summary>正在進行的那一次重新確認；同時只留一份，其他呼叫端一起等它。</summary>
+    private Task<SqlMetadataCatalog?>? _confirming;
 
     /// <summary>
     /// 多久重新問一次 SSMS「現在連到哪裡」。
@@ -55,15 +86,143 @@ internal sealed class SqlMetadataService : IDisposable
     private static readonly TimeSpan CatalogRecheckInterval = TimeSpan.FromSeconds(10);
     private bool _disposed;
 
+    /// <remarks>
+    /// 接線放在靜態建構函式而不是套件初始化：MEF 的補全元件不等 AsyncPackage
+    /// 就會開始查詢，接晚了的症狀是最想看的那一次失敗剛好沒有留下紀錄。
+    /// 這個型別是 Ssms22 進入中繼資料層的唯一入口，任何一條查詢都在它之後。
+    ///
+    /// 走 <see cref="SqlAssistDiagnostics.Write"/> 而不是 <c>WriteAlways</c>：
+    /// 連線斷掉時每按一次鍵就失敗一次，平常一律不寫才留得住紀錄檔的訊噪比。
+    /// 使用者看得到的入口是預覽裡那句「第四層查詢失敗」，它會把人帶去打開詳細記錄。
+    /// 只寫訊息不寫堆疊——這裡要的是伺服器說了什麼，例如
+    /// <c>Invalid column name 'uses_quoted_identifier'</c>。
+    /// </remarks>
+    static SqlMetadataService()
+    {
+        SqlMetadataFailure.Reporter = (operation, exception) =>
+            SqlAssistDiagnostics.Write($"中繼資料查詢失敗：{operation}｜{exception.Message}");
+    }
+
     public SqlMetadataService(IServiceProvider serviceProvider)
     {
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     }
 
-    /// <summary>清空所有資料庫的快取。</summary>
+    /// <summary>清空所有資料庫的快取，並讓每個編輯器重新確認自己連到哪裡。</summary>
     public static void InvalidateAll()
     {
         SqlMetadataCatalogRegistry.Default.InvalidateAll();
+        Interlocked.Increment(ref _invalidationGeneration);
+    }
+
+    /// <summary>記下 SSMS 給這個查詢視窗的識別。</summary>
+    /// <summary>這個查詢視窗在 SSMS 眼裡的識別；還沒取得時為 null。</summary>
+    /// <remarks>SQL Memory 用它向 <c>SqlWindowConnections</c> 換出伺服器與資料庫名稱。</remarks>
+    public string? EditorMoniker
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _editorMoniker;
+            }
+        }
+    }
+
+    public void NoteEditorMoniker(string? editorMoniker)
+    {
+        lock (_syncRoot)
+        {
+            _editorMoniker = string.IsNullOrEmpty(editorMoniker) ? null : editorMoniker;
+        }
+    }
+
+    /// <summary>SSMS 說有一個查詢視窗換了連線。</summary>
+    /// <remarks>
+    /// 認得出不是自己那個視窗就不理。認不出來（還沒取得識別，或事件沒指名視窗）
+    /// 一律當成自己的：多問一次連線只是一次背景往返，錯過一次則是整份清單都錯。
+    /// </remarks>
+    public void NoteConnectionChanged(string? editorMoniker)
+    {
+        lock (_syncRoot)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(editorMoniker) &&
+                _editorMoniker is { } mine &&
+                !string.Equals(mine, editorMoniker, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref _connectionEvents);
+        }
+    }
+
+    /// <summary>現在連到哪個資料庫這件事需要重新確認。</summary>
+    /// <remarks>
+    /// 給按鍵路徑判斷「這一次能不能直接用快取回答」用，它自己不問 SSMS，
+    /// 只比一次字串與一次時間。
+    /// </remarks>
+    public bool NeedsConnectionConfirmation
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return !_disposed && IsConfirmationDue();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 重新確認「現在連到哪個資料庫」，確認完才回來。
+    /// </summary>
+    /// <remarks>
+    /// 目前資料庫會變，而本擴充只靠十秒一次的背景輪詢發現它——執行完
+    /// <c>USE LibArchive</c> 之後的第一份清單因此仍然是舊資料庫的物件，
+    /// 而畫面上完全看不出退過。這條路徑讓等得起的呼叫端（建議清單、Tab 展開、
+    /// F12 都跑在背景工作上）先確認再回答：晚幾毫秒沒有代價，
+    /// 拿另一個資料庫的同名物件回答則是看不出來的錯。
+    ///
+    /// 按鍵與滑鼠停留路徑一律不呼叫這裡，它們維持「這一輪沒有資料」的規則。
+    /// 不必確認時連一個工作都不開。
+    /// </remarks>
+    public Task ConfirmConnectionAsync()
+    {
+        lock (_syncRoot)
+        {
+            if (_disposed || !IsConfirmationDue())
+            {
+                return Task.CompletedTask;
+            }
+
+            // 同一個編輯器的三個 MEF 元件會在同一輪各問一次，開三個工作等於
+            // 對同一件事排三次 UI 執行緒往返。
+            if (_confirming is { IsCompleted: false } running)
+            {
+                return running;
+            }
+
+            return _confirming = Task.Run(() => SqlAssistPlatformGuard.Probe<SqlMetadataCatalog?>(
+                "重新確認目前連線",
+                ResolveCatalogFromEditor,
+                fallback: null));
+        }
+    }
+
+    /// <summary>呼叫前必須握著 <see cref="_syncRoot"/>。</summary>
+    private bool IsConfirmationDue()
+    {
+        // 四種換法收斂在這一個判斷上：三種都由 SSMS 的連線事件送來，第四種是
+        // 使用者按重新整理。每一種各長一套判斷的話，漏掉的那一種會安靜地用舊
+        // 資料庫的物件回答。
+        return _catalog is null ||
+            _confirmedGeneration != Volatile.Read(ref _invalidationGeneration) ||
+            _confirmedConnectionEvents != Volatile.Read(ref _connectionEvents);
     }
 
     /// <summary>
@@ -186,6 +345,70 @@ internal sealed class SqlMetadataService : IDisposable
         AddObjects(suggestions, objects);
         ReportIfSlow($"系統物件建議（{suggestions.Count} 筆）", timer);
         return suggestions;
+    }
+
+    /// <summary>
+    /// 取得 <c>COLLATE</c> 之後的定序建議。
+    /// </summary>
+    /// <remarks>
+    /// 一律問查詢視窗自己那條連線的目錄，不跟著限定字換——定序屬於<b>執行個體</b>，
+    /// 而使用者正在編輯的這份指令碼跑在那條連線上。跨資料庫或跨伺服器的目錄
+    /// 回答的是別台機器支援什麼，選中的名稱在這裡可能根本不存在。
+    ///
+    /// 目前資料庫的那一個換成 <see cref="SuggestionKind.CollationInUse"/>：五千多個
+    /// 名稱長得幾乎一樣，模糊比對撈回來的順序沒有意義，而使用者要的幾乎一定是它。
+    ///
+    /// 查不到時回傳空清單。那個位置不會因此空掉——<c>DATABASE_DEFAULT</c> 與
+    /// 這份指令碼已經寫過的定序都不必問伺服器，由呼叫端補上。
+    /// </remarks>
+    /// <param name="exclude">呼叫端已經放進清單的名稱；同一個名稱不列第二次。</param>
+    public async Task<IReadOnlyList<SqlSuggestion>> GetCollationSuggestionsAsync(
+        ISet<string> exclude,
+        CancellationToken cancellationToken)
+    {
+        if (exclude is null)
+        {
+            throw new ArgumentNullException(nameof(exclude));
+        }
+
+        if (ResolveCatalog() is not { } catalog)
+        {
+            return Array.Empty<SqlSuggestion>();
+        }
+
+        var timer = Stopwatch.StartNew();
+        var collations = await catalog.GetCollationsAsync(cancellationToken).ConfigureAwait(false);
+        var suggestions = new List<SqlSuggestion>(collations.Names.Count + 1);
+
+        // 名單查不到而資料庫的定序查得到時仍然列出它：那一個正是使用者最常要的。
+        if (collations.DatabaseCollation is { Length: > 0 } database && !exclude.Contains(database))
+        {
+            exclude.Add(database);
+            suggestions.Add(CreateCollation(database, isDatabaseDefault: true));
+        }
+
+        foreach (var name in collations.Names)
+        {
+            if (!exclude.Contains(name))
+            {
+                suggestions.Add(CreateCollation(name, isDatabaseDefault: false));
+            }
+        }
+
+        ReportIfSlow($"定序建議（{suggestions.Count} 筆）", timer);
+        return suggestions;
+    }
+
+    private static SqlSuggestion CreateCollation(string name, bool isDatabaseDefault)
+    {
+        var description = isDatabaseDefault ? "目前資料庫的定序" : "定序";
+
+        return new SqlSuggestion(
+            name,
+            name,
+            description,
+            description,
+            isDatabaseDefault ? SuggestionKind.CollationInUse : SuggestionKind.Collation);
     }
 
     /// <summary>取得目前資料庫的第一層中繼資料；沒有可用連線時回傳 null。</summary>
@@ -332,15 +555,18 @@ internal sealed class SqlMetadataService : IDisposable
         }
 
         var timer = Stopwatch.StartNew();
-        var snapshot = await catalog.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
-        var matches = snapshot.Find(module.ObjectName, module.SchemaName);
+        var matches = await catalog
+            .FindObjectsAsync(module.ObjectName, module.SchemaName, cancellationToken)
+            .ConfigureAwait(false);
 
         if (matches.Count == 0 || !matches[0].Kind.IsExecutable())
         {
             return Array.Empty<SqlSuggestion>();
         }
 
-        var detail = await catalog.GetDetailAsync(matches[0], cancellationToken).ConfigureAwait(false);
+        var detail = await catalog
+            .GetDetailAsync(matches[0], cancellationToken, NotificationOrigin.Typing)
+            .ConfigureAwait(false);
 
         ReportIfSlow($"參數建議 {matches[0].QualifiedName}（第二層）", timer);
 
@@ -431,8 +657,11 @@ internal sealed class SqlMetadataService : IDisposable
             return null;
         }
 
-        var snapshot = await catalog.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
-        var matches = snapshot.Find(table.ObjectName, table.SchemaName);
+        // 走目錄那一支而不是自己比對快照：sys.triggers 這一類名稱的答案不在第一層，
+        // 而那一份只有被指名時才載入。
+        var matches = await catalog
+            .FindObjectsAsync(table.ObjectName, table.SchemaName, cancellationToken)
+            .ConfigureAwait(false);
 
         if (matches.Count == 0)
         {
@@ -440,7 +669,9 @@ internal sealed class SqlMetadataService : IDisposable
         }
 
         var cached = catalog.TryGetCachedDetail(matches[0].ObjectId, out _);
-        var detail = await catalog.GetDetailAsync(matches[0], cancellationToken).ConfigureAwait(false);
+        var detail = await catalog
+            .GetDetailAsync(matches[0], cancellationToken, NotificationOrigin.Typing)
+            .ConfigureAwait(false);
         return new ResolvedTable(matches[0], detail, cached);
     }
 
@@ -601,10 +832,16 @@ internal sealed class SqlMetadataService : IDisposable
     /// <summary>
     /// 目前已快取的第一層資料；沒有現成的目錄或還沒載入時回傳 null。
     /// </summary>
-    /// <remarks>不觸發任何查詢，也不向 SSMS 詢問連線。滑鼠停留提示走這條路。</remarks>
+    /// <remarks>只回傳現成資料；缺少或過期時排程背景預載，不在呼叫端等待查詢或解析連線。</remarks>
     public SqlDatabaseSnapshot? PeekSnapshot(SqlObjectPath? path = null)
     {
-        var snapshot = ScopeTo(PeekCatalog(), path)?.CachedSnapshot;
+        var catalog = ScopeTo(PeekCatalog(), path);
+        var snapshot = catalog?.CachedSnapshot;
+        if (catalog is not null)
+        {
+            SqlAssistPlatformGuard.BeginProbe("預載物件清單", catalog.WarmSnapshotAsync);
+        }
+
         return snapshot is null || snapshot.IsEmpty ? null : snapshot;
     }
 
@@ -670,7 +907,9 @@ internal sealed class SqlMetadataService : IDisposable
 
                 try
                 {
-                    await catalog.GetDetailAsync(objectInfo, CancellationToken.None).ConfigureAwait(false);
+                    await catalog
+                        .GetDetailAsync(objectInfo, CancellationToken.None, NotificationOrigin.Ambient)
+                        .ConfigureAwait(false);
                     SqlAssistDiagnostics.Write(
                         $"已預先載入 {objectInfo.QualifiedName} 的結構（{timer.ElapsedMilliseconds} ms）");
                 }
@@ -722,16 +961,41 @@ internal sealed class SqlMetadataService : IDisposable
                 var table = source.Table!;
                 var catalog = ScopeTo(editorCatalog, table.Path);
 
-                // 預熱刻意只在第一層已經新鮮時才做：這是背景的加速手段，
-                // 不該自己去觸發一輪第一層查詢。跨資料庫的目錄一開始必定不新鮮，
-                // 所以第一次要靠使用者真的打出 LibArchive.dbo. 那一次去載入。
-                if (catalog is null || !catalog.IsSnapshotFresh)
+                if (catalog is null)
                 {
                     continue;
                 }
 
-                var snapshot = catalog.CachedSnapshot;
-                var matches = snapshot.Find(table.ObjectName, table.SchemaName);
+                // 目前這條連線的第一層不在這裡觸發：那是建議清單自己的工作，
+                // 這裡只是背景加速，不該再排一輪同樣的查詢。
+                //
+                // 跨資料庫的目錄相反——沒有別人會去載它。敘述已經把那個資料庫的
+                // 名字寫出來了（FROM LibArchive.dbo.Loan l），等於使用者指名要它；
+                // 從前要等他真的打出那一整串限定字才載，症狀是 SET | 與 WHERE |
+                // 這種沒有限定字的位置永遠列不出跨庫來源的欄位，而同一份欄位
+                // 打出 l. 就有。載一次就進快取，重複與失敗退避由這一支自己擋。
+                if (!catalog.IsSnapshotFresh)
+                {
+                    if (ReferenceEquals(catalog, editorCatalog))
+                    {
+                        continue;
+                    }
+
+                    await catalog.WarmSnapshotAsync().ConfigureAwait(false);
+
+                    if (!catalog.IsSnapshotFresh)
+                    {
+                        continue;
+                    }
+                }
+
+                // 第一層在上面已經確認新鮮，這一支不會多送一輪查詢；但敘述寫出
+                // sys.triggers 時它會把系統物件那一份載進來——只讀快取的
+                // GetCachedScopeColumns 沒有別的機會等到它，症狀是 SELECT | 與
+                // WHERE | 永遠列不出系統檢視的欄位，而打出 t. 卻列得出來。
+                var matches = await catalog
+                    .FindObjectsAsync(table.ObjectName, table.SchemaName, CancellationToken.None)
+                    .ConfigureAwait(false);
 
                 if (matches.Count == 0 || catalog.TryGetCachedDetail(matches[0].ObjectId, out _))
                 {
@@ -739,7 +1003,9 @@ internal sealed class SqlMetadataService : IDisposable
                 }
 
                 var timer = Stopwatch.StartNew();
-                await catalog.GetDetailAsync(matches[0], CancellationToken.None).ConfigureAwait(false);
+                await catalog
+                    .GetDetailAsync(matches[0], CancellationToken.None, NotificationOrigin.Ambient)
+                    .ConfigureAwait(false);
                 SqlAssistDiagnostics.Write(
                     $"已預先載入 {matches[0].QualifiedName} 的欄位（{timer.ElapsedMilliseconds} ms）");
             }
@@ -767,9 +1033,14 @@ internal sealed class SqlMetadataService : IDisposable
     }
 
     /// <summary>載入單一物件的欄位、參數與定義。</summary>
+    /// <param name="origin">
+    /// 誰觸發了這一次。同一條查詢在打字路徑與使用者按下去的命令上要有不同的降噪門檻，
+    /// 而目錄那一層看不出差別——只有呼叫端知道。
+    /// </param>
     public async Task<SqlObjectDetail?> GetDetailAsync(
         SqlObjectInfo objectInfo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NotificationOrigin origin)
     {
         var catalog = ScopeTo(ResolveCatalog(), objectInfo);
 
@@ -778,7 +1049,7 @@ internal sealed class SqlMetadataService : IDisposable
             return null;
         }
 
-        return await catalog.GetDetailAsync(objectInfo, cancellationToken).ConfigureAwait(false);
+        return await catalog.GetDetailAsync(objectInfo, cancellationToken, origin).ConfigureAwait(false);
     }
 
     /// <summary>只看第四層快取裡有沒有這個物件的結構；沒有就回傳 null，不觸發查詢。</summary>
@@ -811,9 +1082,11 @@ internal sealed class SqlMetadataService : IDisposable
     /// <remarks>
     /// 只有結構面板會走到這裡，允許等資料庫；連線還沒解析出來時也願意問一次 SSMS。
     /// </remarks>
+    /// <param name="origin"><inheritdoc cref="GetDetailAsync" path="/param[@name='origin']"/></param>
     public async Task<SqlObjectStructure?> GetStructureAsync(
         SqlObjectInfo objectInfo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NotificationOrigin origin)
     {
         var catalog = ScopeTo(ResolveCatalog(), objectInfo);
 
@@ -823,7 +1096,7 @@ internal sealed class SqlMetadataService : IDisposable
         }
 
         var timer = Stopwatch.StartNew();
-        var structure = await catalog.GetStructureAsync(objectInfo, cancellationToken).ConfigureAwait(false);
+        var structure = await catalog.GetStructureAsync(objectInfo, cancellationToken, origin).ConfigureAwait(false);
         ReportIfSlow($"物件結構 {objectInfo.QualifiedName}（第四層）", timer);
         return structure;
     }
@@ -841,9 +1114,11 @@ internal sealed class SqlMetadataService : IDisposable
 
             // 連線來源的所有權在 SqlMetadataCatalogRegistry：目錄是跨查詢視窗共用的，
             // 這裡釋放會讓其他還開著的視窗一起失效。
-            _connectionSource = null;
             _catalog = null;
         }
+
+        // 在鎖外面解除：watcher 拿自己的鎖，而它發通知時會反過來拿這裡這一個。
+        SqlEditorConnectionWatcher.Unregister(this);
     }
 
     /// <summary>
@@ -873,11 +1148,22 @@ internal sealed class SqlMetadataService : IDisposable
     /// 每一條路徑都問物件，而不是各自從物件身上拆出資料庫與伺服器再傳進來：
     /// 拆的地方有六處，漏掉一處的症狀是那一條安靜地拿本機同號的物件回答，
     /// 而 <c>object_id</c> 撞號在跨資料庫是常態、跨伺服器更是毫無關係。
+    ///
+    /// 指令碼自己宣告的名稱在這裡一律沒有目錄可換。它們不在任何一個
+    /// <c>sys.objects</c> 裡，<c>object_id</c> 也一律是 0——而第二、三層快取正是
+    /// 照編號存的，放行的症狀是兩個不同的暫存資料表互相蓋掉對方的欄位，
+    /// 外加每一次都白跑一趟查不到東西的查詢。它們的明細由
+    /// <see cref="SqlObjectLookup"/> 直接讀出來，本來就不必經過這一層。
     /// </remarks>
     private SqlMetadataCatalog? ScopeTo(SqlMetadataCatalog? catalog, SqlObjectInfo? objectInfo)
     {
-        return objectInfo is null
-            ? catalog
+        if (objectInfo is null)
+        {
+            return catalog;
+        }
+
+        return objectInfo.Kind.IsScriptDeclared()
+            ? null
             : ScopeTo(catalog, objectInfo.DatabaseName, objectInfo.ServerName);
     }
 
@@ -892,17 +1178,10 @@ internal sealed class SqlMetadataService : IDisposable
             return catalog;
         }
 
-        SsmsConnectionSource? source;
-
-        lock (_syncRoot)
-        {
-            source = _disposed ? null : _connectionSource;
-        }
-
-        if (source is null)
-        {
-            return null;
-        }
+        // 連線來源一律從手上這份目錄取，不另外留一份：所有權在註冊表，
+        // 交出去的那一份可能已經被當成重複的釋放掉，理由見
+        // SqlMetadataCatalog.ConnectionSource。
+        var source = catalog.ConnectionSource;
 
         if (!string.IsNullOrEmpty(serverName))
         {
@@ -934,7 +1213,11 @@ internal sealed class SqlMetadataService : IDisposable
             // 這條路徑在每一次按鍵上，絕不能等 SSMS 的 UI 執行緒。
             if (_catalog is not null)
             {
-                if (DateTimeOffset.UtcNow - _catalogCheckedAt >= CatalogRecheckInterval)
+                // 確認條件成立時不必等滿十秒：指令碼換過資料庫，或使用者按過
+                // 重新整理。這兩條路不等結果，等得起的呼叫端走
+                // ConfirmConnectionAsync。
+                if (IsConfirmationDue() ||
+                    DateTimeOffset.UtcNow - _catalogCheckedAt >= CatalogRecheckInterval)
                 {
                     BeginCatalogRecheck();
                 }
@@ -966,7 +1249,11 @@ internal sealed class SqlMetadataService : IDisposable
 
             if (_catalog is not null)
             {
-                if (DateTimeOffset.UtcNow - _catalogCheckedAt >= CatalogRecheckInterval)
+                // 確認條件成立時不必等滿十秒：指令碼換過資料庫，或使用者按過
+                // 重新整理。這兩條路不等結果，等得起的呼叫端走
+                // ConfirmConnectionAsync。
+                if (IsConfirmationDue() ||
+                    DateTimeOffset.UtcNow - _catalogCheckedAt >= CatalogRecheckInterval)
                 {
                     BeginCatalogRecheck();
                 }
@@ -987,11 +1274,21 @@ internal sealed class SqlMetadataService : IDisposable
             return;
         }
 
-        SqlAssistPlatformGuard.BeginProbe("重新確認連線", () =>
+        // BeginProbe 不整批追蹤——週期性探測反覆閃現提示比沒有提示更糟。這一則由
+        // 這裡自己開：Ambient／Debug，只有把詳細度調到「詳細」的人才看得到。
+        SqlAssistPlatformGuard.BeginProbe(NotificationCatalog.ReconfirmingConnection, () =>
         {
+            using var notification = NotificationCenter.Default.Begin(NotificationCatalog.ReconfirmingConnection,
+                NotificationKind.Package, NotificationOrigin.Ambient, NotificationLevel.Debug);
             try
             {
-                ResolveCatalogFromEditor();
+                var catalog = ResolveCatalogFromEditor();
+                var settings = SqlAssistSettingsStore.Current;
+                if (catalog is not null && settings.Enabled && settings.HoverEnabled)
+                {
+                    // 清單查詢有自己的載入閘；慢查詢不能把連線重新確認一起鎖住。
+                    SqlAssistPlatformGuard.BeginProbe("預載物件清單", catalog.WarmSnapshotAsync);
+                }
             }
             finally
             {
@@ -1001,34 +1298,125 @@ internal sealed class SqlMetadataService : IDisposable
     }
 
     /// <summary>
-    /// 主動預熱：在編輯器剛建立、SSMS 還不忙的時候先問一次連線。
+    /// 主動預熱：在編輯器剛建立時解析連線並預載目前資料庫的物件名稱。
     /// </summary>
     /// <remarks>
-    /// 沒有預熱的話，第一次按鍵仍然要付一次完整的連線解析成本。
+    /// 直接貼上 SQL 的使用者不一定會觸發建議清單，Hover 不可依賴建議先替它載入資料。
     /// </remarks>
     public void BeginWarmup()
     {
-        SqlAssistPlatformGuard.BeginProbe("預熱連線", () => _ = ResolveCatalog());
+        BeginCatalogRecheck();
+    }
+
+    /// <summary>
+    /// 向 SSMS 取得<b>這一個</b>查詢視窗的連線。
+    /// </summary>
+    /// <remarks>
+    /// <c>GetCurrentConnection()</c> 回答的是<b>目前作用中</b>那個視窗，而這條路徑
+    /// 跑在背景工作上：使用者切到別的分頁時，它會把別的視窗的連線寫進這一份服務，
+    /// 而畫面上看不出來——兩個視窗連到不同資料庫時，切回來的第一份清單就是別人的。
+    /// 有識別就指名問，沒有才退回作用中的那一個。
+    ///
+    /// 指名問回 null 有兩種：這個視窗真的沒有連線（剛斷線），以及手上的識別過期
+    /// （另存新檔會換掉它）。前者不能退回作用中視窗的連線——那正是這裡要消滅的
+    /// 污染——所以問一次 SSMS 開著哪些查詢視窗，兩種分開處理。
+    /// </remarks>
+    private IDbConnection? ResolveEditorConnection(Stopwatch timer)
+    {
+        if (_serviceProvider.GetService(typeof(SSqlEditorService)) is not ISqlEditorService editorService)
+        {
+            return null;
+        }
+
+        string? moniker;
+
+        lock (_syncRoot)
+        {
+            moniker = _editorMoniker;
+        }
+
+        if (moniker is null)
+        {
+            var active = editorService.GetCurrentConnection();
+            ReportIfSlow("向 SSMS 取得目前連線", timer);
+            return active;
+        }
+
+        var connection = editorService.GetConnectionForSpecificQueryEditor(moniker);
+        ReportIfSlow("向 SSMS 取得這個查詢視窗的連線", timer);
+
+        if (connection is not null || IsKnownEditor(editorService, moniker))
+        {
+            return connection;
+        }
+
+        SqlAssistDiagnostics.WriteAlways($"SSMS 不認得查詢視窗識別 {moniker}，改用作用中視窗的連線");
+
+        lock (_syncRoot)
+        {
+            // 丟掉過期的識別，下一次取得焦點時 watcher 會換上新的。
+            if (string.Equals(_editorMoniker, moniker, StringComparison.Ordinal))
+            {
+                _editorMoniker = null;
+            }
+        }
+
+        return editorService.GetCurrentConnection();
+    }
+
+    /// <summary>SSMS 現在還開著這個識別指的查詢視窗嗎。</summary>
+    private static bool IsKnownEditor(ISqlEditorService editorService, string moniker)
+    {
+        var editors = editorService.ListOpenedQueryEditorCaptionsWithMonikers(false);
+
+        if (editors is null)
+        {
+            return false;
+        }
+
+        foreach (var editor in editors)
+        {
+            if (string.Equals(editor.moniker, moniker, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private SqlMetadataCatalog? ResolveCatalogFromEditor()
     {
         var timer = Stopwatch.StartNew();
 
+        // 先讀再問：問的途中使用者又按了一次重新整理、或 SSMS 又送來一次連線事件時，
+        // 那一次不該被這一輪的答案蓋掉——下一次仍然要重新確認。
+        var generation = Volatile.Read(ref _invalidationGeneration);
+        var connectionEvents = Volatile.Read(ref _connectionEvents);
+
         var editorConnection = SqlAssistPlatformGuard.Run<IDbConnection?>(
-            "取得 SSMS 目前連線",
-            () =>
-            {
-                var editorService =
-                    _serviceProvider.GetService(typeof(SSqlEditorService)) as ISqlEditorService;
-                var connection = editorService?.GetCurrentConnection();
-                ReportIfSlow("向 SSMS 取得目前連線", timer);
-                return connection;
-            },
+            "向 SSMS 取得查詢視窗的連線",
+            () => ResolveEditorConnection(timer),
             fallback: null);
 
         if (editorConnection is null)
         {
+            lock (_syncRoot)
+            {
+                if (_disposed)
+                {
+                    return null;
+                }
+
+                // 記下這一次真的問過了。不記的話，斷線期間每一條等得起的路徑都會
+                // 因為旗標還在而再排一次 UI 往返，而那個呼叫塞住時要 1908 ms。
+                // 手上那份目錄留著不動：它是同一個資料庫的，只是現在查不動而已，
+                // 丟掉等於重新連上之前連一個名稱都列不出來。
+                _catalogCheckedAt = DateTimeOffset.UtcNow;
+                _confirmedGeneration = generation;
+                _confirmedConnectionEvents = connectionEvents;
+            }
+
             return null;
         }
 
@@ -1048,6 +1436,8 @@ internal sealed class SqlMetadataService : IDisposable
             // ConnectionString 未必逐字相同（例如密碼是否回傳），
             // 一旦不同，這個快取判斷就永遠不成立，每次按鍵都要重建連線來源。
             _catalogCheckedAt = DateTimeOffset.UtcNow;
+            _confirmedGeneration = generation;
+            _confirmedConnectionEvents = connectionEvents;
 
             if (_catalog is not null && string.Equals(_editorCacheKey, cacheKey, StringComparison.Ordinal))
             {
@@ -1055,15 +1445,25 @@ internal sealed class SqlMetadataService : IDisposable
             }
 
             _editorCacheKey = cacheKey;
-            _connectionSource = SsmsConnectionSource.TryCreate(editorConnection);
 
-            if (_connectionSource is null)
+            // 只有真的要換一份連線來源才開這一則：快取鍵沒變的那幾千次在上面就回去了。
+            // 資料庫是「資料從哪裡來」而不是這件事作用的物件；放 Subject 會與中繼資料
+            // 那幾列同一個字出現在兩種位置上。
+            using var notification = NotificationCenter.Default.Begin(
+                NotificationCatalog.CreatingMetadataConnection, NotificationKind.Package,
+                NotificationOrigin.Ambient, NotificationLevel.Info, source: editorConnection.Database);
+            var connectionSource = SsmsConnectionSource.TryCreate(editorConnection);
+
+            if (connectionSource is null)
             {
+                notification.Fail();
                 _catalog = null;
                 return null;
             }
 
-            _catalog = SqlMetadataCatalogRegistry.Default.GetOrCreate(_connectionSource);
+            // 交出去之後就不再持有：註冊表已經有同一個快取鍵的目錄時，這一份會被
+            // 當成重複的釋放掉，留著它等於留一個已釋放的物件。
+            _catalog = SqlMetadataCatalogRegistry.Default.GetOrCreate(connectionSource);
             return _catalog;
         }
     }
@@ -1072,15 +1472,18 @@ internal sealed class SqlMetadataService : IDisposable
         SqlDatabaseSnapshot snapshot,
         bool includeLinkedServers = false)
     {
+        // 結構描述讀擁有物件的那一份：與角色同名的空結構描述選了也接不到任何東西。
+        // 完整名單留給 SqlQualifierResolver 認限定字。
+        var schemas = snapshot.SchemasWithObjects;
         var suggestions = new List<SqlSuggestion>(
-            snapshot.Objects.Count + snapshot.Schemas.Count + snapshot.Databases.Count);
+            snapshot.Objects.Count + schemas.Count + snapshot.Databases.Count);
 
         AddObjects(suggestions, snapshot.Objects);
 
         // 名稱的中間段一律只寫名稱本身：點號由使用者自己打，而打出點號會讓上下文
         // 整個換掉，重開清單那條路本來就會接手。連點號一起寫進去等於替使用者決定
         // 「你還要繼續往下走」，想直接用這個名稱的人得先退掉一個他沒要求的字元。
-        foreach (var schema in snapshot.Schemas)
+        foreach (var schema in schemas)
         {
             suggestions.Add(new SqlSuggestion(
                 schema,

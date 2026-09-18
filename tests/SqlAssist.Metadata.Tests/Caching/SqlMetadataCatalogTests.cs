@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
 using System.Threading;
 using System.Threading.Tasks;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Metadata.Caching;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Metadata.Querying;
@@ -38,7 +40,7 @@ public sealed class SqlMetadataCatalogTests
     {
         var catalog = CreateCatalog();
 
-        Assert.Null(await catalog.GetDetailAsync(AnyObject, CancellationToken.None));
+        Assert.Null(await catalog.GetDetailAsync(AnyObject, CancellationToken.None, NotificationOrigin.Typing));
     }
 
     [Fact]
@@ -46,7 +48,7 @@ public sealed class SqlMetadataCatalogTests
     {
         var catalog = CreateCatalog();
 
-        Assert.Null(await catalog.GetStructureAsync(AnyObject, CancellationToken.None));
+        Assert.Null(await catalog.GetStructureAsync(AnyObject, CancellationToken.None, NotificationOrigin.Typing));
     }
 
     /// <summary>
@@ -58,8 +60,8 @@ public sealed class SqlMetadataCatalogTests
         var source = new FailingConnectionSource();
         var catalog = new SqlMetadataCatalog(source, TimeSpan.FromMinutes(5));
 
-        await catalog.GetDetailAsync(AnyObject, CancellationToken.None);
-        await catalog.GetDetailAsync(AnyObject, CancellationToken.None);
+        await catalog.GetDetailAsync(AnyObject, CancellationToken.None, NotificationOrigin.Typing);
+        await catalog.GetDetailAsync(AnyObject, CancellationToken.None, NotificationOrigin.Typing);
 
         Assert.False(catalog.TryGetCachedDetail(AnyObject.ObjectId, out _));
         Assert.Equal(2, source.Attempts);
@@ -134,7 +136,60 @@ public sealed class SqlMetadataCatalogTests
         var catalog = CreateCatalog();
 
         await Assert.ThrowsAsync<ArgumentNullException>(
-            () => catalog.GetDetailAsync(null!, CancellationToken.None));
+            () => catalog.GetDetailAsync(null!, CancellationToken.None, NotificationOrigin.Typing));
+    }
+
+    /// <summary>
+    /// 降級不等於一個字都不留。
+    /// </summary>
+    /// <remarks>
+    /// 「連線斷了」與「這條查詢寫錯了」在畫面上長得一模一樣，唯一分得出來的
+    /// 資訊是被吃掉的那句 <c>Invalid column name '…'</c>。實際發生過：
+    /// <c>sys.tables</c> 上不存在的欄位讓第四層整條失敗，而使用者看到的是
+    /// 「沒有可用的連線」——連線好好的。
+    ///
+    /// 回報只帶訊息不帶堆疊，且由接線端決定寫不寫；理由見 <c>SqlMetadataFailure</c>。
+    /// </remarks>
+    [Fact]
+    public async Task 查詢失敗會把伺服器說的那句話送出去()
+    {
+        var reported = new List<string>();
+        var previous = SqlMetadataFailure.Reporter;
+        SqlMetadataFailure.Reporter = (operation, exception) =>
+            reported.Add(operation + "｜" + exception.Message);
+
+        try
+        {
+            await CreateCatalog().GetDetailAsync(AnyObject, CancellationToken.None, NotificationOrigin.Typing);
+        }
+        finally
+        {
+            SqlMetadataFailure.Reporter = previous;
+        }
+
+        var line = Assert.Single(reported);
+        Assert.Contains("[dbo].[PUBLISHER]", line);
+        Assert.Contains("連不上伺服器。", line);
+    }
+
+    /// <remarks>
+    /// 回報本身失敗不可以再丟一次例外——那會冒出 <c>SqlMetadataCatalog</c>，
+    /// 正是這一族要避免的事，而且是在「已經出問題了」的那一刻。
+    /// </remarks>
+    [Fact]
+    public async Task 回報自己壞掉不會拖垮降級()
+    {
+        var previous = SqlMetadataFailure.Reporter;
+        SqlMetadataFailure.Reporter = (_, _) => throw new InvalidOperationException("紀錄器壞了。");
+
+        try
+        {
+            Assert.Null(await CreateCatalog().GetDetailAsync(AnyObject, CancellationToken.None, NotificationOrigin.Typing));
+        }
+        finally
+        {
+            SqlMetadataFailure.Reporter = previous;
+        }
     }
 
     private static SqlMetadataCatalog CreateCatalog() =>

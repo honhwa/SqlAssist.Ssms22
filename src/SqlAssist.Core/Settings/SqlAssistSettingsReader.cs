@@ -1,5 +1,9 @@
 
 
+using SqlAssist.Core.Notifications;
+using SqlAssist.Core.SqlMemory;
+using SqlAssist.Core.Scripting;
+
 namespace SqlAssist.Core.Settings;
 
 /// <summary>
@@ -35,6 +39,35 @@ public static class SqlAssistSettingsReader
         return new SqlAssistSettings
         {
             Enabled = Value(source, SqlAssistMonikers.Enabled, defaults.Enabled),
+            NotificationEnabled = Value(source, SqlAssistMonikers.NotificationEnabled, defaults.NotificationEnabled),
+            NotificationGlass = Value(source, SqlAssistMonikers.NotificationGlass, defaults.NotificationGlass),
+            NotificationExpanded = Value(source, SqlAssistMonikers.NotificationExpanded, defaults.NotificationExpanded),
+            NotificationDelay = SqlAssistLimits.ClampNotificationTime(Value(source, SqlAssistMonikers.NotificationDelay, defaults.NotificationDelay), 0),
+            NotificationRetention = SqlAssistLimits.ClampNotificationTime(Value(source, SqlAssistMonikers.NotificationRetention, defaults.NotificationRetention), 800),
+            NotificationVerbosity = ParseVerbosity(
+                Value(source, SqlAssistMonikers.NotificationVerbosity, string.Empty), defaults.NotificationVerbosity),
+            NotificationKinds = ReadKinds(source, defaults.NotificationKinds),
+            NotificationFailures = Value(source, SqlAssistMonikers.NotificationFailures, defaults.NotificationFailures),
+            NotificationDegraded = Value(source, SqlAssistMonikers.NotificationDegraded, defaults.NotificationDegraded),
+            BlockMatchingEnabled = Value(source, SqlAssistMonikers.BlockMatchingEnabled, defaults.BlockMatchingEnabled),
+            BlockKeywordHighlight = Value(source, SqlAssistMonikers.BlockKeywordHighlight, defaults.BlockKeywordHighlight),
+            BlockKeywordForeground = Value(source, SqlAssistMonikers.BlockKeywordForeground, defaults.BlockKeywordForeground),
+            BlockKeywordBackground = Value(source, SqlAssistMonikers.BlockKeywordBackground, defaults.BlockKeywordBackground),
+            BlockSymbolForeground = Value(source, SqlAssistMonikers.BlockSymbolForeground, defaults.BlockSymbolForeground),
+            BlockSymbolBackground = Value(source, SqlAssistMonikers.BlockSymbolBackground, defaults.BlockSymbolBackground),
+            BlockRangeBackground = Value(source, SqlAssistMonikers.BlockRangeBackground, defaults.BlockRangeBackground),
+            BlockRangeInside = Value(source, SqlAssistMonikers.BlockRangeInside, defaults.BlockRangeInside),
+            BlockAccentColor = Value(source, SqlAssistMonikers.BlockAccentColor, defaults.BlockAccentColor),
+            BlockStructure = Value(source, SqlAssistMonikers.BlockStructure, defaults.BlockStructure),
+            BlockOutlining = Value(source, SqlAssistMonikers.BlockOutlining, defaults.BlockOutlining),
+            BlockGlyphs = Value(source, SqlAssistMonikers.BlockGlyphs, defaults.BlockGlyphs),
+            BlockOverview = Value(source, SqlAssistMonikers.BlockOverview, defaults.BlockOverview),
+            BlockContextHint = Value(source, SqlAssistMonikers.BlockContextHint, defaults.BlockContextHint),
+            BlockSameLineBackground = Value(source, SqlAssistMonikers.BlockSameLineBackground, defaults.BlockSameLineBackground),
+            BlockMatchParentheses = Value(source, SqlAssistMonikers.BlockMatchParentheses, defaults.BlockMatchParentheses),
+            BlockMatchCase = Value(source, SqlAssistMonikers.BlockMatchCase, defaults.BlockMatchCase),
+            BlockDebounceMilliseconds = SqlAssistLimits.ClampBlockDebounce(
+                Value(source, SqlAssistMonikers.BlockDebounce, defaults.BlockDebounceMilliseconds)),
             UppercaseKeywordsOnType = Value(
                 source,
                 SqlAssistMonikers.UppercaseKeywordsOnType,
@@ -43,6 +76,11 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.AutoPairDelimiters,
                 defaults.AutoPairDelimiters),
+            Animations = Value(source, SqlAssistMonikers.Animations, defaults.Animations),
+            IgnoreWindowsAnimationSetting = Value(
+                source,
+                SqlAssistMonikers.IgnoreWindowsAnimationSetting,
+                defaults.IgnoreWindowsAnimationSetting),
 
             SuggestionsEnabled = Value(
                 source,
@@ -72,9 +110,6 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.UseSquareBrackets,
                 defaults.UseSquareBrackets),
-            TableSourceAliasStyle = ParseTableSourceAliasStyle(
-                Value(source, SqlAssistMonikers.TableSourceAliasStyle, string.Empty),
-                defaults.TableSourceAliasStyle),
             ExpandWildcardOnTab = Value(
                 source,
                 SqlAssistMonikers.ExpandWildcardOnTab,
@@ -106,8 +141,20 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.ExpandFunctionCall,
                 defaults.ExpandFunctionCall),
+            ExpandFunctionArguments = Value(
+                source,
+                SqlAssistMonikers.ExpandFunctionArguments,
+                defaults.ExpandFunctionArguments),
 
             HoverEnabled = Value(source, SqlAssistMonikers.HoverEnabled, defaults.HoverEnabled),
+            BuiltInHelpEnabled = Value(
+                source,
+                SqlAssistMonikers.BuiltInHelp,
+                defaults.BuiltInHelpEnabled),
+            ParameterHintEnabled = Value(
+                source,
+                SqlAssistMonikers.ParameterHint,
+                defaults.ParameterHintEnabled),
             PreviewMode = ParsePreviewMode(
                 Value(source, SqlAssistMonikers.PreviewMode, string.Empty),
                 defaults.PreviewMode),
@@ -119,6 +166,57 @@ public static class SqlAssistSettingsReader
             PreviewFontSize = SqlAssistLimits.ClampPreviewFontSize(
                 Value(source, SqlAssistMonikers.PreviewFontSize, (int)defaults.PreviewFontSize)),
 
+            ScriptStyle = ParseScriptStyle(
+                Value(source, SqlAssistMonikers.ScriptStyle, string.Empty),
+                defaults.ScriptStyle),
+            ScriptIncludeExtendedProperties = Value(
+                source,
+                SqlAssistMonikers.ScriptIncludeExtendedProperties,
+                defaults.ScriptIncludeExtendedProperties),
+            ScriptIncludeAnalyzerComments = Value(
+                source,
+                SqlAssistMonikers.ScriptIncludeAnalyzerComments,
+                defaults.ScriptIncludeAnalyzerComments),
+            ScriptIncludeHeaderComment = Value(
+                source,
+                SqlAssistMonikers.ScriptIncludeHeaderComment,
+                defaults.ScriptIncludeHeaderComment),
+
+            SqlMemoryEnabled = Value(source, SqlAssistMonikers.SqlMemoryEnabled, defaults.SqlMemoryEnabled),
+            SqlMemoryCaptureExecuted = Value(
+                source,
+                SqlAssistMonikers.SqlMemoryCaptureExecuted,
+                defaults.SqlMemoryCaptureExecuted),
+            SqlMemoryCaptureDrafts = Value(
+                source,
+                SqlAssistMonikers.SqlMemoryCaptureDrafts,
+                defaults.SqlMemoryCaptureDrafts),
+            SqlMemoryCaptureRecovery = Value(
+                source,
+                SqlAssistMonikers.SqlMemoryCaptureRecovery,
+                defaults.SqlMemoryCaptureRecovery),
+            SqlMemoryIdleSeconds = SqlAssistLimits.ClampSqlMemoryIdleSeconds(
+                Value(source, SqlAssistMonikers.SqlMemoryIdleSeconds, defaults.SqlMemoryIdleSeconds)),
+            SqlMemoryAutoRevisionMinutes = SqlAssistLimits.ClampSqlMemoryAutoRevisionMinutes(
+                Value(source, SqlAssistMonikers.SqlMemoryAutoRevisionMinutes, defaults.SqlMemoryAutoRevisionMinutes)),
+            SqlMemoryDraftRetentionDays = SqlAssistLimits.ClampSqlMemoryRetentionDays(
+                Value(source, SqlAssistMonikers.SqlMemoryDraftRetentionDays, defaults.SqlMemoryDraftRetentionDays)),
+            SqlMemoryExecutionRetentionDays = SqlAssistLimits.ClampSqlMemoryRetentionDays(
+                Value(source, SqlAssistMonikers.SqlMemoryExecutionRetentionDays, defaults.SqlMemoryExecutionRetentionDays)),
+            SqlMemoryRecoveryRetentionDays = SqlAssistLimits.ClampSqlMemoryRecoveryRetentionDays(
+                Value(source, SqlAssistMonikers.SqlMemoryRecoveryRetentionDays, defaults.SqlMemoryRecoveryRetentionDays)),
+            SqlMemoryMaxExecutions = SqlAssistLimits.ClampSqlMemoryExecutions(
+                Value(source, SqlAssistMonikers.SqlMemoryMaxExecutions, defaults.SqlMemoryMaxExecutions)),
+            SqlMemoryMaxSessionRevisions = SqlAssistLimits.ClampSqlMemorySessionRevisions(
+                Value(source, SqlAssistMonikers.SqlMemoryMaxSessionRevisions, defaults.SqlMemoryMaxSessionRevisions)),
+            SqlMemoryMaxFavoriteRevisions = SqlAssistLimits.ClampSqlMemoryFavoriteRevisions(
+                Value(source, SqlAssistMonikers.SqlMemoryMaxFavoriteRevisions, defaults.SqlMemoryMaxFavoriteRevisions)),
+            SqlMemoryStorage = ParseStorageLimit(
+                Value(source, SqlAssistMonikers.SqlMemoryStorageLimit, string.Empty),
+                defaults.SqlMemoryStorage),
+            SqlMemoryMaintenanceMinutes = SqlAssistLimits.ClampSqlMemoryMaintenanceMinutes(
+                Value(source, SqlAssistMonikers.SqlMemoryMaintenanceMinutes, defaults.SqlMemoryMaintenanceMinutes)),
+
             VerboseLogging = Value(source, SqlAssistMonikers.VerboseLogging, defaults.VerboseLogging)
         };
     }
@@ -128,15 +226,29 @@ public static class SqlAssistSettingsReader
         source.TryGetValue<T>(moniker, out var value) ? value : fallback;
 
     /// <summary>無法辨識的值一律當成預設值，而不是列舉的第一個成員。</summary>
-    private static SqlTableSourceAliasStyle ParseTableSourceAliasStyle(string value, SqlTableSourceAliasStyle fallback)
+    private static NotificationVerbosity ParseVerbosity(string value, NotificationVerbosity fallback)
     {
         return value switch
         {
-            "none" => SqlTableSourceAliasStyle.None,
-            "as" => SqlTableSourceAliasStyle.As,
-            "off" => SqlTableSourceAliasStyle.Off,
-            _ => fallback
+            "quiet" => NotificationVerbosity.Quiet,
+            "normal" => NotificationVerbosity.Normal,
+            "verbose" => NotificationVerbosity.Verbose,
+            "all" => NotificationVerbosity.All,
+            _ => fallback,
         };
+    }
+
+    /// <summary>種類開關照 <see cref="NotificationKindToggle.All"/> 這張表讀，不逐項寫。</summary>
+    private static NotificationKindSwitches ReadKinds(ISettingValueSource source, NotificationKindSwitches defaults)
+    {
+        var switches = defaults;
+
+        foreach (var toggle in NotificationKindToggle.All)
+        {
+            switches = switches.With(toggle.Kind, Value(source, toggle.Moniker, defaults[toggle.Kind]));
+        }
+
+        return switches;
     }
 
     private static SqlPreviewMode ParsePreviewMode(string value, SqlPreviewMode fallback)
@@ -150,6 +262,17 @@ public static class SqlAssistSettingsReader
         };
     }
 
+    private static SqlScriptStyle ParseScriptStyle(string value, SqlScriptStyle fallback)
+    {
+        return value switch
+        {
+            "fidelity" => SqlScriptStyle.Fidelity,
+            "ssmsNative" => SqlScriptStyle.SsmsNative,
+            "minimal" => SqlScriptStyle.Minimal,
+            _ => fallback
+        };
+    }
+
     private static SqlWildcardLayout ParseWildcardLayout(string value, SqlWildcardLayout fallback)
     {
         return value switch
@@ -157,6 +280,18 @@ public static class SqlAssistSettingsReader
             "onePerLine" => SqlWildcardLayout.OnePerLine,
             "oneLineWhenShort" => SqlWildcardLayout.OneLineWhenShort,
             "fillWidth" => SqlWildcardLayout.FillWidth,
+            _ => fallback
+        };
+    }
+
+    private static SqlMemoryStorageLimit ParseStorageLimit(string value, SqlMemoryStorageLimit fallback)
+    {
+        return value switch
+        {
+            "mb256" => SqlMemoryStorageLimit.Megabytes256,
+            "mb512" => SqlMemoryStorageLimit.Megabytes512,
+            "gb1" => SqlMemoryStorageLimit.Gigabytes1,
+            "unlimited" => SqlMemoryStorageLimit.Unlimited,
             _ => fallback
         };
     }

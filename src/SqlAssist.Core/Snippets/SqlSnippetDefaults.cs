@@ -12,34 +12,8 @@ public static class SqlSnippetDefaults
 
     private static readonly Lazy<SqlSnippetLibrary> CurrentValue = new(LoadCurrent);
 
-    /// <summary>隨組件發布、可由新版 VSIX 更新的 43 筆內建定義。</summary>
+    /// <summary>隨組件發布、可由新版 VSIX 更新的 49 筆內建定義。</summary>
     public static SqlSnippetLibrary Current => CurrentValue.Value;
-
-    /// <summary>
-    /// v1 遷移的凍結比較基準。這三筆必須永遠維持 0.13 的原值；
-    /// 改成新版預設會讓未修改過的使用者檔案被誤判成三筆 override。
-    /// </summary>
-    public static SqlSnippetLibrary LegacyVersion1 { get; } = new(new[]
-    {
-        new SqlSnippet(
-            "ssf",
-            "SELECT * FROM ",
-            "SELECT * FROM",
-            "SELECT * FROM fragment",
-            triggerFollowUp: true),
-        new SqlSnippet(
-            "ap",
-            "ALTER PROCEDURE ",
-            "ALTER PROCEDURE",
-            "ALTER PROCEDURE fragment",
-            triggerFollowUp: true),
-        new SqlSnippet(
-            "af",
-            "ALTER FUNCTION ",
-            "ALTER FUNCTION",
-            "ALTER FUNCTION fragment",
-            triggerFollowUp: true)
-    });
 
     /// <summary>上一次載入內建資源失敗的原因；成功時為 null。</summary>
     /// <remarks>
@@ -55,7 +29,7 @@ public static class SqlSnippetDefaults
     /// 內容壞掉），正確性由 <c>SqlSnippetDefaultsTests</c> 守；而執行期這個屬性掛在
     /// 建議清單的路徑上，丟出去就是使用者每按一次鍵看到一次錯誤對話框，而且
     /// <see cref="Lazy{T}"/> 會把例外<b>永久快取</b>起來反覆重丟。
-    /// 沒有內建片段只是少了 43 筆建議，其餘功能照常。
+    /// 沒有內建片段只是少了 49 筆建議，其餘功能照常。
     /// </remarks>
     private static SqlSnippetLibrary LoadCurrent()
     {

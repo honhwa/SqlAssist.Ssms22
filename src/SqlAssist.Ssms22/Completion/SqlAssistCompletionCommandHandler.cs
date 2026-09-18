@@ -1,7 +1,9 @@
 using System;
 using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Commanding;
+using Microsoft.VisualStudio.Language.Intellisense;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Editor.Commanding.Commands;
 using Microsoft.VisualStudio.Utilities;
@@ -51,6 +53,13 @@ internal sealed class SqlAssistCompletionCommandHandler :
     [Import]
     internal IAsyncCompletionBroker Broker { get; set; } = null!;
 
+    /// <summary>純量函式的參數提示要經過平台的簽章 broker。</summary>
+    [Import]
+    internal ISignatureHelpBroker SignatureBroker { get; set; } = null!;
+
+    [Import]
+    internal SVsServiceProvider ServiceProvider { get; set; } = null!;
+
     public string DisplayName => "SqlAssist 結構預覽操作";
 
     public CommandState GetCommandState(EscapeKeyCommandArgs args) => CommandState.Unspecified;
@@ -74,12 +83,12 @@ internal sealed class SqlAssistCompletionCommandHandler :
     public CommandState GetCommandState(BackspaceKeyCommandArgs args) => CommandState.Unspecified;
 
     /// <summary>
-    /// Esc 收掉預覽。
+    /// Esc 收掉包夾清單或預覽。
     /// </summary>
     /// <remarks>
     /// 只處理「不是建議清單開出來的」那種預覽——由清單開出來的，
     /// 讓平台照常關清單就好，清單一關預覽自己會跟著收。
-    /// 這樣 Esc 永遠只需要按一次。
+    /// 這樣 Esc 永遠只需要按一次；包夾清單也是為了同一件事接在這裡。
     /// </remarks>
     public bool ExecuteCommand(EscapeKeyCommandArgs args, CommandExecutionContext executionContext)
     {
@@ -87,6 +96,13 @@ internal sealed class SqlAssistCompletionCommandHandler :
             "處理 Esc 按鍵",
             () =>
             {
+                // 包夾清單排在最前面：它開著的時候 Esc 就是「關掉它」，而且第一次按
+                // 就要關得掉——殼層不一定會把那一次變成命令送進命令鏈。
+                if (SqlSnippetSurroundPicker.TryCancel(args.TextView))
+                {
+                    return true;
+                }
+
                 if (Broker.GetSession(args.TextView) is not null)
                 {
                     return false;
@@ -235,6 +251,7 @@ internal sealed class SqlAssistCompletionCommandHandler :
                 () => SqlCompletionReopen.AfterSeparator(args.TextView, Broker));
         }
 
+        RequestParameterHint(args.TextView, args.TypedChar);
         return handled;
     }
 
@@ -254,6 +271,35 @@ internal sealed class SqlAssistCompletionCommandHandler :
                 && Broker.GetSession(args.TextView) is null
                 && SqlAutoPairing.TryHandleBackspace(args.TextView, args.SubjectBuffer),
             fallback: false);
+    }
+
+    /// <summary>
+    /// 打完左括號或逗號之後，看看游標是不是落進了純量函式的引數清單。
+    /// </summary>
+    /// <remarks>
+    /// 逗號只在提示還沒開著時問：開著的那一份自己盯著編輯，逗號一進緩衝區它就把
+    /// 粗體移到下一個參數（<c>SqlFunctionSignature</c>）。在這裡再問一次會把它收掉
+    /// 重開，畫面閃一下，還多付一次中繼資料查詢。
+    ///
+    /// 左括號反過來一律問：<c>dbo.f(dbo.g(</c> 裡面那一個開的是<b>另一個</b>函式，
+    /// 沿用外面那一份講的會是錯的名稱。
+    /// </remarks>
+    private void RequestParameterHint(ITextView textView, char typedCharacter)
+    {
+        if (typedCharacter != '(' && typedCharacter != ',')
+        {
+            return;
+        }
+
+        SqlAssistPlatformGuard.Run("排程函式參數提示", () =>
+        {
+            var help = SqlCompletionServices.GetSignatureHelp(textView, ServiceProvider, SignatureBroker);
+
+            if (typedCharacter == '(' || !help.IsActive)
+            {
+                help.RequestAfterCurrentCommand();
+            }
+        });
     }
 
     /// <summary>只撤銷預覽目標，不吞掉按鍵；平台仍完整執行原本命令。</summary>

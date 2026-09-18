@@ -54,6 +54,20 @@ public static class SqlMetadataReader
             record.GetByte(4),
             record.GetByte(5));
 
+        var script = new SqlColumnScriptDetail(
+            record.GetString(2),
+            record.GetInt16(3),
+            record.GetByte(4),
+            record.GetByte(5),
+            ReadOptionalString(record, 13),
+            ReadOptionalString(record, 14),
+            ReadOptionalString(record, 15),
+            ReadOptionalString(record, 16),
+            ReadOptionalBoolean(record, 17),
+            ReadOptionalBoolean(record, 18),
+            record.FieldCount > 19 && record.GetBoolean(19),
+            record.FieldCount > 20 && record.GetBoolean(20));
+
         return new SqlColumnInfo(
             record.GetInt32(0),
             record.GetString(1),
@@ -64,8 +78,29 @@ public static class SqlMetadataReader
             record.GetBoolean(9),
             record.IsDBNull(10) ? null : record.GetString(10),
             record.IsDBNull(11) ? null : record.GetString(11),
-            record.GetBoolean(12));
+            record.GetBoolean(12),
+            script,
+            ReadOptionalString(record, 21));
     }
+
+    /// <remarks>
+    /// 先問 <see cref="IDataRecord.FieldCount"/> 再讀：指令碼宣告的資料表與測試用的
+    /// 假資料列只組得出前面那幾欄，而多讀一欄拿到的是
+    /// <see cref="System.IndexOutOfRangeException"/>——那不是 <c>DbException</c>，
+    /// 不會被降級成「這一輪沒有資料」，而會一路冒到平台邊界去。
+    /// </remarks>
+    private static string? ReadOptionalString(IDataRecord record, int ordinal) =>
+        record.FieldCount > ordinal && !record.IsDBNull(ordinal) ? record.GetString(ordinal) : null;
+
+    /// <param name="fallback">
+    /// 讀不到時的值。預設是 ON 的選項（<c>ALLOW_ROW_LOCKS</c>、
+    /// <c>ALLOW_PAGE_LOCKS</c>）一定要傳 <c>true</c>：給錯的話每一個索引都會多出
+    /// 一個 <c>= OFF</c>，而那會靜靜地改掉那張表的鎖定行為。
+    /// </param>
+    private static bool ReadOptionalBoolean(IDataRecord record, int ordinal, bool fallback = false) =>
+        record.FieldCount > ordinal && !record.IsDBNull(ordinal)
+            ? record.GetBoolean(ordinal)
+            : fallback;
 
     public static SqlIndexRow ReadIndexRow(IDataRecord record)
     {
@@ -84,7 +119,124 @@ public static class SqlMetadataReader
             record.IsDBNull(6) ? null : record.GetString(6),
             record.GetString(7),
             record.GetBoolean(8),
-            record.GetBoolean(9));
+            record.GetBoolean(9),
+            ReadIndexOptions(record),
+            ReadDataSpace(record, 18, 19, 20));
+    }
+
+    /// <remarks>
+    /// 選項全部走 <see cref="ReadOptionalBoolean"/> 那一族的防護：索引查詢的欄位
+    /// 是後來加的，而假資料列與舊的呼叫端只組得出前十欄。多讀一欄拿到的
+    /// <see cref="System.IndexOutOfRangeException"/> 不是 <c>DbException</c>，
+    /// 不會被降級成「這一輪沒有資料」。
+    ///
+    /// <c>allow_row_locks</c> 與 <c>allow_page_locks</c> 的預設是 <b>ON</b>，
+    /// 所以讀不到時要給 <c>true</c> 而不是 <c>false</c>——給錯的話每一個索引
+    /// 都會多出兩個 <c>= OFF</c>，而那會靜靜地改掉那張表的鎖定行為。
+    /// </remarks>
+    private static SqlIndexOptions ReadIndexOptions(IDataRecord record)
+    {
+        return new SqlIndexOptions(
+            record.FieldCount > 10 && !record.IsDBNull(10) ? record.GetByte(10) : (byte)0,
+            ReadOptionalBoolean(record, 11),
+            ReadOptionalBoolean(record, 12),
+            ReadOptionalBoolean(record, 13, fallback: true),
+            ReadOptionalBoolean(record, 14, fallback: true),
+            ReadOptionalBoolean(record, 15),
+            ReadOptionalBoolean(record, 16),
+            ReadOptionalString(record, 17));
+    }
+
+    /// <summary>檔案群組或分割配置；名稱讀不到時整個為 null。</summary>
+    private static SqlDataSpace? ReadDataSpace(
+        IDataRecord record,
+        int nameOrdinal,
+        int typeOrdinal,
+        int partitionColumnOrdinal)
+    {
+        var name = ReadOptionalString(record, nameOrdinal);
+
+        return name is null
+            ? null
+            : new SqlDataSpace(
+                name,
+                ReadOptionalString(record, typeOrdinal),
+                ReadOptionalString(record, partitionColumnOrdinal));
+    }
+
+    /// <remarks>
+    /// 查不到那一列時（資料表剛被卸除、權限被收回）回傳
+    /// <see cref="SqlTableStorage.None"/>，而它的每一個欄位都是「沒有」——
+    /// 猜一個 <c>[PRIMARY]</c> 出來是指令碼在說謊，那張表可能建在別的檔案群組上。
+    /// </remarks>
+    public static SqlTableStorage ReadTableStorage(IDataRecord record)
+    {
+        if (record is null)
+        {
+            throw new ArgumentNullException(nameof(record));
+        }
+
+        return new SqlTableStorage(
+            ReadDataSpace(record, 0, 1, 4),
+            ReadOptionalString(record, 2),
+            ReadOptionalBoolean(record, 3, fallback: true),
+            ReadOptionalBoolean(record, 5, fallback: true));
+    }
+
+    public static SqlTriggerInfo ReadTrigger(IDataRecord record)
+    {
+        if (record is null)
+        {
+            throw new ArgumentNullException(nameof(record));
+        }
+
+        return new SqlTriggerInfo(
+            record.GetString(0),
+            record.IsDBNull(1) ? null : record.GetString(1),
+            record.GetBoolean(2));
+    }
+
+    public static SqlCheckConstraint ReadCheckConstraint(IDataRecord record)
+    {
+        if (record is null)
+        {
+            throw new ArgumentNullException(nameof(record));
+        }
+
+        return new SqlCheckConstraint(
+            record.GetString(0),
+            record.IsDBNull(1) ? string.Empty : record.GetString(1),
+            record.GetBoolean(2),
+            record.GetBoolean(3),
+            record.GetBoolean(4),
+            record.IsDBNull(5) ? null : record.GetString(5));
+    }
+
+    /// <remarks>
+    /// <c>level</c> 是查詢自己編的號（0 資料表、1 資料行、2 索引、3 條件約束），
+    /// 不是目錄檢視上的欄位。認不得的號一律當成資料表層級——多寫一筆掛在資料表上
+    /// 的說明，比整份指令碼因為一個沒見過的類別而失敗好。
+    /// </remarks>
+    public static SqlExtendedProperty ReadExtendedProperty(IDataRecord record)
+    {
+        if (record is null)
+        {
+            throw new ArgumentNullException(nameof(record));
+        }
+
+        var level = record.GetInt32(0) switch
+        {
+            1 => SqlExtendedPropertyLevel.Column,
+            2 => SqlExtendedPropertyLevel.Index,
+            3 => SqlExtendedPropertyLevel.Constraint,
+            _ => SqlExtendedPropertyLevel.Table
+        };
+
+        return new SqlExtendedProperty(
+            level,
+            record.GetString(1),
+            record.IsDBNull(2) ? string.Empty : record.GetString(2),
+            record.IsDBNull(4) ? null : record.GetString(4));
     }
 
     public static SqlForeignKeyRow ReadForeignKeyRow(IDataRecord record)

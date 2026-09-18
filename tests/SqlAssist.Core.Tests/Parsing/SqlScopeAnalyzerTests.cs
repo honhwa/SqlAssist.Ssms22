@@ -179,6 +179,111 @@ public sealed class SqlScopeAnalyzerTests
         Assert.Equal("d", table.Alias);
     }
 
+    /// <summary>
+    /// 別名後面明確寫出的資料行清單要讀出來。
+    /// </summary>
+    /// <remarks>
+    /// 資料表值建構式的欄位名稱<b>只</b>寫在這裡：<c>VALUES</c> 不是 <c>SELECT</c>，
+    /// 主體一個名稱都讀不出來。少了這一份的症狀是 <c>T.</c> 一個欄位都列不出來，
+    /// <c>SELECT T.*</c> 也展不開。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT | FROM (VALUES (1, N'Alice')) AS T (CopyNo, ReaderId)")]
+    [InlineData("SELECT | FROM (VALUES (1, N'Alice')) T (CopyNo, ReaderId)")]
+    [InlineData("SELECT | FROM (SELECT CopyNo, ReaderId FROM dbo.Loan) AS T (CopyNo, ReaderId)")]
+    public void 讀出別名後面的資料行清單(string sqlWithCaret)
+    {
+        var table = Assert.Single(Analyze(sqlWithCaret).Tables);
+
+        Assert.Equal("T", table.Alias);
+        Assert.Equal(new[] { "CopyNo", "ReaderId" }, table.ColumnNames);
+    }
+
+    /// <summary>
+    /// 資料列集函式與衍生資料表一樣接得住資料行清單。
+    /// </summary>
+    /// <remarks>
+    /// 文法上的 <c>rowset_function</c>，與使用者定義的資料表值函式同形狀卻不同待遇，
+    /// 所以那三個名字只能寫死。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT | FROM OPENQUERY(LibArchive, 'SELECT 1, 2') AS T (CopyNo, ReaderId)")]
+    [InlineData("SELECT | FROM OPENROWSET(BULK N'loans.csv', SINGLE_CLOB) T (CopyNo, ReaderId)")]
+    public void 資料列集函式的別名後面讀得到資料行清單(string sqlWithCaret)
+    {
+        var table = Assert.Single(Analyze(sqlWithCaret).Tables);
+
+        Assert.Equal("T", table.Alias);
+        Assert.Equal(new[] { "CopyNo", "ReaderId" }, table.ColumnNames);
+    }
+
+    /// <summary>
+    /// 其餘具名來源後面那串括號是資料表提示，不是資料行清單。
+    /// </summary>
+    /// <remarks>
+    /// T-SQL 的 <c>table_source</c> 文法裡只有 <c>derived_table</c> 與
+    /// <c>rowset_function</c> 後面有 <c>(column_alias …)</c>；具名資料表與使用者定義
+    /// 的資料表值函式後面就只有別名，那串括號是舊式提示。兩者形狀一模一樣，所以憑據
+    /// 只能是來源的形狀——實測回報過的症狀是
+    /// <c>SELECT * INTO #Temp FROM dbo.fn(x) f (NOLOCK)</c> 之後，<c>#Temp</c> 的結構
+    /// 只剩一個叫 NOLOCK 的欄位。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT | FROM dbo.Loan l (NOLOCK)", "Loan")]
+    [InlineData("SELECT | FROM dbo.Loan WITH (NOLOCK) l", "Loan")]
+    [InlineData("SELECT | FROM dbo.fn_LoansByReader(0) l (NOLOCK)", "fn_LoansByReader")]
+    [InlineData("SELECT | FROM dbo.fn_LoansByReader(0) l (CopyNo, ReaderId)", "fn_LoansByReader")]
+    [InlineData("SELECT | FROM dbo.OPENQUERY(0) l (CopyNo, ReaderId)", "OPENQUERY")]
+    [InlineData("SELECT | FROM [OPENQUERY](0) l (CopyNo, ReaderId)", "OPENQUERY")]
+    public void 具名來源後面的括號不是資料行清單(string sqlWithCaret, string objectName)
+    {
+        var table = Assert.Single(Analyze(sqlWithCaret).Tables);
+
+        Assert.Equal(objectName, table.ObjectName);
+        Assert.Equal("l", table.Alias);
+        Assert.Empty(table.ColumnNames);
+    }
+
+    /// <summary>
+    /// 來源後面的資料表提示要整段跳完，否則逗號清單在那裡斷掉。
+    /// </summary>
+    /// <remarks>
+    /// 不讀它的內容與不<b>跳過</b>它是兩件事。只做前者的話，剖析停在括號前面，
+    /// 後面那個逗號就不再是來源清單的逗號——症狀是 <c>c.</c> 一個欄位都列不出來，
+    /// 而 <c>SELECT *</c> 更糟：它以為只有一個來源，展開成一份少了一半欄位、
+    /// 卻仍然執行得動的選取清單。
+    ///
+    /// 別名之前與之後都要跳：文法把 <c>TABLESAMPLE</c> 與 <c>WITH (…)</c> 排在別名
+    /// 之後，而實際指令碼裡兩種順序都寫得出來。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT | FROM dbo.Loan l (NOLOCK), dbo.Copy c")]
+    [InlineData("SELECT | FROM dbo.Loan l WITH (NOLOCK), dbo.Copy c")]
+    [InlineData("SELECT | FROM dbo.Loan WITH (NOLOCK) l, dbo.Copy c")]
+    [InlineData("SELECT | FROM dbo.Loan l TABLESAMPLE (10 PERCENT), dbo.Copy c")]
+    [InlineData("SELECT | FROM dbo.Loan TABLESAMPLE SYSTEM (10 PERCENT) REPEATABLE (205), dbo.Copy c")]
+    [InlineData("SELECT | FROM dbo.fn_LoansByReader(0) l (NOLOCK), dbo.Copy c")]
+    [InlineData("SELECT | FROM (VALUES (1)) T (CopyNo), dbo.Copy c")]
+    public void 資料表提示不會截斷來源清單(string sqlWithCaret)
+    {
+        var scope = Analyze(sqlWithCaret);
+
+        Assert.Equal(2, scope.Tables.Count);
+        Assert.True(scope.TryResolve("c", out var copy));
+        Assert.Equal("Copy", copy.ObjectName);
+    }
+
+    /// <summary>括號還沒關上時當成沒寫，位置也留在原地。</summary>
+    /// <remarks>使用者正打到一半，而讀一半的清單會覆寫掉主體算得出來的名稱。</remarks>
+    [Fact]
+    public void 還沒關上的資料行清單當成沒寫()
+    {
+        var table = Assert.Single(Analyze("SELECT | FROM (SELECT CopyNo FROM dbo.Loan) AS T (Cop").Tables);
+
+        Assert.Equal("T", table.Alias);
+        Assert.Empty(table.ColumnNames);
+    }
+
     [Fact]
     public void 資料表變數標記為無中繼資料()
     {
@@ -234,6 +339,37 @@ public sealed class SqlScopeAnalyzerTests
         var scope = Analyze("UPDATE u SET u.Name = 'x' FROM dbo.Lib_Reader u WHERE |");
 
         Assert.Contains(scope.Tables, t => t.ObjectName == "Lib_Reader" && t.Alias == "u");
+    }
+
+    /// <summary>
+    /// <c>UPDATE a … FROM T a</c> 的 <c>a</c> 是別名，不是另一個資料來源。
+    /// </summary>
+    /// <remarks>
+    /// 多收一個叫 a 的來源時，中繼資料層會為一個不存在的名稱查一輪，而未限定
+    /// 欄位的判斷會因為「有一個來源解析不出來」整段放棄——症狀是 <c>SET |</c> 的
+    /// 欄位停上去沒有任何提示，而 <c>a.</c> 的欄位清單卻正常。
+    /// </remarks>
+    [Theory]
+    [InlineData("UPDATE a SET Name = 'x' FROM dbo.Lib_Reader a WHERE |")]
+    [InlineData("DELETE FROM a FROM dbo.Lib_Reader a WHERE |")]
+    public void 指向別名的更新目標不算資料來源(string sql)
+    {
+        var scope = Analyze(sql);
+
+        var table = Assert.Single(scope.Tables);
+        Assert.Equal("Lib_Reader", table.ObjectName);
+        Assert.Equal("a", table.Alias);
+    }
+
+    /// <summary>沒有同名別名時，更新目標仍然是一張資料表。</summary>
+    [Theory]
+    [InlineData("UPDATE Lib_Reader SET Name = 'x' WHERE |")]
+    [InlineData("UPDATE dbo.a SET Name = 'x' FROM dbo.Lib_Reader a WHERE |")]
+    public void 沒有同名別名的更新目標仍算資料來源(string sql)
+    {
+        var scope = Analyze(sql);
+
+        Assert.Contains(scope.Tables, t => t.ObjectName is "Lib_Reader" or "a" && t.Alias is null);
     }
 
     [Fact]
