@@ -63,6 +63,21 @@ SELECT a.| FROM (SELECT c.PUBL_CODE FROM dbo.PUBLISHER c) a
 `#Loan`、`@rows` 等指令碼自己宣告的資料表怎麼解析欄位，
 見[指令碼宣告的資料表](script-tables.md)。
 
+## 單一來源的欄位順序
+
+敘述裡只看得到一個資料表或檢視時，述詞的起點（`WHERE`、`AND`…的正後方）把
+**索引鍵欄位**排到最前面，其餘維持資料表定義順序：`SELECT * FROM dbo.Loan WHERE |`
+要的是拿來篩選的那幾欄，而篩選走得動的正是索引鍵。`INCLUDE` 的欄位不算——
+判斷來自 `sys.index_columns.key_ordinal`，與結構預覽的索引清單同一把尺。
+
+多個來源時刻意不排：那會讓每一張表的索引鍵一起浮上來，蓋掉配對鍵的順序。搬動由
+`Metadata/Model/SqlColumnOrdering` 負責，沒有索引鍵可搬時直接回傳原來的清單。
+
+同一個位置插入的文字也會**補上別名**：`FROM dbo.Loan l WHERE |` 得到的是 `l.CopyNo`。
+使用者自己取了名字，要的是讀得出來的那一種寫法。沒寫別名的 `FROM dbo.Loan` 不加表名
+——表名比欄位名長，插入之後還要自己刪。子查詢與 CTE 攤平出來的來源一定帶著外層別名，
+見[欄位從哪裡來](wildcard-expansion.md#欄位從哪裡來)。
+
 ## ON 與 WHERE 的配對鍵
 
 述詞的起點（`ON`、`WHERE`、`AND`…的正後方）還會把當前對象的同名欄位換成整條聯結

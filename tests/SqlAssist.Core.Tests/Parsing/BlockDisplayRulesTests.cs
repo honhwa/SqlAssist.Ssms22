@@ -21,6 +21,7 @@ public sealed class BlockDisplayRulesTests
         Assert.True(settings.BlockOverview);
         Assert.True(settings.BlockSameLineBackground);
         Assert.True(settings.BlockContextHint);
+        Assert.True(settings.BlockSymbolHighlight);
     }
 
     [Fact]
@@ -96,5 +97,52 @@ public sealed class BlockDisplayRulesTests
         Assert.False(BlockDisplayRules.IsKindEnabled(BlockKind.Bracket, settings));
         Assert.False(BlockDisplayRules.IsKindEnabled(BlockKind.String, settings));
         Assert.False(BlockDisplayRules.IsKindEnabled(BlockKind.Try, new SqlAssistSettings { Enabled = false }));
+    }
+
+    /// <remarks>
+    /// 符號的 mark 直接蓋在被指到的字元上，所以另外給了一個只關它的開關：
+    /// 關掉之後 <c>( )</c>、<c>[ ]</c>、<c>' '</c> 照樣配對、照樣有區間淡底，
+    /// 只是不再塗色；關鍵字那一類完全不受影響。
+    /// </remarks>
+    [Fact]
+    public void 符號端點可單獨關閉而其他種類照舊()
+    {
+        var settings = new SqlAssistSettings();
+        Assert.True(BlockDisplayRules.ShowEndpoint(BlockKind.Block, settings));
+        Assert.True(BlockDisplayRules.ShowEndpoint(BlockKind.Case, settings));
+        Assert.True(BlockDisplayRules.ShowEndpoint(BlockKind.Parenthesis, settings));
+        Assert.True(BlockDisplayRules.ShowEndpoint(BlockKind.Bracket, settings));
+        Assert.True(BlockDisplayRules.ShowEndpoint(BlockKind.String, settings));
+
+        var noSymbols = new SqlAssistSettings { BlockSymbolHighlight = false };
+        Assert.False(BlockDisplayRules.ShowEndpoint(BlockKind.Parenthesis, noSymbols));
+        Assert.False(BlockDisplayRules.ShowEndpoint(BlockKind.Bracket, noSymbols));
+        Assert.False(BlockDisplayRules.ShowEndpoint(BlockKind.String, noSymbols));
+        Assert.True(BlockDisplayRules.ShowEndpoint(BlockKind.Block, noSymbols));
+        Assert.True(BlockDisplayRules.ShowEndpoint(BlockKind.Try, noSymbols));
+
+        // 關掉的只是端點上色：括號照樣參與配對，區間背景也照舊。
+        Assert.True(BlockDisplayRules.IsKindEnabled(BlockKind.Parenthesis, noSymbols));
+        Assert.True(BlockDisplayRules.ShowRange(noSymbols, sameLine: false, highContrast: false));
+    }
+
+    /// <summary>端點高亮的上一層開關仍然管得住符號。</summary>
+    [Fact]
+    public void 關閉端點高亮與總開關時符號也不上色()
+    {
+        var noEndpoints = new SqlAssistSettings { BlockKeywordHighlight = false };
+        Assert.False(BlockDisplayRules.ShowEndpoint(BlockKind.Block, noEndpoints));
+        Assert.False(BlockDisplayRules.ShowEndpoint(BlockKind.Parenthesis, noEndpoints));
+        Assert.True(BlockDisplayRules.ShowRange(noEndpoints, sameLine: false, highContrast: false));
+
+        foreach (var settings in new[]
+                 {
+                     new SqlAssistSettings { Enabled = false },
+                     new SqlAssistSettings { BlockMatchingEnabled = false }
+                 })
+        {
+            Assert.False(BlockDisplayRules.ShowEndpoint(BlockKind.Block, settings));
+            Assert.False(BlockDisplayRules.ShowEndpoint(BlockKind.Bracket, settings));
+        }
     }
 }

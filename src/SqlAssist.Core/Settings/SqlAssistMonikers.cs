@@ -35,6 +35,7 @@ public static class SqlAssistMonikers
     public const string Enabled = "sqlAssist.general.enabled";
     public const string BlockMatchingEnabled = "sqlAssist.blocks.enabled";
     public const string BlockKeywordHighlight = "sqlAssist.blocks.keywordHighlight";
+    public const string BlockSymbolHighlight = "sqlAssist.blocks.symbolHighlight";
     public const string BlockKeywordForeground = "sqlAssist.blocks.keywordForeground";
     public const string BlockKeywordBackground = "sqlAssist.blocks.keywordBackground";
     public const string BlockSymbolForeground = "sqlAssist.blocks.symbolForeground";

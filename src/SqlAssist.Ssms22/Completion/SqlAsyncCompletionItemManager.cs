@@ -15,12 +15,16 @@ using SqlAssist.Ssms22;
 namespace SqlAssist.Ssms22.Completion;
 
 /// <summary>
-/// 決定原生建議清單的排序、篩選與命中標示。
+/// 決定原生建議清單的排序、篩選、選取與命中標示。
 /// </summary>
 /// <remarks>
 /// 沒有這個匯出，平台會用自己的比對器，詞首感知排名就會失效——
 /// 輸入 <c>libr</c> 時 <c>Lib_Reader</c> 又會掉到含子字串的名稱後面。
 /// 這裡改用本擴充的模糊比對器，並把命中區段交給平台去畫粗體。
+///
+/// 篩選之後順便把選取拉回排名第一的那一筆（正式選取，因此 Enter、Tab 與滑鼠都提交它）：
+/// 使用者打了前綴就直接按 Enter，帶出來的應該是最前面那一個，
+/// 而不是上一次篩選留下來的索引被夾住之後剛好落在的那一個。
 ///
 /// 同時實作新舊兩版介面：平台優先呼叫
 /// <see cref="IAsyncCompletionItemManager2"/> 的清單版本以避免多一次陣列複製，
@@ -187,7 +191,32 @@ internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManage
             .Select(entry => new CompletionItemWithHighlight(entry.Item, ToSpans(entry.Spans)))
             .ToImmutableArray();
 
-        return new FilteredCompletionModel(filtered, 0, SqlCompletionFilters.Sort(data.SelectedFilters));
+        // 每一次重新篩選都把選取拉回第一筆：這裡的順序就是最終名次，而清單每換一個
+        // 字元就重排一次，留著舊索引的話它會被夾在一個與名次無關的位置上——
+        // 症狀是打了一串字之後順手按 Enter，帶出來的不是排最前面的那一個。
+        //
+        // 一定要用 Selected 而不是 SoftSelected：平台的定義是軟選取「只用 Tab 或滑鼠
+        // 提交」，按 Enter 不算，而 Enter 正是這裡要接的那條路。Selected 是正式選取，
+        // Tab、滑鼠、Enter 與提交字元都算。
+        //
+        // 這不會讓打字被改寫：平台本來就預設選取第一筆——「打了 a 順手按 Enter 就被
+        // 換成 ALTER PROCEDURE」那個現象（見 docs/completion-no-list.md）正是它造成的，
+        // 而打字當時文字並沒有被動過。這裡只是把那個選取固定在第 0 筆，不再讓它停在
+        // 上一次篩選夾住的位置。
+        //
+        // 使用者自己按 ↑↓ 挑的那一筆不受影響：移動選取不會重新觸發這條篩選路徑，
+        // 只有文字或分類篩選變動才會。
+        return new FilteredCompletionModel(
+            filtered,
+            0,
+            SqlCompletionFilters.Sort(data.SelectedFilters),
+            UpdateSelectionHint.Selected,
+            // 選取的那一筆置中，與平台原本的行為一致。六個參數的建構式沒有預設值，
+            // 因此連這個也要明講。
+            centerSelection: true,
+            // 「唯一命中就提交」不在這裡用：清單列得出好幾筆時該不該提交由名次決定，
+            // 而名次已經由選取表達；再給一個 uniqueItem 只會讓兩者說法不一致。
+            uniqueItem: null);
     }
 
     /// <summary>

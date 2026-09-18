@@ -800,11 +800,11 @@ internal sealed class SqlMetadataService : IDisposable
                 ToColumnNames(detail) ?? Array.Empty<string>()));
         }
 
-        var match = SqlJoinKeyMatcher.WantsJoinKeys(context)
-            ? SqlJoinKeyMatcher.Pair(keySources)
-            : SqlJoinKeyMatch.Empty;
+        // 述詞的起點另外決定「單一來源時索引鍵要不要排到最前面」，所以算一次就好。
+        var predicate = SqlJoinKeyMatcher.WantsJoinKeys(context);
+        var match = predicate ? SqlJoinKeyMatcher.Pair(keySources) : SqlJoinKeyMatch.Empty;
 
-        return BuildScopeColumnSuggestions(sources, objects, details, match, settings, qualify);
+        return BuildScopeColumnSuggestions(sources, objects, details, match, settings, qualify, predicate);
     }
 
     /// <summary>
@@ -818,6 +818,11 @@ internal sealed class SqlMetadataService : IDisposable
     /// 同一筆欄位只出現一次：被配對到的欄位不再留在它原本的位置上，而是移到最前面
     /// 並換上整條條件的插入文字。兩個位置各放一筆的話，清單看起來一樣，選了卻寫出
     /// 完全不同的東西。
+    ///
+    /// <paramref name="predicate"/> 只有一個來源時才起作用：那時沒有聯結條件可配，
+    /// 述詞的起點要的是「這張表拿來篩選的欄位」，所以交給
+    /// <see cref="SqlColumnOrdering.IndexKeysFirst"/> 把索引鍵排到前面。多個來源時不排：
+    /// 那會讓每一張表的索引鍵一起浮上來，反而蓋掉配對鍵的順序。
     /// </remarks>
     private static List<SqlSuggestion> BuildScopeColumnSuggestions(
         IReadOnlyList<SqlColumnSource> sources,
@@ -825,12 +830,14 @@ internal sealed class SqlMetadataService : IDisposable
         SqlObjectDetail?[] details,
         SqlJoinKeyMatch match,
         SqlAssistSettings settings,
-        bool qualify)
+        bool qualify,
+        bool predicate)
     {
         var keys = new List<SqlSuggestion>();
         var columns = new List<SqlSuggestion>();
 
         HashSet<int>? current = match.IsEmpty ? null : new HashSet<int>(match.SourceIndexes);
+        var indexKeysFirst = predicate && sources.Count == 1;
 
         for (var index = 0; index < sources.Count; index++)
         {
@@ -856,7 +863,9 @@ internal sealed class SqlMetadataService : IDisposable
                 continue;
             }
 
-            foreach (var column in detail.Columns)
+            var order = indexKeysFirst ? SqlColumnOrdering.IndexKeysFirst(detail.Columns) : detail.Columns;
+
+            foreach (var column in order)
             {
                 var joinKey = PairFor(pairs, column.Name);
 
@@ -885,11 +894,22 @@ internal sealed class SqlMetadataService : IDisposable
     /// 插入的欄位名稱要不要補限定字。
     /// </summary>
     /// <remarks>
-    /// 依據是<b>相異</b>的限定字數量而不是來源數量：<c>FROM (SELECT Id, * FROM T t) d</c>
-    /// 攤平出兩個來源，但它們都叫 <c>d</c>，欄位名稱不可能因此模稜兩可。
+    /// 多個來源時的依據是<b>相異</b>的限定字數量而不是來源數量：
+    /// <c>FROM (SELECT Id, * FROM T t) d</c> 攤平出兩個來源，但它們都叫 <c>d</c>，
+    /// 欄位名稱不可能因此模稜兩可。
+    ///
+    /// 只有一個來源時本來不必補，但使用者自己取了別名就跟著他的寫法帶出來：
+    /// <c>FROM dbo.Loan l WHERE |</c> 要的是 <c>l.CopyNo</c>，而 <c>FROM dbo.Loan |</c>
+    /// 這種沒寫別名的位置不該無緣無故多一段表名——那會讓最單純的查詢清單變吵，
+    /// 而且表名比欄位名長，插入之後還要自己刪。
     /// </remarks>
     private static bool NeedsQualifier(IReadOnlyList<SqlColumnSource> sources)
     {
+        if (sources.Count == 1)
+        {
+            return IsAlias(sources[0]);
+        }
+
         string? first = null;
 
         foreach (var source in sources)
@@ -913,6 +933,17 @@ internal sealed class SqlMetadataService : IDisposable
 
         return false;
     }
+
+    /// <summary>
+    /// 這個來源的限定字是使用者自己取的別名，而不是物件本來的名稱。
+    /// </summary>
+    /// <remarks>
+    /// 子查詢與 CTE 攤平出來的來源沒有「本來的名稱」——它們的限定字一定是別名，
+    /// 而且是外層唯一叫得動那些欄位的方式，所以直接算。
+    /// </remarks>
+    private static bool IsAlias(SqlColumnSource source) =>
+        source.Qualifier is not null &&
+        (source.Table is null || !string.IsNullOrEmpty(source.Table.Alias));
 
     /// <summary>
     /// 目前已快取的第一層資料；沒有現成的目錄或還沒載入時回傳 null。

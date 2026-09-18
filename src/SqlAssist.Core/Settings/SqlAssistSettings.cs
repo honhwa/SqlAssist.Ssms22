@@ -31,6 +31,20 @@ public sealed class SqlAssistSettings
     public bool NotificationDegraded { get; init; } = true;
     public bool BlockMatchingEnabled { get; init; } = true;
     public bool BlockKeywordHighlight { get; init; } = true;
+
+    /// <summary>
+    /// sqlAssist.blocks.symbolHighlight
+    /// </summary>
+    /// <remarks>
+    /// 只關掉「游標停在 <c>( )</c>、<c>' '</c>、<c>[ ]</c> 上時，那兩個符號字元自己的
+    /// 底色」這一件事。配對本身與關鍵字端點都不受影響——種類參不參與配對是
+    /// <see cref="BlockMatchParentheses"/>，端點高亮整體是
+    /// <see cref="BlockKeywordHighlight"/>。
+    ///
+    /// 分出來的理由是符號的 mark 直接蓋在被指到的字元上：底色一重，那兩個字元
+    /// 就看不清楚了，而它出現的時機正好是使用者要接著輸入的時候。
+    /// </remarks>
+    public bool BlockSymbolHighlight { get; init; } = true;
     public string BlockKeywordForeground { get; init; } = string.Empty;
     public string BlockKeywordBackground { get; init; } = string.Empty;
     public string BlockSymbolForeground { get; init; } = string.Empty;

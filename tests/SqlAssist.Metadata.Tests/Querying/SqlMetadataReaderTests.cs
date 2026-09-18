@@ -455,6 +455,46 @@ public sealed class SqlMetadataReaderTests
         Assert.Equal("int", script.TypeName);
     }
 
+    /// <summary>
+    /// 索引鍵旗標跟著資料行一起回來。
+    /// </summary>
+    /// <remarks>
+    /// 那一欄掛在欄位查詢的最後（<c>EXISTS</c> 子查詢多一欄，不是多一輪來回）。
+    /// 順序對不上的症狀不是編譯錯誤，而是 WHERE 之後排在最前面的換成另一批欄位
+    /// ——那比沒有排序更糟，因為看起來很正常。
+    /// </remarks>
+    [Fact]
+    public void 讀取欄位是不是索引鍵()
+    {
+        var key = new FakeDataRecord(
+            1, "ReaderId", "int", (short)4, (byte)10, (byte)0,
+            false, false, false, false, null, null, false,
+            null, null, null, null, false, false, false, false,
+            null, true);
+        var plain = new FakeDataRecord(
+            1, "Remark", "nvarchar", (short)200, (byte)0, (byte)0,
+            true, false, false, false, null, null, false,
+            null, null, null, null, false, false, false, false,
+            null, false);
+
+        Assert.True(SqlMetadataReader.ReadColumn(key).IsIndexKey);
+        Assert.False(SqlMetadataReader.ReadColumn(plain).IsIndexKey);
+    }
+
+    /// <remarks>
+    /// 舊的假資料列沒有第 23 欄。讀不到時要當成「不是索引鍵」而不是擲例外，
+    /// 否則整份欄位建議會一起消失。
+    /// </remarks>
+    [Fact]
+    public void 只給得出舊欄位的資料列沒有索引鍵旗標()
+    {
+        var record = new FakeDataRecord(
+            1, "ReaderId", "int", (short)4, (byte)10, (byte)0,
+            false, true, false, true, null, null, false);
+
+        Assert.False(SqlMetadataReader.ReadColumn(record).IsIndexKey);
+    }
+
     [Fact]
     public void 系統配的預設值名稱看得出來是系統配的()
     {

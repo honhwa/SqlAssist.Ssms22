@@ -63,6 +63,57 @@ public sealed class BlockPaletteTests
         Assert.True(ThemeColorMath.Contrast(overridden[ThemeBrush.BlockHintHoverForeground], overridden[ThemeBrush.BlockHintBackground]) >= 4.5);
     }
 
+    /// <remarks>
+    /// 符號的 mark 直接蓋在游標旁邊那兩個字元上，所以預設不是主題強調色而是淡黃：
+    /// 強調色在深色主題是亮色塊，蓋住字元之後反而看不清自己在打什麼。
+    ///
+    /// 淡黃也刻意不套 3:1 的圖形對比——那個校正會把它往目標色推成橄欖綠，
+    /// 就不再是螢光筆了。字色仍然壓在 4.5:1 以上，蓋住字元照樣讀得出來。
+    /// </remarks>
+    [Fact]
+    public void 符號預設底色為淡黃且不套圖形對比()
+    {
+        var palette = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false);
+        var fill = palette[ThemeBrush.BlockSymbolBackground];
+
+        // 與白底混合之後仍然是偏黃的淺色。
+        Assert.True(fill.R >= 250);
+        Assert.True(fill.G >= 240);
+        Assert.True(fill.B <= 224);
+        Assert.True(fill.B < fill.G);
+        Assert.True(fill.G < fill.R);
+
+        // 這正是 3:1 校正做不到的地方：校正過的顏色不會這麼亮。
+        Assert.True(ThemeColorMath.Contrast(fill, Colors.White) < 3);
+        Assert.True(ThemeColorMath.Contrast(palette[ThemeBrush.BlockSymbolForeground], fill) >= 4.5);
+    }
+
+    /// <summary>深色主題上淡黃會與底色混合，不會變成刺眼的純黃。</summary>
+    [Fact]
+    public void 深色主題的符號底色與底色混合()
+    {
+        var dark = ThemePaletteTests.ColorsFor("dark")[ThemeBrush.ListBackground];
+        var palette = BlockPalette.Create(dark, Colors.White, Colors.Blue, "#4F86C6", false);
+        var fill = palette[ThemeBrush.BlockSymbolBackground];
+
+        Assert.True(fill.R > dark.R);
+        Assert.True(fill.R < 255);
+        Assert.NotEqual(Colors.Yellow, fill);
+        Assert.True(ThemeColorMath.Contrast(palette[ThemeBrush.BlockSymbolForeground], fill) >= 4.5);
+    }
+
+    /// <summary>使用者一旦指定符號底色，淡黃預設就完全不介入。</summary>
+    [Fact]
+    public void 指定符號底色時淡黃不介入()
+    {
+        var palette = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false,
+            new SqlAssistSettings { BlockSymbolBackground = "#303080" });
+        var fill = palette[ThemeBrush.BlockSymbolBackground];
+
+        Assert.Equal((byte)255, fill.A);
+        Assert.True(fill.B > fill.R);
+    }
+
     [Theory]
     [InlineData("light")]
     [InlineData("dark")]

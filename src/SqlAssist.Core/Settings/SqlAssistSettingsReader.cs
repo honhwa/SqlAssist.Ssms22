@@ -51,6 +51,7 @@ public static class SqlAssistSettingsReader
             NotificationDegraded = Value(source, SqlAssistMonikers.NotificationDegraded, defaults.NotificationDegraded),
             BlockMatchingEnabled = Value(source, SqlAssistMonikers.BlockMatchingEnabled, defaults.BlockMatchingEnabled),
             BlockKeywordHighlight = Value(source, SqlAssistMonikers.BlockKeywordHighlight, defaults.BlockKeywordHighlight),
+            BlockSymbolHighlight = Value(source, SqlAssistMonikers.BlockSymbolHighlight, defaults.BlockSymbolHighlight),
             BlockKeywordForeground = Value(source, SqlAssistMonikers.BlockKeywordForeground, defaults.BlockKeywordForeground),
             BlockKeywordBackground = Value(source, SqlAssistMonikers.BlockKeywordBackground, defaults.BlockKeywordBackground),
             BlockSymbolForeground = Value(source, SqlAssistMonikers.BlockSymbolForeground, defaults.BlockSymbolForeground),

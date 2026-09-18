@@ -23,6 +23,20 @@ public static class BlockDisplayRules
             _ => true
         };
 
+    /// <summary>
+    /// 游標所在配對的兩端要不要上色；符號那一類另外受
+    /// <see cref="SqlAssistSettings.BlockSymbolHighlight"/> 管。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="IsKindEnabled"/> 分開：那一條問的是「這個種類參不參與配對」，
+    /// 關掉它連區間、色帶、導覽都會一起少一層；這裡只決定端點上不上色。
+    /// 符號的 mark 直接蓋在被指到的字元上，因此留了一個只關它的開關——
+    /// 關掉之後 <c>( )</c>、<c>' '</c> 照樣配對、照樣有區間淡底，只是不再被塗色。
+    /// </remarks>
+    public static bool ShowEndpoint(BlockKind kind, SqlAssistSettings settings) =>
+        settings.Enabled && settings.BlockMatchingEnabled && settings.BlockKeywordHighlight &&
+        (!IsSymbol(kind) || settings.BlockSymbolHighlight);
+
     public static bool ShowRange(SqlAssistSettings settings, bool sameLine, bool highContrast) =>
         settings.Enabled && settings.BlockMatchingEnabled && settings.BlockRangeBackground &&
         (!sameLine || settings.BlockSameLineBackground) && !highContrast;
