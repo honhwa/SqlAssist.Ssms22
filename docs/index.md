@@ -30,7 +30,7 @@
 | 多段式名稱、資料庫／結構描述判定 | [限定名稱](qualified-names.md) |
 | 別名欄位、ColumnSource、暫存表 | [欄位](completion-columns.md)／[指令碼宣告](script-tables.md) |
 | Scope、括號、重開 | [範圍與重開](completion-reopen.md) |
-| 提交名稱、結構描述、方括號 | [插入文字](completion-insertion.md) |
+| 提交名稱、結構描述、方括號、自動別名 | [插入文字](completion-insertion.md) |
 | 整句展開、游標、復原 | [整句展開](statement-expansion.md) |
 | INSERT 欄位、EXEC 參數、預留值 | [展開內容](statement-values.md) |
 | 自訂函式括號、引數預留值 | [函式呼叫](function-call-insertion.md) |

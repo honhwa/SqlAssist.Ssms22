@@ -110,6 +110,9 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.UseSquareBrackets,
                 defaults.UseSquareBrackets),
+            TableSourceAliasStyle = ParseTableSourceAliasStyle(
+                Value(source, SqlAssistMonikers.TableSourceAliasStyle, string.Empty),
+                defaults.TableSourceAliasStyle),
             ExpandWildcardOnTab = Value(
                 source,
                 SqlAssistMonikers.ExpandWildcardOnTab,
@@ -224,6 +227,24 @@ public static class SqlAssistSettingsReader
     private static T Value<T>(ISettingValueSource source, string moniker, T fallback)
         where T : notnull =>
         source.TryGetValue<T>(moniker, out var value) ? value : fallback;
+
+    /// <summary>
+    /// <c>tableSourceAliasStyle</c> 的三個字面值，認不出來時回退到預設值。
+    /// </summary>
+    /// <remarks>
+    /// 與其他列舉一樣不拿第一位成員當備援：<c>none</c> 會替每一次提交補上別名，
+    /// 押錯的那一邊使用者看得見，而猜成 <c>off</c> 是整個功能安靜地不見。
+    /// </remarks>
+    private static SqlTableSourceAliasStyle ParseTableSourceAliasStyle(string value, SqlTableSourceAliasStyle fallback)
+    {
+        return value switch
+        {
+            "none" => SqlTableSourceAliasStyle.None,
+            "as" => SqlTableSourceAliasStyle.As,
+            "off" => SqlTableSourceAliasStyle.Off,
+            _ => fallback
+        };
+    }
 
     /// <summary>無法辨識的值一律當成預設值，而不是列舉的第一個成員。</summary>
     private static NotificationVerbosity ParseVerbosity(string value, NotificationVerbosity fallback)

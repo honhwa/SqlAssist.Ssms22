@@ -248,6 +248,17 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             settings,
             writtenName);
 
+        // 資料表值函式在資料來源位置的自動別名：建立清單那一刻算好、掛在 item 上，
+        // 這裡掛到展開器身上——展開器把名稱換成 fn(…) 時會把先拼好的字整段蓋掉，
+        // 所以別名要跟展開結果一起落地，而不是跟著插入文字走。
+        if (expansion is SqlFunctionCallExpansion functionCallExpansion &&
+            item.Properties.TryGetProperty<string>(
+                SqlAsyncCompletionSource.TableSourceAliasKey,
+                out var tableSourceAliasSuffix))
+        {
+            functionCallExpansion.TableSourceAliasSuffix = tableSourceAliasSuffix;
+        }
+
         // 使用者自訂函式：「補上括號」開著時，這一次要寫的是名稱加一對空括號，
         // 游標停在中間。補到哪一步由 SqlFunctionCallInsertion 回答，展開那一端
         // 問的是同一份，所以兩邊不會各補一次。

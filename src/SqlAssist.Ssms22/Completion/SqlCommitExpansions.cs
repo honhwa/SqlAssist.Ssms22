@@ -373,6 +373,18 @@ internal sealed class SqlFunctionCallExpansion : ISqlCommitExpansion
 
     public SqlCommitExpansionScope Scope => SqlCommitExpansionScope.InsertedName;
 
+    /// <summary>
+    /// 函式是資料表值函式、位在資料來源位置（FROM／JOIN／APPLY）時，
+    /// 補完引數之後要接在右括號後面的自動別名（前後都有空格，例如
+    /// <c> AS f </c>）；不是資料來源位置（例如 SELECT 裡的純量函式）時為 null。
+    /// </summary>
+    /// <remarks>
+    /// 由提交管理器在展開之前掛上——別名在建立清單那一刻就算好、放在建議項的
+    /// <c>SqlAsyncCompletionSource.TableSourceAliasKey</c> 裡，名稱換成
+    /// <c>fn(…)</c> 之後才輪得到它。展開器本身不知道位置，也不該自己取名。
+    /// </remarks>
+    internal string? TableSourceAliasSuffix { get; set; }
+
     public SqlObjectInfo Object { get; }
 
     /// <summary>參數只有中繼資料層拿得到，這裡永遠要查。</summary>
@@ -437,6 +449,15 @@ internal sealed class SqlFunctionCallExpansion : ISqlCommitExpansion
         }
 
         var text = SqlFunctionCallText.Build(insertedName, arguments, out var caretOffset);
+
+        // 資料表值函式在 FROM／JOIN／APPLY 位置：引數補完之後別名接在右括號後面。
+        // 別名由提交管理器先掛上來，這裡只把它接到尾巴；它不影響 caretOffset——
+        // 游標還停在引數那一格，等引數打完才輪得到別名之後。
+        // 資料來源位置以外的函式呼叫（SELECT 裡的純量函式）不會帶這個後綴。
+        if (TableSourceAliasSuffix is not null)
+        {
+            text += TableSourceAliasSuffix;
+        }
 
         return new TextReplacement(
             text,
