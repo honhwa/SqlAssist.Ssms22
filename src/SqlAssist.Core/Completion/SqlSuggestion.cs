@@ -14,7 +14,8 @@ public sealed class SqlSuggestion
         string? schemaName = null,
         object? tag = null,
         SqlKeywordPosition positions = SqlKeywordPosition.Any,
-        bool isDestructive = false)
+        bool isDestructive = false,
+        SqlJoinKey? joinKey = null)
     {
         DisplayText = displayText;
         InsertionText = insertionText;
@@ -26,6 +27,7 @@ public sealed class SqlSuggestion
         Tag = tag;
         Positions = positions;
         IsDestructive = isDestructive;
+        JoinKey = joinKey;
     }
 
     public string DisplayText { get; }
@@ -59,4 +61,14 @@ public sealed class SqlSuggestion
 
     /// <summary>沒有輸入前綴時不主動顯示的危險項目。</summary>
     public bool IsDestructive { get; }
+
+    /// <summary>
+    /// 這一筆欄位是當前對象與前面某個來源的配對鍵；不是配對鍵時為 null。
+    /// </summary>
+    /// <remarks>
+    /// 帶著它就是帶著插入文字：<c>ON </c> 與 <c>WHERE </c> 之後使用者要的是整條
+    /// 聯結條件，而那是配對本身決定的，不是在建立建議時另外拼一次。
+    /// 排名也問這一個欄位，見 <see cref="SuggestionMatcher"/>。
+    /// </remarks>
+    public SqlJoinKey? JoinKey { get; }
 }

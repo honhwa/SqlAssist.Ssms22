@@ -30,6 +30,9 @@ CREATE INDEX ix ON t (a) ON | → 檔案群組；ON 前面是右括號
 「`b` 是結構描述」的解讀而完全列不出欄位，那是每天都會走到的路徑。
 兩邊都釘在 `SqlDdlTargetTests`。
 
+判成述詞之後，那一格的清單還會把當前來源的同名欄位配成整條聯結條件排到最前面
+（`b.CopyNo = a.CopyNo`），見[配對鍵](completion-join-keys.md)。
+
 ## MERGE 的動作子句
 
 `WHEN MATCHED THEN UPDATE SET …`、`WHEN NOT MATCHED THEN INSERT …` 裡的

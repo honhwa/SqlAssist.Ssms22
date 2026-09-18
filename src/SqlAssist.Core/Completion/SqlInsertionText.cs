@@ -144,4 +144,25 @@ public static class SqlInsertionText
             ? SqlIdentifier.Quote(name)
             : SqlIdentifier.QuoteIfNeeded(name);
     }
+
+    /// <summary>
+    /// 把欄位名稱冠上限定字；讀不出限定字時就只有名稱本身。
+    /// </summary>
+    /// <remarks>
+    /// 需要它的地方有三處：資料表欄位、子查詢與 CTE 的欄位、以及配對鍵的兩側。
+    /// 公開的理由與 <see cref="Quote"/> 同一條——各寫一份的下場是其中一份忘記
+    /// 共用括號規則，而那一份寫出來的名稱會在保留字上炸開。
+    ///
+    /// 冠不冠限定字由呼叫端決定（<c>GetCachedScopeColumns</c> 看相異限定字的數量），
+    /// 這裡只管怎麼冠：限定字本身也要照同一條括號規則，因為別名可以是
+    /// <c>[order]</c> 這種名字。
+    /// </remarks>
+    public static string Qualify(string name, string? qualifier, SqlAssistSettings settings)
+    {
+        var quoted = Quote(name, settings);
+
+        return qualifier is null
+            ? quoted
+            : Quote(qualifier, settings) + "." + quoted;
+    }
 }

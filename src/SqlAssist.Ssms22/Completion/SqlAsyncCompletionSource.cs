@@ -568,8 +568,9 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         var database = await _metadataService.GetSuggestionsAsync(token).ConfigureAwait(false);
 
         // 敘述裡看得到的欄位放在資料庫物件前面：SELECT | FROM PUBLISHER a 這種位置，
-        // 使用者要的幾乎都是欄位，而不是整個資料庫的物件清單。
-        var scopeColumns = _metadataService.GetCachedScopeColumns(context.ScopeSources);
+        // 使用者要的幾乎都是欄位，而不是整個資料庫的物件清單。述詞起點（ON | 、WHERE |）
+        // 另外把當前對象的同名欄位換成整條聯結條件並排到最前面，所以這裡要帶上下文。
+        var scopeColumns = _metadataService.GetCachedScopeColumns(context);
         var candidates = builtIn.Concat(scopeColumns).Concat(database);
 
         // sys.| 與 EXEC | 才把系統物件拉進來：那一份有一兩千筆，混進一般清單的話，
@@ -695,6 +696,7 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         CompletionTarget.Function => "函式",
         CompletionTarget.TableFunction => "資料表值函式",
         CompletionTarget.Column => "資料行",
+        CompletionTarget.Predicate => "述詞",
         CompletionTarget.Database => "資料庫",
         CompletionTarget.GlobalVariable => "全域變數",
         CompletionTarget.Variable => "變數",

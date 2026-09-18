@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using SqlAssist.Core.Completion;
+using SqlAssist.Core.Matching;
 using SqlAssist.Core.Snippets;
 using Xunit;
 
@@ -40,6 +42,23 @@ public sealed class SuggestionMatcherTests
             name,
             SuggestionKind.Column);
     }
+
+    /// <summary>
+    /// 帶配對鍵的欄位：插入的是整條聯結條件，顯示文字仍是欄位本身。
+    /// </summary>
+    private static SqlSuggestion JoinKeyColumn(string name)
+    {
+        return new SqlSuggestion(
+            name,
+            $"{name} = other.{name}",
+            $"int NOT NULL · = other.{name}",
+            name,
+            SuggestionKind.Column,
+            joinKey: new SqlJoinKey(name, "self", name, "other"));
+    }
+
+    /// <summary>兩個來源都看得到的述詞起點，配對鍵成立的位置。</summary>
+    private const string OnPredicate = "SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON ";
 
     /// <summary>
     /// 沒有限定字的位置也要看得到欄位：SELECT | FROM PUBLISHER a 這種情形，
@@ -361,5 +380,87 @@ public sealed class SuggestionMatcherTests
             "SELECT n_");
 
         Assert.Equal(new[] { "N_ZULU", "N_LIMA", "N_MIKE" }, names);
+    }
+
+    /// <summary>
+    /// <c>ON </c> 之後配對鍵排在最前面，其餘欄位照舊。
+    /// </summary>
+    /// <remarks>
+    /// 「照舊」指的是原來的分數與原來的順序，不是字母序：三筆普通欄位同類別、同為
+    /// 空前綴，剩下的差別只有名稱長度，所以短的在前（<c>Qty</c> 三、<c>Note</c> 四、
+    /// <c>Amount</c> 六）。配對鍵即使名稱比它們都長也壓得過去——加成的層級在長度之上。
+    /// </remarks>
+    [Fact]
+    public void ON之後配對鍵排在最前面()
+    {
+        var ranked = SuggestionMatcher
+            .Rank(
+                new[]
+                {
+                    Column("Amount"),
+                    Column("Note"),
+                    JoinKeyColumn("CopyNo"),
+                    Column("Qty")
+                },
+                SqlCompletionContextAnalyzer.Analyze(OnPredicate))
+            .Select(item => item.Suggestion.DisplayText)
+            .ToArray();
+
+        Assert.Equal(new[] { "CopyNo", "Qty", "Note", "Amount" }, ranked);
+    }
+
+    /// <summary>
+    /// 配對鍵壓得過最近用過的那一筆，也壓得過名稱更短的那一筆。
+    /// </summary>
+    /// <remarks>
+    /// 這正是想要的取捨：<c>ON </c> 之後使用者要寫的是那條同名條件，而不是他上一次
+    /// 剛好挑過、或短一點的那個欄位。對照組先立下基準——兩筆都是普通欄位時，
+    /// 勝負由最近用過決定。
+    /// </remarks>
+    [Fact]
+    public void 配對鍵壓過最近用過的欄位()
+    {
+        SqlSuggestionUsage.Clear();
+
+        try
+        {
+            SqlSuggestionUsage.Record(Column("Amount"));
+
+            Assert.Equal(
+                "Amount",
+                RankNames(new[] { Column("Amount"), Column("CopyNo") }, OnPredicate)[0]);
+
+            Assert.Equal(
+                "CopyNo",
+                RankNames(new[] { Column("Amount"), JoinKeyColumn("CopyNo") }, OnPredicate)[0]);
+        }
+        finally
+        {
+            SqlSuggestionUsage.Clear();
+        }
+    }
+
+    /// <summary>
+    /// 配對鍵的加成翻不過比對品質那一層。
+    /// </summary>
+    /// <remarks>
+    /// 兩層的差距是刻意留的：比對品質每差一分放大 <c>8192</c> 倍，而整個「與輸入
+    /// 無關」的分數加起來也到不了 <c>8192</c>——類別最高 <c>40</c>、配對鍵 <c>3</c>、
+    /// 最近用過 <c>64</c>，全部乘上類別倍率 <c>128</c>。所以使用者打了前綴之後，
+    /// 命中的好壞仍然先說話，配對鍵只在同一層裡往前挪。
+    /// </remarks>
+    [Fact]
+    public void 配對鍵的加成翻不過比對品質那一層()
+    {
+        // 一分比對品質的差距，就足以蓋過配對鍵全部的加成。
+        var barelyBetter = FuzzyMatchResult.Matched(1, Array.Empty<MatchSpan>());
+
+        var plain = SuggestionMatcher.ComposeScore(Column("CopyNo"), barelyBetter, string.Empty);
+        var key = SuggestionMatcher.ComposeScore(
+            JoinKeyColumn("CopyNo"),
+            FuzzyMatchResult.NoMatch,
+            string.Empty);
+
+        Assert.True(plain > key, $"比對品質多一分（{plain}）應該壓過配對鍵的加成（{key}）。");
     }
 }

@@ -48,6 +48,18 @@ public static class SuggestionMatcher
     /// <summary>長度懲罰的上限，避免超長物件名稱把分數拉到失真。</summary>
     private const int MaximumLengthPenalty = 63;
 
+    /// <summary>
+    /// 配對鍵在同一層裡再往前的加成。
+    /// </summary>
+    /// <remarks>
+    /// 它加在<b>類別層之內</b>，不是新的一層：欄位 35 加上 3 等於 38，仍在這一層的
+    /// 預算裡（最高是 Snippet 的 40），所以翻不過比對品質那一層——使用者打了前綴之後，
+    /// 命中的好壞仍然先說話。要壓過的是同一個位置的其他欄位：3×128＝384 大於
+    /// 最近用過 64 加長度懲罰上限 63，因此對面那個欄位再短、使用者最近再常用，
+    /// <c>ON </c> 之後排在最前面的仍是配對鍵。
+    /// </remarks>
+    private const int JoinKeyBonus = 3;
+
     /// <summary>完全相同（忽略大小寫）時的壓倒性加成。</summary>
     private const int ExactMatchBonus = 10_000_000;
 
@@ -214,6 +226,12 @@ public static class SuggestionMatcher
         }
 
         var score = kindBonus * KindBonusScale;
+
+        // 配對鍵是「這個位置現在要的那一筆」，與欄位同一個類別，只是更明確。
+        if (suggestion.JoinKey is not null)
+        {
+            score += JoinKeyBonus * KindBonusScale;
+        }
 
         if (SqlSuggestionUsage.IsRecent(suggestion) &&
             !(suggestion.Kind == SuggestionKind.Snippet && pattern.Length == 0))

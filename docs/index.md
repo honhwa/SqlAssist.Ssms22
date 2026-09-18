@@ -23,12 +23,12 @@
 | 收藏版本歷史、回溯、SQL 差異 | [版本歷史](sql-memory-revisions.md) |
 | SQL Memory 保留、用量、清理、部署 | [維護](sql-memory-maintenance.md)／[用量](sql-memory-usage.md)／[驗收](sql-memory-validation.md) |
 | 建議清單、排名、IntelliSense | [補全](completion.md) |
-| CompletionContext、觸發、大小寫 | [上下文](completion-context.md) |
+| CompletionContext、觸發、大小寫、述詞起點 | [上下文](completion-context.md) |
 | `COLLATE` 之後、定序名單、fn_helpcollations | [定序](completion-collation.md) |
 | `ON` 是資料表或述詞、MERGE 動作子句 | [ON／MERGE](completion-on-merge.md) |
 | TVF／純量函式、系統物件範圍 | [物件種類](completion-object-kinds.md) |
 | 多段式名稱、資料庫／結構描述判定 | [限定名稱](qualified-names.md) |
-| 別名欄位、ColumnSource、暫存表 | [欄位](completion-columns.md)／[指令碼宣告](script-tables.md) |
+| 別名欄位、ColumnSource、暫存表、配對鍵 | [欄位](completion-columns.md)／[指令碼宣告](script-tables.md)／[配對鍵](completion-join-keys.md) |
 | Scope、括號、重開 | [範圍與重開](completion-reopen.md) |
 | 提交名稱、結構描述、方括號、自動別名 | [插入文字](completion-insertion.md) |
 | 整句展開、游標、復原 | [整句展開](statement-expansion.md) |

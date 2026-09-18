@@ -44,8 +44,14 @@ public static class FuzzyMatcher
     /// <summary>命中候選字串第一個字元時，詞首加成的倍率。</summary>
     public const int BonusFirstCharMultiplier = 2;
 
-    /// <summary>SQL 識別字中常見、應視為詞界的分隔符。</summary>
-    private const string SqlDelimiters = "_.#@$-/\\:,;|";
+    /// <summary>
+    /// SQL 識別字中常見、應視為詞界的分隔符。
+    /// </summary>
+    /// <remarks>
+    /// 配對鍵的「同名」也吃這一份：<c>CopyNo</c> 與 <c>Copy_No</c> 在那裡同樣算同一個
+    /// 名稱，而各留一份分隔符清單的下場是兩邊對「同一個名稱」的答案不一致。
+    /// </remarks>
+    internal const string SqlDelimiters = "_.#@$-/\\:,;|";
 
     private static readonly int[] EmptyPositions = Array.Empty<int>();
 

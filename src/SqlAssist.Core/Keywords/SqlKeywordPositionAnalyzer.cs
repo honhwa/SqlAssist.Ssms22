@@ -31,6 +31,23 @@ namespace SqlAssist.Core.Keywords;
 /// </remarks>
 public static class SqlKeywordPositionAnalyzer
 {
+    /// <summary>
+    /// 這個位置正好是述詞的起點嗎——<c>ON</c>、<c>WHERE</c>、<c>HAVING</c>、
+    /// <c>AND</c>、<c>OR</c> 的正後方。
+    /// </summary>
+    /// <remarks>
+    /// 語意寫在 <see cref="SqlKeywordPosition.Predicate"/> 的說明裡，但它是旗標，
+    /// 單看交集分不出「確定是述詞」與「判不出上下文只好全放行」：<see cref="SqlKeywordPosition.Any"/>
+    /// 也含著這一個位元，而運算元剛結束的位置（<c>ON a.CopyNo = |</c>）拿到的正是它。
+    /// 那個位置要的是右邊那一個運算元，不是下一條條件，把它當成述詞起點的症狀是
+    /// 欄位清單整個被換掉。問這裡才問得出分別，而這一條規則只有這一份。
+    /// </remarks>
+    public static bool IsPredicateStart(SqlKeywordPosition position)
+    {
+        return position != SqlKeywordPosition.Any &&
+            (position & SqlKeywordPosition.Predicate) != SqlKeywordPosition.None;
+    }
+
     /// <summary>前一個詞元是這些關鍵字時，位置可以直接決定。</summary>
     private static readonly Dictionary<string, SqlKeywordPosition> AfterKeyword =
         new(StringComparer.OrdinalIgnoreCase)

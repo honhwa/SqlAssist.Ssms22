@@ -107,9 +107,15 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// 沒有輸入前綴、也沒有可據以縮小範圍的前導關鍵字時不主動跳出清單，
     /// 否則按下空白鍵就會列出整個資料庫。
     /// </summary>
+    /// <remarks>
+    /// 述詞的起點是例外：那裡判得出來要的是什麼（見
+    /// <see cref="CompletionTarget.Predicate"/>），而 <c>WHERE </c> 自己一行
+    /// 也在其中——使用者已經表態他在寫條件了。這一條守的是真的判不出來的
+    /// 那幾格。
+    /// </remarks>
     [Theory]
     [InlineData("SELECT ")]
-    [InlineData("WHERE ")]
+    [InlineData("SELECT * FROM t ")]
     [InlineData("  ")]
     public void 既無前綴也無目標時不建議(string textBeforeCaret)
     {
@@ -117,6 +123,45 @@ public sealed class SqlCompletionContextAnalyzerTests
 
         Assert.False(context.IsValid);
         Assert.Equal(CompletionTarget.Any, context.Target);
+    }
+
+    /// <summary>
+    /// 述詞的起點判得出來，空前綴就參與。
+    /// </summary>
+    /// <remarks>
+    /// 目標仍然是寬的（欄位、關鍵字、片段、資料庫物件都列），分開的只是
+    /// 「參不參與」——<c>ON</c> 之後使用者就是要挑聯結欄位，清單該自己出現。
+    /// 允許的類別與 <see cref="CompletionTarget.Any"/> 完全相同，因此這一條
+    /// 不該拿去跟 <see cref="CompletionTarget.Column"/> 比。
+    /// </remarks>
+    [Theory]
+    [InlineData("WHERE ")]
+    [InlineData("SELECT * FROM t WHERE ")]
+    [InlineData("SELECT * FROM A a INNER JOIN B b ON ")]
+    [InlineData("SELECT * FROM A a WHERE a.Id = 1 AND ")]
+    public void 述詞起點判得出來因此參與(string textBeforeCaret)
+    {
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+
+        Assert.True(context.IsValid);
+        Assert.Equal(CompletionTarget.Predicate, context.Target);
+        Assert.Equal(string.Empty, context.Prefix);
+    }
+
+    /// <summary>
+    /// 條件的右邊不是述詞起點：那裡要的是右邊那一個運算元。
+    /// </summary>
+    /// <remarks>
+    /// 詞元是運算子時分析器回「判不出上下文」，而那一個成員含著述詞的位元。
+    /// 靠交集判斷的話這裡會被當成述詞起點：清單從「欄位」換成「下一條條件」，
+    /// 選下去寫出 <c>= a.CopyNo = b.CopyNo</c>。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT * FROM A a INNER JOIN B b ON a.CopyNo = ")]
+    [InlineData("SELECT * FROM A a WHERE a.Qty > ")]
+    public void 條件的右邊不是述詞起點(string textBeforeCaret)
+    {
+        Assert.NotEqual(CompletionTarget.Predicate, SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).Target);
     }
 
     [Theory]

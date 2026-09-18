@@ -134,6 +134,25 @@ public static class SqlCompletionContextAnalyzer
             target = CompletionTarget.DataSource;
         }
 
+        // 述詞的起點判斷得出來，而 DetermineTarget 認的是關鍵字——那裡不是關鍵字的
+        // 位置（ON、WHERE 自己才是關鍵字），它回 Any。位置分析早就回答過同一個問題，
+        // 這裡用它的答案，理由與上一條完全相同。
+        //
+        // 少了這一條，空前綴時目標是 Any，整份不參與（見
+        // SqlAsyncCompletionSource.InitializeCompletionCore），清單於是根本不出現——
+        // 而 ON 之後正是使用者要挑聯結欄位的地方，打完 ON 的當下就是他最需要
+        // 那一份清單的時候。
+        //
+        // 有路徑的限定字不算：WHERE c.| 的目標要由那個限定字解析出來（它會把目標
+        // 收斂成 Column 並帶上那一張表的欄位），在這裡先接走的話目標是 Predicate，
+        // 底下「目標不是 Any 就直接交出去」那一條會跳過解析，清單變成空的。
+        if (target == CompletionTarget.Any &&
+            qualifierPath is null &&
+            SqlKeywordPositionAnalyzer.IsPredicateStart(keywordPosition))
+        {
+            target = CompletionTarget.Predicate;
+        }
+
         var isValid = prefix.Length > 0 || target != CompletionTarget.Any || qualifierPath is not null;
 
         // 自動別名只發生在「補完名稱之後文法上接得了別名」的位置：FROM／JOIN／

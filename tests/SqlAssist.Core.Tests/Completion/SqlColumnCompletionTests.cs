@@ -448,4 +448,33 @@ public sealed class SqlColumnCompletionTests
 
         Assert.Equal("fn_LoansByReader", table.ObjectName);
     }
+
+    /// <summary>
+    /// 打完 <c>ON </c> 的當下就要有欄位清單。
+    /// </summary>
+    /// <remarks>
+    /// <c>ON</c> 與 <c>WHERE</c> 之後那一格接的是條件，關鍵字推不出這件事——
+    /// <c>DetermineTarget</c> 只看得到 <c>ON</c> 自己，回 <c>Any</c>。沒回頭認出
+    /// 述詞起點時，目標是 <c>Any</c>、前綴是空的，整份於是不參與（見
+    /// <c>SqlAsyncCompletionSource.InitializeCompletionCore</c>），清單根本不出現；
+    /// 而打完 <c>ON</c> 正是使用者要挑聯結欄位的時候。
+    ///
+    /// 來源的順序也在這裡守著：<c>ScopeSources</c> 依出現順序排列，所以列表時
+    /// 當前對象（<c>c</c>）的欄位落在前面那張表之前。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |", "l,c")]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON l.Code = c.Code AND |", "l,c")]
+    [InlineData("SELECT * FROM dbo.Loan l WHERE |", "l")]
+    public void 述詞起點空前綴就有清單(string sqlWithCaret, string expectedQualifiers)
+    {
+        var context = Analyze(sqlWithCaret);
+
+        Assert.True(context.IsValid);
+        Assert.Equal(CompletionTarget.Predicate, context.Target);
+        Assert.Equal(string.Empty, context.Prefix);
+        Assert.Equal(
+            expectedQualifiers.Split(','),
+            context.ScopeSources.Select(source => source.Qualifier).ToArray());
+    }
 }

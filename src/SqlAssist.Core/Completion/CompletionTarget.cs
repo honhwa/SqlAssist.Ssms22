@@ -3,6 +3,28 @@ namespace SqlAssist.Core.Completion;
 public enum CompletionTarget
 {
     Any,
+
+    /// <summary>
+    /// 述詞的起點：<c>ON</c>、<c>WHERE</c>、<c>HAVING</c>、<c>AND</c>、<c>OR</c> 的正後方。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="Any"/> 的差別<b>只在參不參與</b>，允許的類別一模一樣：述詞起點接得了
+    /// 欄位，也接得了 <c>NOT</c>、<c>EXISTS</c> 這些關鍵字與片段，還有宣告在指令碼裡的
+    /// 暫存表與 CTE。壓成 <see cref="Column"/> 會把那三類一起砍掉，而成員不是為了
+    /// 收窄清單才存在的。
+    ///
+    /// 分開的理由是「判不出上下文」與「判得出來但類別很寬」是兩件事，而它們對
+    /// 「要不要主動彈出清單」的答案相反：<see cref="Any"/> 空前綴時整份不參與，
+    /// 把那一格讓給 SSMS 原生清單；這裡是<b>判得出來</b>的位置——打完 <c>ON</c>
+    /// 的當下使用者就是要挑聯結欄位——所以清單該自己出現。
+    ///
+    /// 依賴這個分別的地方有兩處，改動任一邊都要一起看：
+    /// <c>SqlCompletionContextAnalyzer</c> 用它決定是否參與（<c>IsValid</c> 與
+    /// <c>SqlAsyncCompletionSource.InitializeCompletionCore</c> 的觸發字元數門檻），
+    /// <c>SqlCompletionTriggers.ShouldReopen</c> 用它決定要不要重開清單。
+    /// </remarks>
+    Predicate,
+
     DataSource,
     Procedure,
 

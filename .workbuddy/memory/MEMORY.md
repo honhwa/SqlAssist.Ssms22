@@ -27,3 +27,12 @@
 
 `SqlAssist.Ssms22.Tests` 的 2 個視覺測試與 `SqlMetadata.Tests` 的定序回報測試在本機
 一直紅，與 master 內容相同，屬既有問題，不是合併造成的。
+
+## 文件
+
+- 唯一路由是 `docs/index.md`；單檔上限 4000 字元（3900 警告），**超過是硬性失敗**，
+  不是提醒——`tools/Check-Docs.ps1` 直接 throw。撞到上限就依「可獨立修改的主題」拆成
+  新的葉文件並在 `index.md` 加一列，原檔只留一句連結，不複述理由／表格／程式碼路徑。
+- 跑不了 PowerShell 的場合用 `artifacts/check-docs.py`（等價的字元預算＋本機連結＋
+  錨點檢查；`artifacts/` 在 .gitignore 內，不會被 `Check-TextFiles` 掃到）。
+- 文字檔一律 UTF-8 無 BOM（`.sln` 例外，**必須**有 BOM）、LF、檔尾要有換行。

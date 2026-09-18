@@ -62,3 +62,9 @@ SELECT a.| FROM (SELECT c.PUBL_CODE FROM dbo.PUBLISHER c) a
 
 `#Loan`、`@rows` 等指令碼自己宣告的資料表怎麼解析欄位，
 見[指令碼宣告的資料表](script-tables.md)。
+
+## ON 與 WHERE 的配對鍵
+
+述詞的起點（`ON`、`WHERE`、`AND`…的正後方）還會把當前對象的同名欄位換成整條聯結
+條件排到最前面：`FROM dbo.Loan l JOIN dbo.Copy c ON |` 的第一筆是
+`c.CopyNo = l.CopyNo`，選了等於把條件一次寫完，見[配對鍵](completion-join-keys.md)。
