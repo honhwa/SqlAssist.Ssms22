@@ -116,6 +116,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     [Theory]
     [InlineData("SELECT ")]
     [InlineData("SELECT * FROM t ")]
+    [InlineData("WHERE ")]
     [InlineData("  ")]
     public void 既無前綴也無目標時不建議(string textBeforeCaret)
     {

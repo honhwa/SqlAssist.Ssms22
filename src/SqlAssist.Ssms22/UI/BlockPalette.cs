@@ -71,6 +71,9 @@ internal static class BlockPalette
         };
     }
 
+    private static Color ReadColor(string? preference, Color fallback) =>
+        ReadOptionalColor(preference) ?? fallback;
+
     private static Color? ReadOptionalColor(string? preference) =>
         SqlColorPreference.TryParseRgb(preference, out var rgb)
             ? Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb) : null;

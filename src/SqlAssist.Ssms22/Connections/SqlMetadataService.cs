@@ -769,6 +769,15 @@ internal sealed class SqlMetadataService : IDisposable
 
             if (source.Kind == SqlColumnSourceKind.Names)
             {
+                foreach (var name in source.Names)
+                {
+                    suggestions.Add(BuildScriptColumnSuggestion(
+                        name,
+                        settings,
+                        qualify ? source.Qualifier : null,
+                        source.SourceName));
+                }
+
                 keySources.Add(new SqlJoinKeySource(source.Qualifier, source.Names));
                 continue;
             }
@@ -872,11 +881,11 @@ internal sealed class SqlMetadataService : IDisposable
                 (joinKey is null ? columns : keys).Add(
                     BuildColumnSuggestion(objectInfo, column, settings, qualifier, joinKey));
             }
-        }
+            }
 
         keys.AddRange(columns);
         return keys;
-    }
+        }
 
     /// <summary>從配對結果取出這個欄位的配對；不在配對裡就是 null。</summary>
     /// <remarks><paramref name="pairs"/> 為 null 代表這個來源不是當前對象。</remarks>
@@ -885,7 +894,7 @@ internal sealed class SqlMetadataService : IDisposable
         if (pairs is null)
         {
             return null;
-        }
+    }
 
         return pairs.TryGetValue(name, out var found) ? found : null;
     }
@@ -1657,9 +1666,9 @@ internal sealed class SqlMetadataService : IDisposable
         string name,
         SqlAssistSettings settings,
         string? qualifier,
-        string? sourceName,
-        SqlJoinKey? joinKey = null)
     {
+        var quoted = Quote(name, settings);
+        var insertionText = qualifier is null ? quoted : Quote(qualifier, settings) + "." + quoted;
         var origin = sourceName ?? "查詢結果";
         var source = qualifier is null ? string.Empty : $" · {qualifier}";
 
@@ -1672,13 +1681,8 @@ internal sealed class SqlMetadataService : IDisposable
 
         return new SqlSuggestion(
             name,
-            joinKey is null
-                ? SqlInsertionText.Qualify(name, qualifier, settings)
-                : joinKey.ComposeInsertionText(settings),
             $"{origin}{source}",
             $"{origin}\r\n{name}",
-            SuggestionKind.Column,
-            joinKey: joinKey);
     }
 
     /// <summary>
@@ -1698,29 +1702,16 @@ internal sealed class SqlMetadataService : IDisposable
         SqlObjectInfo info,
         SqlColumnInfo column,
         SqlAssistSettings settings,
-        string? qualifier,
-        SqlJoinKey? joinKey = null)
     {
         var annotations = column.IsPrimaryKey ? " · PK" : string.Empty;
         var source = qualifier is null ? string.Empty : $" · {qualifier}";
 
-        // 說明欄說的是型別與來源，配對鍵再往後接一段「它對到誰」。
-        if (joinKey is not null)
-        {
-            source += $" · {joinKey.ComposeSuffix(settings)}";
-        }
-
         return new SqlSuggestion(
             column.Name,
-            joinKey is null
-                ? SqlInsertionText.Qualify(column.Name, qualifier, settings)
-                : joinKey.ComposeInsertionText(settings),
             $"{column.DataType}{(column.IsNullable ? " NULL" : " NOT NULL")}{annotations}{source}",
             $"{info.QualifiedName}\r\n{column.ToScriptLine()}",
             SuggestionKind.Column,
             schemaName: info.SchemaName,
-            tag: column,
-            joinKey: joinKey);
     }
 
     private static void AddObjects(List<SqlSuggestion> suggestions, IReadOnlyList<SqlObjectInfo> objects)

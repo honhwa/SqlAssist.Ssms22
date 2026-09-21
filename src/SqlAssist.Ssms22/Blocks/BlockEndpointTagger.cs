@@ -115,22 +115,6 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
     {
         if (_disposed || _view.IsClosed) return;
         var snapshot = _view.TextSnapshot;
-        var pair = _state.Snapshot == snapshot ? _state.SelectedPair : null;
-        var tag = pair is null ? null : BlockDisplayRules.IsSymbol(pair.Kind) ? _symbol : _keyword;
-        // 要不要上色交給 BlockDisplayRules 統一判定；符號那一類另外受「符號高亮」開關管，
-        // 關掉它配對與區間背景照舊，只是不再塗那兩個字元。
-        if (pair is null || tag is null || !BlockDisplayRules.ShowEndpoint(pair.Kind, _state.Settings))
-        {
-            Publish(Array.Empty<ITagSpan<ClassificationTag>>(), snapshot);
-            return;
-        }
-        Publish(pair.Opening.Concat(pair.Closing).Select(span => (ITagSpan<ClassificationTag>)new TagSpan<ClassificationTag>(
-            new SnapshotSpan(snapshot, span.Start, span.Length), tag)).ToArray(), snapshot);
-    }
-
-    /// <summary>只送出真正變動的端點；內容相等時不觸發重繪。</summary>
-    private void Publish(ITagSpan<ClassificationTag>[] next, ITextSnapshot snapshot)
-    {
         if (_tags.Length == next.Length && _tags.Select(t => (t.Span, t.Tag)).SequenceEqual(next.Select(t => (t.Span, t.Tag)))) return;
         var old = _tags;
         _tags = next;

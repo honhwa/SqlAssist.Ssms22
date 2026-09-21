@@ -95,6 +95,7 @@ public sealed class SqlCompletionTriggerTests
         Assert.False(ShouldReopen("SELECT |"));
         Assert.False(ShouldReopen("SELECT COUNT(|"));
         Assert.False(ShouldReopen("SELECT a.X, |"));
+        Assert.False(ShouldReopen("SELECT * FROM A a WHERE |"));
         Assert.False(ShouldReopen("SELECT * FROM A a |"));
     }
 

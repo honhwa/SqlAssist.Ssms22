@@ -66,6 +66,7 @@ public static class SqlInsertionText
         }
 
         return insertionText;
+        //return Quote(suggestion.SchemaName!, settings) + "." + objectName;
     }
 
     /// <summary>
