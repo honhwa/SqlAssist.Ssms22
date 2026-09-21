@@ -81,22 +81,13 @@ internal static partial class SqlAssistChrome
         return content;
     }
 
-    public static TabItem CreateMemoryTab(SqlIcon icon, string label)
-    {
-        var style = new Style(typeof(TabItem));
-        style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.DimForeground));
-        // Tooltip 是窄窗收起分頁文字之後仍讀得到名稱的地方。
-        var tab = new TabItem { Header = CreateMemoryLabel(icon, label), Template = CreateTabItemTemplate(), Style = style, ToolTip = label };
-        AutomationProperties.SetName(tab, label); return tab;
-    }
-
     /// <summary>用量分頁的名稱；與 History／Favorites 同樣用英文，分頁、Tooltip 與警示文字共用。</summary>
     public const string UsageTabLabel = "Usage";
 
     /// <summary>用量分頁：與 History／Favorites 同一種分頁，圖示右上角多一個容量分級點。</summary>
     public static TabItem CreateMemoryUsageTab()
     {
-        var tab = CreateMemoryTab(SqlIcon.Usage, UsageTabLabel);
+        var tab = CreateIconTab(SqlIcon.Usage, UsageTabLabel);
         var label = (DockPanel)tab.Header;
         var icon = (FrameworkElement)label.Children[0];
         label.Children.RemoveAt(0);
@@ -230,20 +221,30 @@ internal static partial class SqlAssistChrome
             ? glyph.Children[1] as Ellipse
             : null;
 
-    public static Border CreateSearchBar(TextBox input, Button clear)
+    /// <param name="trailing">清除鈕之外還要放進搜尋列的控制項，由右往左排在它前面。</param>
+    public static Border CreateSearchBar(TextBox input, Button clear, params FrameworkElement[] trailing)
     {
-        var bar = CreateInputBar(SqlIcon.Search, input, clear);
+        var bar = CreateInputBar(SqlIcon.Search, input, clear, trailing);
         bar.Margin = new Thickness(0, 0, 0, 6);
         return bar;
     }
 
     /// <summary>前置語意圖示、輸入欄與尾端按鈕共用一個外框；搜尋列與收藏標註欄位同一種外觀。</summary>
-    public static Border CreateInputBar(SqlIcon icon, TextBox input, Button trailing)
+    /// <param name="extra">
+    /// 尾端按鈕左邊還要放的控制項，依陣列順序由左往右。修飾「這個字串怎麼比」的開關
+    /// （大小寫、全字）放在這裡，不佔工具列的寬度。
+    /// </param>
+    public static Border CreateInputBar(SqlIcon icon, TextBox input, Button trailing, params FrameworkElement[] extra)
     {
         var panel = new DockPanel();
         var glyph = CreateIcon(icon); glyph.Margin = new Thickness(8, 0, 4, 0);
         DockPanel.SetDock(glyph, Dock.Left); panel.Children.Add(glyph);
         DockPanel.SetDock(trailing, Dock.Right); panel.Children.Add(trailing);
+        // 由後往前停靠：DockPanel 讓先停的那一個吃到最右邊，而陣列的順序要看起來是由左往右。
+        for (var index = extra.Length - 1; index >= 0; index--)
+        {
+            DockPanel.SetDock(extra[index], Dock.Right); panel.Children.Add(extra[index]);
+        }
         // 保留原生編輯語意，但外框只畫一次；鍵盤焦點由整條搜尋列呈現。
         var host = new FrameworkElementFactory(typeof(ScrollViewer)) { Name = "PART_ContentHost" };
         input.Template = new ControlTemplate(typeof(TextBox)) { VisualTree = host };
@@ -346,7 +347,11 @@ internal static partial class SqlAssistChrome
     }
 
     /// <param name="motion">null 讀全域動畫設定；測試明確指定，不受執行環境的 Windows 動畫偏好左右。</param>
-    public static Style CreateSqlCardStyle(bool? motion = null)
+    /// <param name="removable">
+    /// 列資料有 <c>IsRemoving</c> 才加退場。沒有刪除動作的清單（搜尋結果）傳 false：
+    /// 留著那條繫結只會在每一列上找一個不存在的屬性，而那是靜默失敗。
+    /// </param>
+    public static Style CreateSqlCardStyle(bool? motion = null, bool removable = true)
     {
         var animate = motion ?? MotionEnabled;
         var border = new FrameworkElementFactory(typeof(Border)) { Name = "card" };
@@ -377,7 +382,7 @@ internal static partial class SqlAssistChrome
             }
         }
         else AddTrigger(template, UIElement.IsMouseOverProperty, Border.BackgroundProperty, ThemeBrush.RowHover, "card");
-        if (animate) AddMemoryCardMotion(border, template);
+        if (animate) AddMemoryCardMotion(border, template, removable);
         AddTrigger(template, UIElement.IsMouseOverProperty, TextElement.ForegroundProperty, ThemeBrush.SelectedForeground, "card");
         AddTrigger(template, UIElement.IsMouseOverProperty, Control.ForegroundProperty, ThemeBrush.SelectedForeground);
         AddTrigger(template, ListBoxItem.IsSelectedProperty, Border.BackgroundProperty, ThemeBrush.RowSelected, "card");
@@ -590,16 +595,27 @@ internal static partial class SqlAssistChrome
     /// 連續相同執行的「×N」：沒有圖示的精簡中性膠囊，外框與高度沿用連線膠囊。回答的是次數，
     /// 不借執行狀態的強調色；只有一次時收起，不在每張卡片留「×1」。
     /// </summary>
-    private static FrameworkElementFactory CountBadge()
+    private static FrameworkElementFactory CountBadge() =>
+        BoundTextBadge("ExecutionCountText", "count", "ExecutionCountToolTip");
+
+    /// <summary>
+    /// 沒有圖示的精簡中性膠囊：執行次數與搜尋結果的命中部位共用。
+    /// </summary>
+    /// <remarks>
+    /// 不借用 <see cref="BoundBadge"/>：那一份一定留一個 16 DIP 的圖示插槽，而沒有圖示的膠囊
+    /// 會因此在字的左邊空出一整格，一列擠三顆就看得出來。外框、圓角與高度兩者相同。
+    /// </remarks>
+    /// <param name="toolTipProperty">Tooltip 與自動化名稱讀的屬性；null 表示沿用膠囊上的字。</param>
+    private static FrameworkElementFactory BoundTextBadge(string property, string name, string? toolTipProperty = null)
     {
-        var badge = new FrameworkElementFactory(typeof(Border)) { Name = "count" };
+        var badge = new FrameworkElementFactory(typeof(Border)) { Name = name };
         badge.SetValue(Border.CornerRadiusProperty, new CornerRadius(9)); badge.SetValue(Border.BorderThicknessProperty, new Thickness(1));
         badge.SetValue(Border.PaddingProperty, new Thickness(5, 1, 5, 1)); badge.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 4, 0));
         badge.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
         badge.SetResourceReference(Border.BackgroundProperty, ThemeBrush.BadgeBackground); badge.SetResourceReference(Border.BorderBrushProperty, ThemeBrush.Hairline);
-        badge.SetBinding(AutomationProperties.NameProperty, new Binding("ExecutionCountToolTip"));
-        var text = BoundText("ExecutionCountText"); text.SetValue(TextBlock.FontSizeProperty, DefaultMetrics.Caption);
-        text.SetBinding(FrameworkElement.ToolTipProperty, new Binding("ExecutionCountToolTip"));
+        badge.SetBinding(AutomationProperties.NameProperty, new Binding(toolTipProperty ?? property));
+        var text = BoundText(property); text.SetValue(TextBlock.FontSizeProperty, DefaultMetrics.Caption);
+        text.SetBinding(FrameworkElement.ToolTipProperty, new Binding(toolTipProperty ?? property));
         text.SetResourceReference(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
         badge.AppendChild(text);
         return badge;

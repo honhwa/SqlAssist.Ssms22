@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.VisualStudio.Shell;
 using SqlAssist.Core.Notifications;
 using SqlAssist.Core.SqlMemory;
 using SqlAssist.SqlMemory.Isolation;
@@ -10,7 +11,7 @@ using SqlAssist.Ssms22.Settings;
 namespace SqlAssist.Ssms22.SqlMemory;
 
 /// <summary>
-/// SQL Memory 在 SSMS 裡的接線：讀設定、建立計時器、狀態列與通知、提供 SSMS 路徑。
+/// SQL Memory 在 SSMS 裡的接線：讀設定、建立計時器、送出通知、提供 SSMS 路徑。
 /// </summary>
 /// <remarks>
 /// 開啟、關閉、世代、故障恢復、心跳與維護排程都在 <see cref="SqlMemoryRuntime"/>，
@@ -28,8 +29,8 @@ internal static class SqlMemoryHost
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
 
     private static readonly object SyncRoot = new();
-    private static SqlAssistPackage? _package;
     private static bool _initialized;
+    private static int _captureNoticeScheduled;
 
     /// <summary>
     /// 程序內唯一的宿主；在套件載入前就存在，編輯器接線可以先問它「有沒有在擷取」，答案是否。
@@ -42,18 +43,17 @@ internal static class SqlMemoryHost
         new DiagnosticsLog());
 
     /// <summary>只在 UI 執行緒呼叫；重複呼叫只有第一次接線。</summary>
-    public static void Initialize(SqlAssistPackage package)
+    public static void Initialize()
     {
-        if (package is null) return;
-
         lock (SyncRoot)
         {
             if (_initialized) return;
             _initialized = true;
-            _package = package;
             SqlAssistSettingsStore.Changed += OnSettingsChanged;
+            Runtime.StatusChanged += OnStatusChanged;
             Runtime.CaptureDropped += OnCaptureDropped;
             Runtime.CapacityChanged += OnCapacityChanged;
+            Runtime.MaintenanceFailed += OnMaintenanceFailed;
             Runtime.Start();
         }
 
@@ -68,9 +68,10 @@ internal static class SqlMemoryHost
             if (!_initialized) return;
             _initialized = false;
             SqlAssistSettingsStore.Changed -= OnSettingsChanged;
+            Runtime.StatusChanged -= OnStatusChanged;
             Runtime.CaptureDropped -= OnCaptureDropped;
             Runtime.CapacityChanged -= OnCapacityChanged;
-            _package = null;
+            Runtime.MaintenanceFailed -= OnMaintenanceFailed;
         }
 
         // 等待有上限，逾時只記錄診斷，不讓 SSMS 卡在關閉。
@@ -85,9 +86,10 @@ internal static class SqlMemoryHost
 
         // 走 Begin 而不是 BeginProbe：開不起來就是使用者打開了設定卻什麼都沒記到，
         // 那要看得見，不是可有可無的探測。開檔與建立 AppDomain 都在這條背景路徑上。
-        SqlAssistPlatformGuard.Begin(configuration.Enabled ? "啟用 SQL Memory" : "停用 SQL Memory",
+        SqlAssistPlatformGuard.Begin(
+            configuration.Enabled ? NotificationCatalog.EnablingSqlMemory : NotificationCatalog.DisablingSqlMemory,
             () => Runtime.ApplyAsync(configuration),
-            NotificationKind.Package, NotificationOrigin.Ambient, NotificationLevel.Info,
+            NotificationKind.SqlMemory, NotificationOrigin.Ambient, NotificationLevel.Info,
             document: string.Empty);
     }
 
@@ -104,25 +106,77 @@ internal static class SqlMemoryHost
         await Runtime.ApplyAsync(configuration).ConfigureAwait(false);
     }
 
-    private static void OnCaptureDropped(object? sender, SqlCaptureDroppedEventArgs drop)
+    /// <summary>
+    /// 第一次真正開始擷取時說一次：資料留在哪裡、怎麼關掉。
+    /// </summary>
+    /// <remarks>
+    /// 總開關預設是開的，所以不能安靜地開始記錄使用者的 SQL。說過就記在狀態存放區裡，
+    /// 每台電腦只出現一次；<see cref="NotificationLevel.Notice"/> 讓它跨過降噪門檻，
+    /// 而不是靠提高種類等級。路徑不進通知，位置由用量分頁的「開啟資料夾」回答。
+    ///
+    /// 狀態可能在任何執行緒上發出，而狀態存放區只在 UI 執行緒讀寫，所以要排回去。
+    /// 用 <c>BeginProbe</c> 只是因為沒有人接這個工作的結果：它一個工作階段最多跑一次，
+    /// 不是會連續失敗的探測。
+    /// </remarks>
+    private static void OnStatusChanged(object? sender, SqlMemoryRuntimeStatus status)
     {
-        if (drop.ShouldNotify && Volatile.Read(ref _package) is { } package)
-            SqlAssistStatusBar.Show(package, drop.NotificationText);
+        if (status.Phase != SqlMemoryRuntimePhase.Ready) return;
+        if (Interlocked.Exchange(ref _captureNoticeScheduled, 1) != 0) return;
+
+        SqlAssistPlatformGuard.BeginProbe("SQL Memory 首次擷取說明", async () =>
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (SqlAssistState.SqlMemoryCaptureNoticeShown) return;
+            SqlAssistState.SqlMemoryCaptureNoticeShown = true;
+            NotificationCenter.Default.Post(NotificationCatalog.StartingSqlMemoryCapture,
+                NotificationKind.SqlMemory, NotificationOrigin.Ambient, NotificationLevel.Notice,
+                NotificationStatus.Succeeded, message: NotificationCatalog.SqlMemoryFirstCaptureNotice);
+        });
     }
 
     /// <summary>
-    /// 容量剛進入 Critical 時提醒一次；與擷取被丟棄同一條狀態列通道，不另開卡片或對話框。
+    /// 擷取沒有保存：當下已經發生、沒有執行期間，走事件型通知。
     /// </summary>
     /// <remarks>
+    /// 失敗而不是降級：這一次的 SQL 完全沒有記錄，而且值得在「通知失敗」裡回看是哪一段時間掉的。
+    /// 連續發生時靠 <see cref="SqlCaptureDroppedEventArgs.ShouldNotify"/> 防抖與合併的 ×N 收斂，
+    /// 不每一次新增一列；原因短語是常數，熱路徑上不組字串。
+    /// </remarks>
+    private static void OnCaptureDropped(object? sender, SqlCaptureDroppedEventArgs drop)
+    {
+        if (!drop.ShouldNotify) return;
+        NotificationCenter.Default.Post(NotificationCatalog.DroppingSqlCapture,
+            NotificationKind.SqlMemory, NotificationOrigin.Ambient, NotificationLevel.Notice,
+            NotificationStatus.Failed, message: drop.Reason);
+    }
+
+    /// <summary>
+    /// 容量剛進入 Critical 時提醒一次；同樣是事件，沒有執行期間。
+    /// </summary>
+    /// <remarks>
+    /// 降級而不是失敗：資料都還在，是需要使用者處理的警示，不該進「通知失敗」清單。
     /// 防抖在 Core 的 <see cref="SqlMemoryCapacityMonitor"/>：降到 80% 以下才重新武裝，維護逐批刪除時不會反覆跳出。
-    /// 工具列的警示點會一直留著，錯過這一行也看得到。
+    /// 卡片會跟著作用中的宿主走，可能都不可見；工具列的警示點一直留著，錯過這一則也看得到。
     /// </remarks>
     private static void OnCapacityChanged(object? sender, SqlMemoryCapacityChangedEventArgs change)
     {
-        if (!change.Notify || Volatile.Read(ref _package) is not { } package) return;
-        var level = change.Ratio is { } ratio && !double.IsInfinity(ratio) ? "已用 " + SqlMemoryUsageSummary.Percent(ratio) : "已超過容量上限";
-        SqlAssistStatusBar.Show(package, "SQL Memory " + level + "；可在「工具 → SqlAssist → SQL Memory 用量」立即維護或清除舊紀錄。");
+        if (!change.Notify) return;
+        NotificationCenter.Default.Post(NotificationCatalog.ExceedingSqlMemoryCapacity,
+            NotificationKind.SqlMemory, NotificationOrigin.Ambient, NotificationLevel.Notice,
+            NotificationStatus.Degraded, message: change.Reason);
     }
+
+    /// <summary>
+    /// 背景保留清理失敗：擷取照常，下一輪重跑同一個游標。
+    /// </summary>
+    /// <remarks>
+    /// 失敗走獨立通道，等級不決定它上不上畫面；標 <see cref="NotificationLevel.Debug"/> 是因為
+    /// 這是背景的自家事，使用者沒有可做的決定，其他成功的維護結果不該跟著冒出來。
+    /// </remarks>
+    private static void OnMaintenanceFailed(string reason) =>
+        NotificationCenter.Default.Post(NotificationCatalog.MaintainingSqlMemory,
+            NotificationKind.SqlMemory, NotificationOrigin.Ambient, NotificationLevel.Debug,
+            NotificationStatus.Failed, message: reason);
 
     private static async Task<ISqlMemoryStore> OpenStorageAsync(CancellationToken cancellationToken) =>
         await IsolatedSqlMemoryStore

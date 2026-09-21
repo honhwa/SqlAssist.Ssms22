@@ -64,9 +64,14 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
     public IEnumerable<ITagSpan<ClassificationTag>> GetTags(NormalizedSnapshotSpanCollection spans)
     {
         // GetTags 至多檢查四個端點；沒有 SQL 解析、取色或平台服務查詢。
+        if (spans.Count == 0) yield break;
         foreach (var tag in _tags)
-            if (spans.Count > 0 && spans[0].Snapshot == tag.Span.Snapshot && spans.IntersectsWith(tag.Span))
-                yield return tag;
+        {
+            // 平台可能在 LayoutChanged 之前就以新 snapshot 取 Tag；就地平移才不會缺一格畫面。
+            var span = BlockProjection.Project(tag.Span, spans[0].Snapshot);
+            if (span.IsEmpty || !spans.IntersectsWith(span)) continue;
+            yield return span == tag.Span ? tag : new TagSpan<ClassificationTag>(span, tag.Tag);
+        }
     }
 
     /// <summary>

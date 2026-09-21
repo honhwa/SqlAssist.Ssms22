@@ -17,6 +17,7 @@ using SqlAssist.Ssms22.Completion;
 using SqlAssist.Ssms22.Connections;
 using SqlAssist.Ssms22.Editor;
 using SqlAssist.Ssms22.Preview;
+using SqlAssist.Ssms22.Search;
 using SqlAssist.Ssms22.SqlMemory;
 using SqlAssist.Ssms22.ResultGrid;
 using SqlAssist.Ssms22.Settings;
@@ -100,17 +101,20 @@ internal sealed class SqlAssistCommands
         AddCommand(CommandIds.ShowSqlHistory, (_, _) => SqlMemoryToolWindow.Show(_package));
         AddCommand(CommandIds.ShowSqlFavorites, (_, _) => SqlMemoryToolWindow.Show(_package, SqlMemoryPage.Favorites));
         AddCommand(CommandIds.ShowSqlMemoryUsage, (_, _) => SqlMemoryToolWindow.Show(_package, SqlMemoryPage.Usage));
+        // 永遠可用：沒有查詢視窗時工具窗自己說「尚未連線」，做成灰的會讓人以為功能壞了。
+        // Show 內部不走 Guard，開不起來會跳訊息方塊——使用者是自己點選單的。
+        AddCommand(CommandIds.ShowSqlSearch, (_, _) => SqlSearchToolWindow.Show(_package));
         AddCommand(CommandIds.ShowDiagnostics, ShowAboutAndDiagnostics);
-        AddCommand(CommandIds.SqlMemorySelfTest, (_, _) => SqlAssistSqlMemorySelfTestCommand.Execute(_package),
-            () => !SqlAssistSqlMemorySelfTestCommand.IsRunning,
-            isVisible: () => SqlAssistSettingsStore.Current.VerboseLogging);
+        // 問一次要幾秒，連按只送出一次；結論走通知卡片，所以不必等視窗。
+        AddCommand(CommandIds.CheckForUpdates,
+            (_, _) => SqlAssistUpdateCheckCommand.Execute(_package),
+            () => !SqlAssistUpdateCheckCommand.IsRunning);
 
         // 只出現在 Unified Settings 的設定頁上，不在任何選單裡。
         AddCommand(CommandIds.OpenDiagnosticsLog, OpenDiagnosticsLog);
-        // SQL Memory 沒有啟用時沒有資料庫可整理，按鈕變灰而不是按下去才說失敗。
-        AddCommand(CommandIds.CompactSqlMemory,
-            (_, _) => SqlAssistSqlMemoryCompactCommand.Execute(_package),
-            () => SqlMemoryHost.Runtime.IsCapturing && !SqlAssistSqlMemoryCompactCommand.IsRunning);
+        // 設定頁的 SQL Memory 分類只有這一個出口；整理、壓縮與備份都在用量分頁上。
+        AddCommand(CommandIds.ShowSqlMemoryUsageFromSettings,
+            (_, _) => SqlMemoryToolWindow.Show(_package, SqlMemoryPage.Usage));
         AddColorCommand(CommandIds.PickBlockAccent, SqlAssistMonikers.BlockAccentColor, s => s.BlockAccentColor, ThemeBrush.AccentBorder);
         AddColorCommand(CommandIds.PickBlockKeywordForeground, SqlAssistMonikers.BlockKeywordForeground, s => s.BlockKeywordForeground, ThemeBrush.BlockKeywordForeground);
         AddColorCommand(CommandIds.PickBlockKeywordBackground, SqlAssistMonikers.BlockKeywordBackground, s => s.BlockKeywordBackground, ThemeBrush.BlockKeywordBackground);
@@ -554,7 +558,8 @@ internal sealed class SqlAssistCommands
         try
         {
             var snapshot = SqlAssistDiagnosticSnapshotFactory.Create();
-            new SqlAssistAboutWindow(snapshot, TryOpenSettings, OpenDiagnosticsLogCore).ShowModal();
+            new SqlAssistAboutWindow(snapshot, TryOpenSettings, OpenDiagnosticsLogCore,
+                () => SqlAssistUpdateCheckCommand.Execute(_package)).ShowModal();
         }
         catch (Exception exception)
         {

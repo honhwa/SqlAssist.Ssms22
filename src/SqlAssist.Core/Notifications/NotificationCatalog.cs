@@ -80,6 +80,47 @@ public static class NotificationCatalog
     public const string ReloadingSettings = "重新載入設定";
     public const string RebuildingThemeBrushes = "重建主題筆刷";
 
+    // ── SQL Memory ────────────────────────────────────────────────────────
+    public const string EnablingSqlMemory = "啟用 SQL Memory";
+    public const string DisablingSqlMemory = "停用 SQL Memory";
+    public const string CompactingSqlMemory = "整理 SQL Memory";
+    public const string ClearingSqlMemoryHistory = "清除 SQL Memory 紀錄";
+    public const string BackingUpSqlMemory = "備份 SQL Memory";
+    public const string RestoringFavoriteRevision = "回溯收藏版本";
+
+    /// <summary>依保留規則回收；背景排程與用量頁的「立即維護」是同一件事，共用這一個標題。</summary>
+    public const string MaintainingSqlMemory = "維護 SQL Memory";
+
+    /// <summary>版本不相容或損毀時，封存舊檔並建立空資料庫。</summary>
+    public const string RebuildingSqlMemory = "重建 SQL Memory 資料庫";
+
+    /// <summary>用量分頁的診斷動作；報告檔的位置寫在分頁狀態列，成敗寫在卡片上。</summary>
+    public const string TestingSqlMemoryStorage = "測試 SQL Memory 儲存";
+
+    /// <summary>第一次真正開始擷取；不能安靜地開始記錄使用者的 SQL。</summary>
+    public const string StartingSqlMemoryCapture = "開始擷取 SQL Memory";
+
+    /// <summary>
+    /// 首次擷取那一則的說明。
+    /// </summary>
+    /// <remarks>
+    /// 只說「在這台電腦」與去哪裡看、去哪裡關，不寫路徑：通知一律不放路徑與檔名，
+    /// 而使用者真正要的是下一步按哪裡。不是 <c>const</c>——這裡的常數欄位是標題，
+    /// 標題不含標點，而這一句是敘述。
+    /// </remarks>
+    public static string SqlMemoryFirstCaptureNotice =>
+        "SQL 只留在這台電腦。用量分頁可以看檔案位置，設定的 SQL Memory 頁可以關掉。";
+
+    /// <summary>擷取佇列滿了而沒有寫進紀錄的那一筆；事件，以 <see cref="NotificationCenter.Post"/> 送出。</summary>
+    public const string DroppingSqlCapture = "丟棄 SQL 擷取";
+
+    /// <summary>容量剛越過警戒；事件，成功時讀作「已超過 SQL Memory 容量警戒」。</summary>
+    public const string ExceedingSqlMemoryCapacity = "超過 SQL Memory 容量警戒";
+
+    // ── 更新 ──────────────────────────────────────────────────────────────
+    /// <summary>手動與啟動時的自動檢查共用；結論與版本號由 <c>SqlAssistUpdateCheck</c> 寫進敘述。</summary>
+    public const string CheckingForUpdates = "檢查更新";
+
     /// <summary>
     /// 畫面上那一列的主要文字：完成後轉過去式並視情況附上耗時。
     /// </summary>
