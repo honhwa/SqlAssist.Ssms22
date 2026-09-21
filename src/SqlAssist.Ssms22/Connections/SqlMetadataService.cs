@@ -469,7 +469,7 @@ internal sealed class SqlMetadataService : IDisposable
                         name,
                         settings,
                         qualifier: null,
-                        source.SourceName));
+                        source.SourceName, null));
                 }
 
                 continue;
@@ -499,7 +499,7 @@ internal sealed class SqlMetadataService : IDisposable
 
             foreach (var column in detail.Columns)
             {
-                suggestions.Add(BuildColumnSuggestion(resolved.Object, column, settings, qualifier: null));
+                suggestions.Add(BuildColumnSuggestion(resolved.Object, column, settings, qualifier: null, null));
             }
         }
 
@@ -753,7 +753,7 @@ internal sealed class SqlMetadataService : IDisposable
 
         var settings = SqlAssistSettingsStore.Current;
         var qualify = NeedsQualifier(sources);
-
+        var suggestions = new List<SqlSuggestion>();
         // 第一趟只收名稱，先不建建議項：配對要看過所有來源才知道誰跟誰同名，而配對的
         // 結果會改掉其中幾筆的插入文字。名稱還不知道的來源照樣佔一格（給空集合），
         // 索引才對得上來源——配對結果指的是索引，少一格就會指到別張表去。
@@ -775,7 +775,7 @@ internal sealed class SqlMetadataService : IDisposable
                         name,
                         settings,
                         qualify ? source.Qualifier : null,
-                        source.SourceName));
+                        source.SourceName, null));
                 }
 
                 keySources.Add(new SqlJoinKeySource(source.Qualifier, source.Names));
@@ -1666,6 +1666,7 @@ internal sealed class SqlMetadataService : IDisposable
         string name,
         SqlAssistSettings settings,
         string? qualifier,
+        string? sourceName, SqlJoinKey? joinKey)
     {
         var quoted = Quote(name, settings);
         var insertionText = qualifier is null ? quoted : Quote(qualifier, settings) + "." + quoted;
@@ -1678,11 +1679,16 @@ internal sealed class SqlMetadataService : IDisposable
         {
             source += $" · {joinKey.ComposeSuffix(settings)}";
         }
-
         return new SqlSuggestion(
             name,
+            joinKey is null
+                ? SqlInsertionText.Qualify(name, qualifier, settings)
+                : joinKey.ComposeInsertionText(settings),
             $"{origin}{source}",
             $"{origin}\r\n{name}",
+            SuggestionKind.Column,
+            joinKey: joinKey);
+
     }
 
     /// <summary>
@@ -1701,17 +1707,35 @@ internal sealed class SqlMetadataService : IDisposable
     private static SqlSuggestion BuildColumnSuggestion(
         SqlObjectInfo info,
         SqlColumnInfo column,
-        SqlAssistSettings settings,
+        SqlAssistSettings settings, string? qualifier, SqlJoinKey? joinKey)
     {
         var annotations = column.IsPrimaryKey ? " · PK" : string.Empty;
         var source = qualifier is null ? string.Empty : $" · {qualifier}";
+        // 說明欄說的是型別與來源，配對鍵再往後接一段「它對到誰」。
+        if (joinKey is not null)
+        {
+            source += $" · {joinKey.ComposeSuffix(settings)}";
+        }
 
         return new SqlSuggestion(
             column.Name,
+            joinKey is null
+                ? SqlInsertionText.Qualify(column.Name, qualifier, settings)
+                : joinKey.ComposeInsertionText(settings),
             $"{column.DataType}{(column.IsNullable ? " NULL" : " NOT NULL")}{annotations}{source}",
             $"{info.QualifiedName}\r\n{column.ToScriptLine()}",
             SuggestionKind.Column,
             schemaName: info.SchemaName,
+            tag: column,
+            joinKey: joinKey);
+    }
+    /// <remarks>
+    /// 欄位的插入文字在這裡就定案，之後 <see cref="SqlInsertionText"/> 原樣送出，
+    /// 所以括號規則必須共用同一份——各寫一份的下場是其中一份漏掉保留字。
+    /// </remarks>
+    private static string Quote(string name, SqlAssistSettings settings)
+    {
+        return SqlInsertionText.Quote(name, settings);
     }
 
     private static void AddObjects(List<SqlSuggestion> suggestions, IReadOnlyList<SqlObjectInfo> objects)

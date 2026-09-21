@@ -110,17 +110,35 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
         _formats.SetProperties(name, properties);
         SqlAssistDiagnostics.Write($"區塊端點配色 {name}：字色={ink.Color}，背景={fill.Color}");
     }
-
     private void Refresh()
     {
         if (_disposed || _view.IsClosed) return;
         var snapshot = _view.TextSnapshot;
+        var source = _state.Snapshot;
+        var pair = _state.Settings.BlockKeywordHighlight && source is not null ? _state.SelectedPair : null;
+        var keyword = _keyword;
+        var symbol = _symbol;
+        var next = pair is null || source is null || keyword is null || symbol is null ? Array.Empty<ITagSpan<ClassificationTag>>() :
+            pair.Opening.Concat(pair.Closing).Select(span => BlockProjection.Project(source, span, snapshot))
+                .Where(span => !span.IsEmpty)
+                .Select(span => (ITagSpan<ClassificationTag>)new TagSpan<ClassificationTag>(
+                    span, BlockDisplayRules.IsSymbol(pair.Kind) ? symbol : keyword)).ToArray();
         if (_tags.Length == next.Length && _tags.Select(t => (t.Span, t.Tag)).SequenceEqual(next.Select(t => (t.Span, t.Tag)))) return;
         var old = _tags;
         _tags = next;
         foreach (var tag in old.Concat(next))
             TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(tag.Span.TranslateTo(snapshot, SpanTrackingMode.EdgeExclusive)));
     }
+    //private void Refresh()
+    //{
+    //    if (_disposed || _view.IsClosed) return;
+    //    var snapshot = _view.TextSnapshot;
+    //    if (_tags.Length == next.Length && _tags.Select(t => (t.Span, t.Tag)).SequenceEqual(next.Select(t => (t.Span, t.Tag)))) return;
+    //    var old = _tags;
+    //    _tags = next;
+    //    foreach (var tag in old.Concat(next))
+    //        TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(tag.Span.TranslateTo(snapshot, SpanTrackingMode.EdgeExclusive)));
+    //}
 
     private void OnState(object? sender, BlockChangedEventArgs args) => Refresh();
     private void OnTheme(object? sender, EventArgs args) => _queue.Request();
