@@ -1,5 +1,8 @@
 # T-SQL 區塊配對
 
+本頁包含區塊配對的架構、查詢契約、設定與呈現、跨頁提示範圍與平台探測結論。
+配色見[配色](block-colors.md)，實機驗收見[驗收](block-matching-validation.md)。
+
 ## 架構與查詢契約
 
 `Core/Parsing/BlockMatcher` 是不可變的文字分析結果，不參照 VS／SSMS。

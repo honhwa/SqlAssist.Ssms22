@@ -1,12 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Collections;
-using System.Windows.Data;
 
 namespace SqlAssist.Ssms22.UI;
 
@@ -27,15 +21,17 @@ internal enum SqlMemoryRowKind { Any, History, Favorite }
 internal sealed class SqlMemoryRowCommand
 {
     private SqlMemoryRowCommand(SqlMemoryRowAction action, SqlIcon icon, string label, SqlMemoryRowKind kind,
-        string? labelProperty = null, bool separated = false, SqlActionTone tone = SqlActionTone.Neutral)
+        string? labelProperty = null, bool separated = false, SqlActionTone tone = SqlActionTone.Neutral,
+        bool primary = false)
     {
         Action = action; Icon = icon; Label = label; Kind = kind;
-        LabelProperty = labelProperty; IsSeparated = separated; Tone = tone;
+        LabelProperty = labelProperty; IsSeparated = separated; Tone = tone; IsPrimary = primary;
     }
 
     public static IReadOnlyList<SqlMemoryRowCommand> All { get; } = new[]
     {
-        new SqlMemoryRowCommand(SqlMemoryRowAction.Open, SqlIcon.Open, "在新 Query 開啟（不執行）", SqlMemoryRowKind.Any),
+        new SqlMemoryRowCommand(SqlMemoryRowAction.Open, SqlIcon.Open, "在新 Query 開啟（不執行）", SqlMemoryRowKind.Any,
+            primary: true),
         new SqlMemoryRowCommand(SqlMemoryRowAction.Copy, SqlIcon.Copy, "複製 SQL", SqlMemoryRowKind.Any),
         new SqlMemoryRowCommand(SqlMemoryRowAction.AddFavorite, SqlIcon.Favorite, "新增至收藏", SqlMemoryRowKind.History,
             tone: SqlActionTone.Favorite),
@@ -61,6 +57,9 @@ internal sealed class SqlMemoryRowCommand
 
     /// <summary>停駐與按下的語意色；只有需要警示或明確歸類的操作離開中性色，其餘沿用選取色。</summary>
     public SqlActionTone Tone { get; }
+
+    /// <summary>這一列的主要動作；窄版只留它，其餘收進 overflow。只有一個，與 Preview 的主要動作同一個。</summary>
+    public bool IsPrimary { get; }
 
     public bool AppliesTo(bool favorite) =>
         Kind == SqlMemoryRowKind.Any || (Kind == SqlMemoryRowKind.Favorite) == favorite;
@@ -88,127 +87,4 @@ internal sealed class SqlMemoryList : SqlCardListBase<SqlMemoryRowAction>
         { e.Handled = true; RequestAction(SqlMemoryRowAction.Delete); }
         base.OnPreviewKeyDown(e);
     }
-}
-
-/// <summary>
-/// 卡片清單共用的鍵盤、滑鼠與續頁路徑；開啟是明確動作，不是選取副作用。
-/// </summary>
-/// <remarks>
-/// 列上的操作按鈕以 <typeparamref name="TAction"/> 為 Tag，點下時先選取該列再發出請求；
-/// 不拿圖示或文字當識別，History 卡片與收藏版本時間軸各自的操作列舉走同一條路。
-/// </remarks>
-internal abstract class SqlCardListBase<TAction> : ListBox where TAction : struct, Enum
-{
-    private Size _viewportSize = Size.Empty;
-    public event EventHandler? OpenRequested;
-    public event Action<TAction>? RowActionRequested;
-    public event EventHandler? LoadMoreRequested;
-    public bool CanAutoLoadMore { get; set; }
-
-    public void SetRowsSource(IEnumerable rows, UIElement footer)
-    {
-        // 頁尾是同一個虛擬清單的最後一項，不在外面再包 ScrollViewer 破壞 recycling。
-        ItemsSource = new CompositeCollection { new CollectionContainer { Collection = rows }, new SqlMemoryListFooter(footer) };
-    }
-
-    protected SqlCardListBase()
-    {
-        BorderThickness = new Thickness(0);
-        SetResourceReference(BackgroundProperty, ThemeBrush.WindowBackground);
-        ScrollViewer.SetHorizontalScrollBarVisibility(this, ScrollBarVisibility.Disabled);
-        ScrollViewer.SetCanContentScroll(this, true);
-        VirtualizingPanel.SetIsVirtualizing(this, true);
-        VirtualizingPanel.SetVirtualizationMode(this, VirtualizationMode.Recycling);
-        KeyboardNavigation.SetTabNavigation(this, KeyboardNavigationMode.Once);
-        AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, e) =>
-        {
-            if (e.OriginalSource is not ScrollViewer scroll) return;
-            // 邏輯捲動的 ViewportHeight 是列數，短頁尾進場也會改變；用實際 DIP 尺寸辨識視窗縮放。
-            var size = new Size(scroll.ActualWidth, scroll.ActualHeight);
-            var sameViewport = _viewportSize == size; _viewportSize = size;
-            if (sameViewport && e.VerticalChange > 0 && e.ExtentHeightChange == 0 &&
-                scroll.ScrollableHeight - scroll.VerticalOffset <= 1) RequestMore();
-        }));
-        AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler((_, e) =>
-        {
-            if (e.OriginalSource is not Button { Tag: TAction action } button) return;
-            if (ContainerFromElement(this, button) is not ListBoxItem item) return;
-            SelectedItem = ItemContainerGenerator.ItemFromContainer(item);
-            e.Handled = true; RequestAction(action);
-        }));
-    }
-
-    protected void RequestAction(TAction action) => RowActionRequested?.Invoke(action);
-
-    protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
-    {
-        // 已到底端時不會再有 ScrollChanged；仍接受使用者下一次向下捲動。
-        if (e.Delta < 0 && FindScrollViewer(this) is { } scroll && scroll.ScrollableHeight - scroll.VerticalOffset <= 1)
-            RequestMore();
-        base.OnPreviewMouseWheel(e);
-    }
-
-    private void RequestMore()
-    {
-        if (CanAutoLoadMore) LoadMoreRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private static ScrollViewer? FindScrollViewer(DependencyObject root)
-    {
-        if (root is ScrollViewer scroll) return scroll;
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-            if (FindScrollViewer(VisualTreeHelper.GetChild(root, i)) is { } child) return child;
-        return null;
-    }
-
-    protected override void OnPreviewMouseRightButtonDown(MouseButtonEventArgs e)
-    {
-        if (ContainerFromElement(this, e.OriginalSource as DependencyObject) is SqlMemoryListFooter)
-        { e.Handled = true; return; }
-        if (ContainerFromElement(this, e.OriginalSource as DependencyObject) is ListBoxItem item)
-            item.IsSelected = true;
-        base.OnPreviewMouseRightButtonDown(e);
-    }
-
-    protected override void OnMouseDoubleClick(MouseButtonEventArgs e)
-    {
-        base.OnMouseDoubleClick(e);
-        if (e.ChangedButton == MouseButton.Left && IsRowContent(e.OriginalSource))
-        { e.Handled = true; OpenRequested?.Invoke(this, EventArgs.Empty); }
-    }
-
-    protected override void OnPreviewKeyDown(KeyEventArgs e)
-    {
-        // ↑／↓ 保留 ListBox 原生 selection/navigation；按鈕的 Enter 由 Button 自己處理。
-        if (!e.Handled && e.Key == Key.Enter && e.KeyboardDevice.Modifiers == ModifierKeys.None && IsRowContent(e.OriginalSource))
-        { e.Handled = true; OpenRequested?.Invoke(this, EventArgs.Empty); }
-        base.OnPreviewKeyDown(e);
-    }
-
-    protected bool IsRowContent(object source)
-    {
-        if (source is not DependencyObject element || ContainerFromElement(this, element) is not ListBoxItem container ||
-            container is SqlMemoryListFooter) return false;
-        for (var current = element; current != null; current = current is Visual
-            ? VisualTreeHelper.GetParent(current) : LogicalTreeHelper.GetParent(current))
-        {
-            if (current is ButtonBase) return false;
-            if (current is ListBoxItem) return true;
-        }
-        return false;
-    }
-}
-
-/// <summary>頁尾保留按鈕鍵盤操作，但不參與 SQL 選取、雙擊或 Enter 開啟。</summary>
-internal sealed class SqlMemoryListFooter : ListBoxItem
-{
-    public SqlMemoryListFooter(UIElement content)
-    {
-        Content = content; Focusable = false; IsTabStop = false;
-        // 自帶容器不套卡片樣板，並讓 Content 的按鈕保持原生焦點路徑。
-        Template = new ControlTemplate(typeof(ListBoxItem)) { VisualTree = new FrameworkElementFactory(typeof(ContentPresenter)) };
-    }
-
-    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e) { }
-    protected override void OnMouseRightButtonDown(MouseButtonEventArgs e) { }
 }

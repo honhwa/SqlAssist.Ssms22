@@ -22,14 +22,21 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemeResourceSet.cs" Link="Product\UI\ThemeResourceSet.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemeColorMath.cs" Link="Product\UI\ThemeColorMath.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemePalette.cs" Link="Product\UI\ThemePalette.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ScriptPalette.cs" Link="Product\UI\ScriptPalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\BlockPalette.cs" Link="Product\UI\BlockPalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\EditorFormatChanges.cs" Link="Product\UI\EditorFormatChanges.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemeRefreshQueue.cs" Link="Product\UI\ThemeRefreshQueue.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.cs" Link="Product\UI\SqlAssistChrome.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Delays.cs" Link="Product\UI\SqlAssistChrome.Delays.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Buttons.cs" Link="Product\UI\SqlAssistChrome.Buttons.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Cards.cs" Link="Product\UI\SqlAssistChrome.Cards.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlCardList.cs" Link="Product\UI\SqlCardList.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSelectionLoader.cs" Link="Product\UI\SqlSelectionLoader.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlMemoryList.cs" Link="Product\UI\SqlMemoryList.cs" />
-    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlLoadingSurface.cs" Link="Product\UI\SqlLoadingSurface.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSurfaceState.cs" Link="Product\UI\SqlSurfaceState.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlStateSurface.cs" Link="Product\UI\SqlStateSurface.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlMemoryPager.cs" Link="Product\UI\SqlMemoryPager.cs" />
-    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlMemorySplitView.cs" Link="Product\UI\SqlMemorySplitView.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\MasterDetailView.cs" Link="Product\UI\MasterDetailView.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlMemoryRecoveryView.cs" Link="Product\UI\SqlMemoryRecoveryView.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlUsageMeter.cs" Link="Product\UI\SqlUsageMeter.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlMemoryUsageView.cs" Link="Product\UI\SqlMemoryUsageView.cs" />
@@ -42,18 +49,29 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSearchList.cs" Link="Product\UI\SqlSearchList.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSearchTargets.cs" Link="Product\UI\SqlSearchTargets.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSearchFilters.cs" Link="Product\UI\SqlSearchFilters.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFilterChipBar.cs" Link="Product\UI\SqlFilterChipBar.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFilterFlyout.cs" Link="Product\UI\SqlFilterFlyout.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFilterSummary.cs" Link="Product\UI\SqlFilterSummary.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Filters.cs" Link="Product\UI\SqlAssistChrome.Filters.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlBusyNotice.cs" Link="Product\UI\SqlBusyNotice.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFilterBar.cs" Link="Product\UI\SqlFilterBar.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlInputRow.cs" Link="Product\UI\SqlInputRow.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSearchToolbar.cs" Link="Product\UI\SqlSearchToolbar.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Search.cs" Link="Product\UI\SqlAssistChrome.Search.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchRow.cs" Link="Product\Search\SqlSearchRow.cs" />
     <!-- SqlSearchPreview 現在要 SSMS 的中繼資料服務與唯讀檢視，不再是純 WPF；可測的部分在 SqlSearchDefinition。 -->
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchDefinition.cs" Link="Product\Search\SqlSearchDefinition.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchBrowserModel.cs" Link="Product\Search\SqlSearchBrowserModel.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchScopeDatabases.cs" Link="Product\Search\SqlSearchScopeDatabases.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\SqlMemory\SqlMemoryRow.cs" Link="Product\SqlMemory\SqlMemoryRow.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\SqlMemory\SqlMemorySurfaceState.cs" Link="Product\SqlMemory\SqlMemorySurfaceState.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\SqlMemory\SqlFavoriteRevisionRow.cs" Link="Product\SqlMemory\SqlFavoriteRevisionRow.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFavoriteRevisionList.cs" Link="Product\UI\SqlFavoriteRevisionList.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Revisions.cs" Link="Product\UI\SqlAssistChrome.Revisions.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlTextDiffView.cs" Link="Product\UI\SqlTextDiffView.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\SqlMemory\SqlMemoryDatabaseArchive.cs" Link="Product\SqlMemory\SqlMemoryDatabaseArchive.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Rows.cs" Link="Product\UI\SqlAssistChrome.Rows.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlRowLayout.cs" Link="Product\UI\SqlRowLayout.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.SqlMemory.cs" Link="Product\UI\SqlAssistChrome.SqlMemory.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlTextEditor.cs" Link="Product\UI\SqlTextEditor.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Blocks.cs" Link="Product\UI\SqlAssistChrome.Blocks.cs" />

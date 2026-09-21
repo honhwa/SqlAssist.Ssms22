@@ -21,7 +21,7 @@ namespace SqlAssist.Ssms22.UI;
 internal static partial class SqlAssistChrome
 {
     /// <summary>
-    /// 結果列：圖示、名稱與命中部位一行，限定名稱與脈絡膠囊一行，本文命中再加一行片段。
+    /// 結果列：名稱、物件類型、命中部位與連線一行，限定名稱一行，本文命中再加一行片段。
     /// </summary>
     /// <remarks>
     /// 只讀 <c>SearchHit</c> 攤出來的欄位（標題、分類 Id、路徑、片段、高亮區段、膠囊、命中部位），
@@ -31,73 +31,68 @@ internal static partial class SqlAssistChrome
     /// 取消了原本的上下分組：分組把同一批結果切成兩疊，要找的那一筆可能在第二疊的底下。
     /// 每一列掛一顆命中部位徽章一樣分得出來，而排序可以換成使用者真正要的那一種。
     /// </remarks>
-    public static DataTemplate CreateSearchHitTemplate()
+    /// <param name="motion">null 讀全域動畫設定；測試明確指定。</param>
+    public static DataTemplate CreateSearchHitTemplate(bool? motion = null)
     {
-        var root = new FrameworkElementFactory(typeof(DockPanel));
-        root.SetBinding(AutomationProperties.NameProperty, new Binding("Description"));
-
-        // 圖示佔左欄並貼齊首行；第二、三行縮排在它右邊，一列讀下來只有一條左緣軸線。
-        var kind = new FrameworkElementFactory(typeof(Border)) { Name = "kind" };
-        kind.SetValue(DockPanel.DockProperty, Dock.Left);
-        kind.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-        kind.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 6, 0));
-        kind.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Top);
-        // 形狀之外還要讀得到種類文字：列上已經沒有那幾個字，Tooltip 是它唯一的去處。
-        kind.SetBinding(FrameworkElement.ToolTipProperty, new Binding("CategoryLabel"));
-        var glyph = new FrameworkElementFactory(typeof(SqlIconImage));
-        glyph.SetBinding(SqlIconImage.CategoryIdProperty, new Binding("CategoryId"));
-        kind.AppendChild(glyph);
-        root.AppendChild(kind);
-
         var lines = new FrameworkElementFactory(typeof(StackPanel));
-        root.AppendChild(lines);
+        lines.SetBinding(AutomationProperties.NameProperty, new Binding("Description"));
 
-        var heading = new FrameworkElementFactory(typeof(DockPanel));
-        lines.AppendChild(heading);
+        // 第一列：物件名稱 → 物件類型 → 命中部位 → 彈性空白 → 伺服器 → 資料庫，操作浮在右緣。
+        // 名稱固定最左，要掃的那一欄每一列才從同一個位置開始；圖示排在它前面就不是。
+        // 疊層、宣告順序、操作層與窄版降級由 SqlRowHeading 擔保，這裡只填欄位。
+        var row = BeginRowHeading(lines);
+        var identity = row.Identity;
 
-        var actions = new FrameworkElementFactory(typeof(StackPanel)) { Name = "actions" };
-        actions.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
-        actions.SetValue(DockPanel.DockProperty, Dock.Right);
-        actions.SetValue(FrameworkElement.MarginProperty, new Thickness(6, 0, 0, 0));
-        // Hidden 保留尺寸：Collapsed 會讓列在停駐的瞬間重新排版，而互動狀態不得改變版面尺寸。
-        actions.SetValue(UIElement.VisibilityProperty, Visibility.Hidden);
-        foreach (var command in SqlSearchRowCommand.All)
-        {
-            actions.AppendChild(CreateRowActionButton(
-                "action" + command.Action, command.Action, command.Icon, command.Label,
-                SqlActionTone.Neutral, separated: false));
-        }
-        heading.AppendChild(actions);
-
-        var target = BoundTextBadge("TargetLabel", "target");
+        var target = CreateTextBadge("TargetLabel", "target");
         target.SetValue(DockPanel.DockProperty, Dock.Right);
-        target.SetValue(FrameworkElement.MarginProperty, new Thickness(8, 0, 0, 0));
-        heading.AppendChild(target);
+        target.SetValue(FrameworkElement.MarginProperty, new Thickness(4, 0, 0, 0));
+        identity.AppendChild(target);
 
-        var title = new FrameworkElementFactory(typeof(SqlHighlightText));
+        // 物件類型是看得見的 icon＋文字膠囊。同一顆原生圖示會落在好幾種目錄物件上，而
+        // 「這是資料表還是檢視」正是掃這一列時要回答的問題；只留 Tooltip 等於要停駐才讀得到。
+        var kind = CreateBadge("CategoryLabel", "kind", categoryProperty: "CategoryId");
+        kind.SetValue(DockPanel.DockProperty, Dock.Right);
+        kind.SetValue(FrameworkElement.MarginProperty, new Thickness(4, 0, 0, 0));
+        identity.AppendChild(kind);
+
+        // 名稱最後才量，剩多少吃多少並 ellipsis；全文在 Tooltip 與 Preview。
+        var title = new FrameworkElementFactory(typeof(SqlHighlightText)) { Name = "name" };
         title.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
+        title.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+        title.SetValue(FrameworkElement.MaxWidthProperty, RowNameMaxWidth);
         title.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
         title.SetBinding(SqlHighlightText.SourceTextProperty, new Binding("Title"));
         title.SetBinding(SqlHighlightText.SpansProperty, new Binding("TitleSpans"));
         title.SetBinding(FrameworkElement.ToolTipProperty, new Binding("Title"));
-        heading.AppendChild(title);
+        identity.AppendChild(title);
 
-        var context = new FrameworkElementFactory(typeof(DockPanel)) { Name = "context" };
-        context.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 2, 0, 0));
-        lines.AppendChild(context);
+        // 窄版：連線膠囊降成 icon-only，次要操作收進 overflow；名稱與物件類型一直看得見。
+        var narrow = row.Narrow;
+        foreach (var command in SqlSearchRowCommand.All)
+        {
+            var button = CreateRowActionButton(
+                "action" + command.Action, command.Action, command.Icon, command.Label,
+                SqlActionTone.Neutral, separated: false);
+            if (!command.IsPrimary)
+                narrow.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed, button.Name));
+            row.Actions.AppendChild(button);
+        }
 
-        // 膠囊靠右並固定在它自己的寬度上；限定名稱吃剩下的空間，窄窗先省略的是名稱中段。
+        // 連線膠囊靠右並固定在自己的寬度上；與名稱之間的彈性空白由 DockPanel 留著。
         var badges = new FrameworkElementFactory(typeof(ItemsControl)) { Name = "badges" };
         badges.SetValue(DockPanel.DockProperty, Dock.Right);
         badges.SetValue(FrameworkElement.MarginProperty, new Thickness(8, 0, 0, 0));
+        badges.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
         var badgePanel = new FrameworkElementFactory(typeof(StackPanel));
         badgePanel.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
         badges.SetValue(ItemsControl.ItemsPanelProperty, new ItemsPanelTemplate(badgePanel));
         badges.SetValue(ItemsControl.ItemTemplateProperty, CreateSearchBadgeTemplate());
         badges.SetBinding(ItemsControl.ItemsSourceProperty, new Binding("Badges"));
-        context.AppendChild(badges);
+        row.Heading.AppendChild(badges);
 
+        // 內容列只剩限定名稱；窄窗先省略的是名稱中段。
         var path = new FrameworkElementFactory(typeof(TextBlock)) { Name = "path" };
+        path.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 2, 0, 0));
         path.SetValue(TextBlock.FontSizeProperty, DefaultMetrics.Caption);
         path.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
         path.SetValue(TextBlock.TextWrappingProperty, TextWrapping.NoWrap);
@@ -105,7 +100,7 @@ internal static partial class SqlAssistChrome
         path.SetResourceReference(TextBlock.ForegroundProperty, ThemeBrush.DimForeground);
         path.SetBinding(TextBlock.TextProperty, new Binding("Path"));
         path.SetBinding(FrameworkElement.ToolTipProperty, new Binding("Path"));
-        context.AppendChild(path);
+        lines.AppendChild(path);
 
         var code = new FrameworkElementFactory(typeof(Border)) { Name = "code" };
         code.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
@@ -126,14 +121,14 @@ internal static partial class SqlAssistChrome
         code.AppendChild(snippet);
         lines.AppendChild(code);
 
-        var template = new DataTemplate { VisualTree = root };
+        var template = new DataTemplate { VisualTree = lines };
 
         // 本文命中才多一行片段；名稱與資料行命中的片段就是名稱本體，再畫一次是同一句話說兩遍。
         var body = new DataTrigger { Binding = new Binding("MatchTarget"), Value = SearchMatchTarget.Text };
         body.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "code"));
         template.Triggers.Add(body);
 
-        // 沒有路徑概念的來源（片段、設定）不留一條空白列；膠囊仍留在原處。
+        // 沒有路徑概念的來源（片段、設定）不留一條空白列。
         var noPath = new DataTrigger { Binding = new Binding("Path"), Value = "" };
         noPath.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed, "path"));
         template.Triggers.Add(noPath);
@@ -153,27 +148,70 @@ internal static partial class SqlAssistChrome
             template.Triggers.Add(selected);
         }
 
-        // 鍵盤走到這一列也揭露動作；只鍵盤操作的人不該看不到它們。
-        foreach (var property in new[] { "IsMouseOver", "IsKeyboardFocusWithin" })
-        {
-            var hover = new DataTrigger
-            {
-                Binding = new Binding(property)
-                {
-                    RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(ListBoxItem), 1)
-                },
-                Value = true
-            };
-            hover.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "actions"));
-            template.Triggers.Add(hover);
-        }
+        // 掛上左半、補 overflow、疊上操作層，並接上底色鏡射與揭露；與 SQL Memory 的卡片同一份。
+        row.Complete(template, motion);
 
         return template;
     }
 
-    /// <summary>結果列右下角的脈絡膠囊；資料來自 <c>SearchHit.Badges</c>，與 SQL Memory 的連線膠囊同一份外觀。</summary>
-    public static DataTemplate CreateSearchBadgeTemplate() =>
-        new() { VisualTree = BoundBadge("Text", "badge", iconProperty: "Icon") };
+    /// <summary>
+    /// 預覽那一列資訊：與結果列第一列<b>同一個順序</b>的膠囊，放在主從區的抬頭上。
+    /// </summary>
+    /// <remarks>
+    /// 順序相同不是美感問題：使用者在清單上選一筆、眼睛移到資訊列，同一組事實卻換了位置的話，
+    /// 等於每一次都要重讀一遍。限定名稱排在最後，因為它是這一列唯一比清單多出來的東西
+    /// （清單上它在第二列）。
+    ///
+    /// 預覽內容裡<b>不</b>再放第二份同樣的字：兩條灰色的字各說一次種類與命中部位，
+    /// 是「一個視窗只有一個抬頭」那條規矩的反例，而它也把第一列的位置讓給了沒有新資訊的東西。
+    /// </remarks>
+    public static DataTemplate CreateSearchMetadataTemplate()
+    {
+        var panel = new FrameworkElementFactory(typeof(StackPanel));
+        panel.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+
+        var name = BoundText("Title"); name.Name = "name";
+        name.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
+        name.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 8, 0));
+        name.SetResourceReference(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
+        panel.AppendChild(name);
+
+        panel.AppendChild(CreateBadge("CategoryLabel", "kind", categoryProperty: "CategoryId"));
+        panel.AppendChild(CreateTextBadge("TargetLabel", "target"));
+
+        var badges = new FrameworkElementFactory(typeof(ItemsControl)) { Name = "badges" };
+        var badgePanel = new FrameworkElementFactory(typeof(StackPanel));
+        badgePanel.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        badges.SetValue(ItemsControl.ItemsPanelProperty, new ItemsPanelTemplate(badgePanel));
+        badges.SetValue(ItemsControl.ItemTemplateProperty, CreateSearchBadgeTemplate());
+        badges.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        badges.SetBinding(ItemsControl.ItemsSourceProperty, new Binding("Badges"));
+        panel.AppendChild(badges);
+
+        var path = BoundText("Path"); path.Name = "path";
+        path.SetValue(TextBlock.FontSizeProperty, DefaultMetrics.Caption);
+        path.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 4, 0));
+        path.SetResourceReference(TextBlock.ForegroundProperty, ThemeBrush.DimForeground);
+        panel.AppendChild(path);
+
+        var template = new DataTemplate { VisualTree = panel };
+        // 沒有路徑概念的來源不留一個空的插槽；缺值直接收起是清單列與資訊列同一條規矩。
+        var noPath = new DataTrigger { Binding = new Binding("Path"), Value = "" };
+        noPath.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed, "path"));
+        template.Triggers.Add(noPath);
+        return template;
+    }
+
+    /// <summary>結果列的脈絡膠囊；資料來自 <c>SearchHit.Badges</c>，與 SQL Memory 的連線膠囊同一份外觀。</summary>
+    /// <remarks>窄版一起降成 icon-only：降級條件讀的是列自己的寬度模式，膠囊在哪一層容器裡都一樣。</remarks>
+    public static DataTemplate CreateSearchBadgeTemplate()
+    {
+        var template = new DataTemplate { VisualTree = CreateBadge("Text", "badge", iconProperty: "Icon") };
+        var narrow = NarrowRowTrigger();
+        IconOnlyInNarrow(narrow, "badge");
+        template.Triggers.Add(narrow);
+        return template;
+    }
 
     /// <summary>
     /// 分段開關裡的一段。
@@ -224,27 +262,19 @@ internal static partial class SqlAssistChrome
         return style;
     }
 
-    /// <summary>工具列上的過濾下拉按鈕；與其他工具列按鈕同高，不另立一種外觀。</summary>
-    public static Style CreateFilterButtonStyle()
-    {
-        var style = new Style(typeof(Button));
-        style.Setters.Add(new Setter(Control.FontFamilyProperty, InterfaceFont));
-        style.Setters.Add(new Setter(Control.FontSizeProperty, DefaultMetrics.Body));
-        style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 26d));
-        style.Setters.Add(new Setter(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center));
-        style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
-        style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.ListForeground));
-        return style;
-    }
-
     /// <summary>
-    /// 已選條件列上的一顆 chip：中性膠囊加一個清除鈕。
+    /// 已選條件列上的一顆 chip：中性膠囊加一個清除鈕，本體可選地是一顆按鈕。
     /// </summary>
     /// <remarks>
     /// 用中性色而不是強調色：chip 說的是「現在有這個條件」，不是警示，也不是一種分類。
     /// 清除鈕是幽靈按鈕，停駐才顯色——它與 chip 本身是同一顆可按的東西，畫兩個邊框只會多一圈線。
+    ///
+    /// 本體要能按時做成真的 <see cref="Button"/>，不是在 <see cref="Border"/> 上掛滑鼠事件：
+    /// 後者沒有停駐回饋、進不了 Tab 順序，也唸不出自動化名稱，而這一列在條件很多時正是
+    /// 使用者唯一的入口。
     /// </remarks>
-    public static Border CreateFilterChip(string text, out Button remove)
+    /// <param name="openHint">本體按下去會做什麼（接在 chip 的字後面唸）。</param>
+    public static Border CreateFilterChip(string text, string openHint, out Button remove, out Button open)
     {
         var content = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
 
@@ -269,14 +299,22 @@ internal static partial class SqlAssistChrome
             TextTrimming = TextTrimming.CharacterEllipsis,
             ToolTip = text
         }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
-        content.Children.Add(label);
+
+        open = CreateButton("", DefaultMetrics);
+        open.Content = label;
+        open.Template = CreateGhostButtonTemplate();
+        open.Padding = new Thickness(2, 0, 2, 0);
+        open.MinHeight = 18;
+        open.ToolTip = text + openHint;
+        AutomationProperties.SetName(open, text + openHint);
+        content.Children.Add(open);
 
         return new Border
         {
             Child = content,
             CornerRadius = new CornerRadius(9),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 1, 4, 1),
+            Padding = new Thickness(6, 1, 4, 1),
             Margin = new Thickness(0, 0, 4, 0),
             MaxWidth = 220,
             VerticalAlignment = VerticalAlignment.Center
@@ -284,118 +322,24 @@ internal static partial class SqlAssistChrome
             .WithTheme(Border.BorderBrushProperty, ThemeBrush.Hairline);
     }
 
+
     /// <summary>
-    /// 過濾面板的選項清單：recycling 虛擬化的 <see cref="ItemsControl"/>，捲軸沿用覆蓋式。
+    /// 搜尋框裡的選項開關（大小寫、全字）。
     /// </summary>
     /// <remarks>
-    /// 不用 <c>ScrollViewer</c> 疊 <c>StackPanel</c>：那個形狀在面板展開的那一刻，就把每一個
-    /// 資料庫、每一個分類都建成一顆 <see cref="CheckBox"/>，而面板一次只看得到十來列。
-    /// 樣板在這裡建一次給所有列共用，回收的容器換的只有 <c>DataContext</c>；快取的是
-    /// <see cref="ControlTemplate"/> 與 <see cref="DataTemplate"/>，不是已經有 parent 的元素。
-    ///
-    /// 標題與選項攤成同一份平的清單，不做巢狀分組：分組要另外開
-    /// <c>IsVirtualizingWhenGrouping</c> 才虛擬化得了，而那是一個很容易漏掉的開關。
-    /// </remarks>
-    /// <param name="maxHeight">面板限高；捲的是選項本身，搜尋框與命令鈕要一直看得見。</param>
-    public static ItemsControl CreateSearchOptionList(double maxHeight)
-    {
-        var rows = new SearchOptionRowSelector(CreateSearchCaptionRow(), CreateSearchOptionRow(CreateCheckBoxTemplate()));
-        var list = new ItemsControl
-        {
-            MaxHeight = maxHeight,
-            Focusable = false,
-            ItemTemplateSelector = rows,
-            ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(VirtualizingStackPanel))),
-            Template = CreateSearchOptionListTemplate()
-        };
-        VirtualizingPanel.SetIsVirtualizing(list, true);
-        VirtualizingPanel.SetVirtualizationMode(list, VirtualizationMode.Recycling);
-        return list;
-    }
-
-    /// <summary>清單殼層：覆蓋式捲軸加 <see cref="ItemsPresenter"/>。</summary>
-    /// <remarks>
-    /// <c>CanContentScroll</c> 設在這裡而不是外面：它不是可繼承的屬性，虛擬化面板要當上
-    /// <c>IScrollInfo</c> 就得由這一層的 <see cref="ScrollViewer"/> 自己開。
-    /// </remarks>
-    private static ControlTemplate CreateSearchOptionListTemplate()
-    {
-        var scroll = new FrameworkElementFactory(typeof(ScrollViewer));
-        scroll.SetValue(ScrollViewer.CanContentScrollProperty, true);
-        scroll.SetValue(ScrollViewer.HorizontalScrollBarVisibilityProperty, ScrollBarVisibility.Disabled);
-        scroll.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty, ScrollBarVisibility.Auto);
-        scroll.SetValue(UIElement.FocusableProperty, false);
-        scroll.SetValue(Control.TemplateProperty, CreateOverlayScrollTemplate());
-        scroll.AppendChild(new FrameworkElementFactory(typeof(ItemsPresenter)));
-        return new ControlTemplate(typeof(ItemsControl)) { VisualTree = scroll };
-    }
-
-    /// <summary>段落標題列；與 <see cref="CreateLabel"/> 同一種字重與色階，上緣間距由列自己帶。</summary>
-    private static DataTemplate CreateSearchCaptionRow()
-    {
-        var caption = new FrameworkElementFactory(typeof(TextBlock));
-        caption.SetBinding(TextBlock.TextProperty, new Binding(nameof(SqlSearchFilterRow.Label)));
-        caption.SetBinding(FrameworkElement.MarginProperty, new Binding(nameof(SqlSearchFilterRow.Margin)));
-        caption.SetValue(TextBlock.FontFamilyProperty, InterfaceFont);
-        caption.SetValue(TextBlock.FontSizeProperty, DefaultMetrics.Caption);
-        caption.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
-        caption.SetResourceReference(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
-        var template = new DataTemplate(typeof(SqlSearchFilterRow)) { VisualTree = caption };
-        template.Seal();
-        return template;
-    }
-
-    /// <summary>選項列；與對話框的核取方塊同一個外觀，狀態由繫結帶。</summary>
-    /// <remarks>
-    /// <see cref="ToggleButton.IsCheckedProperty"/> 走雙向繫結而不是 <c>Checked</c>／<c>Unchecked</c>：
-    /// 回收的容器換 DataContext 時繫結會把新值推進來，那不是使用者的動作，掛事件等於替他按一次。
-    /// </remarks>
-    private static DataTemplate CreateSearchOptionRow(ControlTemplate box)
-    {
-        var option = new FrameworkElementFactory(typeof(CheckBox));
-        option.SetValue(Control.TemplateProperty, box);
-        option.SetValue(Control.FontFamilyProperty, InterfaceFont);
-        option.SetValue(Control.FontSizeProperty, DefaultMetrics.Caption);
-        option.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-        option.SetBinding(FrameworkElement.MarginProperty, new Binding(nameof(SqlSearchFilterRow.Margin)));
-        option.SetBinding(ContentControl.ContentProperty, new Binding(nameof(SqlSearchFilterRow.Label)));
-        option.SetBinding(FrameworkElement.ToolTipProperty, new Binding(nameof(SqlSearchFilterRow.ToolTip)));
-        option.SetBinding(AutomationProperties.NameProperty, new Binding(nameof(SqlSearchFilterRow.Label)));
-        option.SetBinding(ToggleButton.IsCheckedProperty,
-            new Binding(nameof(SqlSearchFilterRow.IsSelected)) { Mode = BindingMode.TwoWay });
-        option.SetResourceReference(Control.ForegroundProperty, ThemeBrush.ListForeground);
-        var template = new DataTemplate(typeof(SqlSearchFilterRow)) { VisualTree = option };
-        template.Seal();
-        return template;
-    }
-
-    /// <summary>兩種列共用一份平清單；回收的容器換 DataContext 時會重挑樣板。</summary>
-    private sealed class SearchOptionRowSelector : DataTemplateSelector
-    {
-        private readonly DataTemplate _caption;
-        private readonly DataTemplate _option;
-
-        public SearchOptionRowSelector(DataTemplate caption, DataTemplate option)
-        {
-            _caption = caption;
-            _option = option;
-        }
-
-        public override DataTemplate SelectTemplate(object item, DependencyObject container) =>
-            item is SqlSearchFilterRow { IsCaption: true } ? _caption : _option;
-    }
-
-    /// <summary>搜尋框裡的選項開關（大小寫、全字）；切換鈕沿用分段開關那一段的外觀。</summary>
-    /// <remarks>
     /// 放在搜尋框裡而不是工具列上，是因為它們修飾的是<b>這個字串怎麼比</b>，不是搜哪裡；
-    /// 而且工具列已經被真正的篩選佔滿，多兩顆就換不到一列。
+    /// 而且工具列已經被真正的篩選佔滿，多兩顆就換不到一列。常駐可見就是它們的完整呈現，
+    /// 下面的已選條件列不再替它們畫一顆 chip——那等於同一件事說兩次，而且它<b>不是</b>
+    /// 一顆按十字就清得掉的條件，使用者清掉之後回頭找不到自己剛剛關掉的是哪一個開關。
+    ///
+    /// 因此「開著」必須在這一顆上看得出來，走 <see cref="CreateInputToggleStyle"/>。
     /// </remarks>
     public static ToggleButton CreateSearchToggle(SqlIcon icon, string label, string toolTip)
     {
         var toggle = new ToggleButton
         {
             Content = CreateIcon(icon),
-            Style = CreateSegmentToggleStyle(),
+            Style = CreateInputToggleStyle(),
             Padding = new Thickness(4),
             Margin = new Thickness(0, 0, 2, 0),
             MinWidth = 24,
@@ -403,6 +347,62 @@ internal static partial class SqlAssistChrome
         };
         AutomationProperties.SetName(toggle, label);
         return toggle;
+    }
+
+    /// <summary>
+    /// 搜尋框<b>裡面</b>那種開關的外觀：開著時用強調底與強調框，與核取方塊的「打勾」同一組色。
+    /// </summary>
+    /// <remarks>
+    /// 不沿用分段開關那一份：那一份的選取是「底槽裡浮起來的一段」，底色刻意與
+    /// <see cref="ThemeBrush.ListBackground"/> 相同，而搜尋框的底色<b>正是</b>它——
+    /// 疊上去之後開著與關著的差別只剩一圈髮絲線，看起來像一個沒對齊的外框而不是一個狀態。
+    ///
+    /// 開著與停駐的順序不能反：兩個條件同時成立時，後宣告的那一個才是使用者要看的，
+    /// 而滑鼠掃過一顆開著的開關時不該讓它看起來像關掉了。
+    ///
+    /// 狀態不只靠顏色：圖示本身說的是哪一種比對，開關的按下狀態另由
+    /// <see cref="System.Windows.Automation.TogglePattern"/> 唸得出來。
+    /// </remarks>
+    public static Style CreateInputToggleStyle()
+    {
+        var box = new FrameworkElementFactory(typeof(Border)) { Name = "toggle" };
+        box.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        box.SetValue(Border.BorderBrushProperty, Brushes.Transparent);
+        box.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        box.SetValue(Border.CornerRadiusProperty, new CornerRadius(InnerRadius));
+        box.SetBinding(Border.PaddingProperty, TemplatedParent(nameof(Control.Padding)));
+
+        var label = new FrameworkElementFactory(typeof(ContentPresenter)) { Name = "label" };
+        label.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        label.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        box.AppendChild(label);
+
+        var template = new ControlTemplate(typeof(ToggleButton)) { VisualTree = box };
+
+        AddTrigger(template, UIElement.IsMouseOverProperty, Border.BackgroundProperty, ThemeBrush.RowHover, "toggle");
+
+        var on = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
+        on.Setters.Add(ThemeResourceSet.Setter(Border.BackgroundProperty, ThemeBrush.AccentBackground, "toggle"));
+        on.Setters.Add(ThemeResourceSet.Setter(Border.BorderBrushProperty, ThemeBrush.AccentBorder, "toggle"));
+        template.Triggers.Add(on);
+
+        AddTrigger(template, ButtonBase.IsPressedProperty, Border.BackgroundProperty, ThemeBrush.RowPressed, "toggle");
+        AddTrigger(template, UIElement.IsKeyboardFocusWithinProperty, Border.BorderBrushProperty, ThemeBrush.AccentBorder, "toggle");
+
+        var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+        disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.45));
+        template.Triggers.Add(disabled);
+
+        var style = new Style(typeof(ToggleButton));
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(4)));
+        style.Setters.Add(new Setter(Control.FontFamilyProperty, InterfaceFont));
+        style.Setters.Add(new Setter(Control.FontSizeProperty, DefaultMetrics.Caption));
+        style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
+        style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 22d));
+        style.Setters.Add(new Setter(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center));
+        style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.ListForeground));
+        return style;
     }
 
     /// <summary>狀態回饋的單次縮放長度；狀態回饋這一級的上限是 400 ms。</summary>
@@ -434,18 +434,5 @@ internal static partial class SqlAssistChrome
         pop.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromPercent(1), new CubicEase { EasingMode = EasingMode.EaseOut }));
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
-    }
-
-    /// <summary>清單的空狀態：置中的單行說明，與載入圖示疊在同一塊內容上，不另開一個表面。</summary>
-    public static TextBlock CreateSearchEmptyState()
-    {
-        var text = CreateHint("", DefaultMetrics);
-        text.TextAlignment = TextAlignment.Center;
-        text.HorizontalAlignment = HorizontalAlignment.Center;
-        text.VerticalAlignment = VerticalAlignment.Center;
-        text.Margin = new Thickness(24, 0, 24, 0);
-        text.MaxWidth = 320;
-        text.IsHitTestVisible = false;
-        return text;
     }
 }

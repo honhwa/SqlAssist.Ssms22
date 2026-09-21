@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
@@ -261,6 +262,125 @@ internal static partial class SqlAssistChrome
         scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         scroll.Template = CreateOverlayScrollTemplate();
+    }
+
+    /// <summary>
+    /// 單列、放不下就橫向捲動的資訊列：預覽摘要與已選條件列共用同一份。
+    /// </summary>
+    /// <remarks>
+    /// 不畫捲軸（<see cref="ScrollBarVisibility.Hidden"/> 允許延伸但不留軌道），也不換行：
+    /// 這一列的高度必須與內容多寡無關，換行的那一版在停靠面板裡會長成三列，
+    /// 而那三列換算成少看好幾筆結果。
+    ///
+    /// 滾輪在這一列上<b>不</b>傳給底下的內容：向下往右、向上往左，沒有溢出時也一樣攔下來——
+    /// 傳下去的症狀是使用者以為自己在捲這一列，實際上捲走的是預覽裡的 SQL。
+    /// 聚焦後可用 ←／→、Home／End，鍵盤才走得到捲出去的那幾顆。
+    /// </remarks>
+    /// <param name="automationName">整列唸出來是什麼；要說得出它可以水平捲動。</param>
+    public static ScrollViewer CreateHorizontalStrip(FrameworkElement content, string automationName)
+    {
+        content.VerticalAlignment = VerticalAlignment.Center;
+
+        var strip = new ScrollViewer
+        {
+            Content = content,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            CanContentScroll = false,
+            PanningMode = PanningMode.HorizontalOnly,
+            Focusable = true,
+            Background = Brushes.Transparent,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            ToolTip = "在這一列上使用滑鼠滾輪左右捲動；聚焦後可用 ← / →、Home / End。"
+        };
+        AutomationProperties.SetName(strip, automationName);
+
+        strip.PreviewMouseWheel += (_, args) =>
+        {
+            if (args.Delta == 0) return;
+            PanHorizontally(strip, args.Delta);
+            args.Handled = true;
+        };
+
+        strip.PreviewKeyDown += (_, args) =>
+        {
+            if (args.KeyboardDevice.Modifiers != ModifierKeys.None) return;
+            switch (args.Key)
+            {
+                case Key.Left: strip.LineLeft(); break;
+                case Key.Right: strip.LineRight(); break;
+                case Key.Home: strip.ScrollToLeftEnd(); break;
+                case Key.End: strip.ScrollToRightEnd(); break;
+                default: return;
+            }
+
+            args.Handled = true;
+        };
+
+        return strip;
+    }
+
+    /// <summary>一格滾輪換多少水平位移；資訊列與 Shift＋滾輪共用同一個手感。</summary>
+    private const double WheelPanFactor = 0.4;
+
+    /// <summary>
+    /// 讓一塊有水平捲軸的內容支援 Shift＋滾輪左右捲動。
+    /// </summary>
+    /// <remarks>
+    /// WPF 的 <see cref="ScrollViewer"/> 原生只認垂直滾輪，Shift＋滾輪什麼都不做；而有水平
+    /// 捲軸的地方（不換行的 SQL 預覽、差異比對）唯一的左右捲動方式就只剩拖曳那條捲軸，
+    /// 在停靠面板裡那是一條十幾 DIP 的軌道。
+    ///
+    /// 掛在 <see cref="UIElement.PreviewMouseWheelEvent"/> 上而不是等它冒泡：RichTextBox 這類
+    /// 自己有捲動區的控制項會先把滾輪吃掉，接冒泡的那一版一次都不會被呼叫。
+    ///
+    /// 捲不動（沒有水平捲軸）時<b>不</b>攔下來：那一刻使用者要的是原本的垂直捲動，
+    /// 攔掉等於按著 Shift 就整個捲不動。
+    /// </remarks>
+    public static void ApplyShiftWheelPan(FrameworkElement content)
+    {
+        content.PreviewMouseWheel += (_, args) =>
+        {
+            if (args.Delta == 0 || !ShiftHeld) return;
+            if (FindScrollViewer(content) is not { } scroll || scroll.ScrollableWidth <= 0) return;
+
+            PanHorizontally(scroll, args.Delta);
+            args.Handled = true;
+        };
+    }
+
+    /// <summary>
+    /// 現在按著 Shift 沒有。
+    /// </summary>
+    /// <remarks>
+    /// 產品碼其餘地方一律讀事件帶的 <see cref="KeyboardDevice"/>，而滑鼠事件上沒有那一個
+    /// ——<see cref="MouseWheelEventArgs"/> 帶的是滑鼠裝置。那條規則防的是<b>合成的按鍵</b>
+    /// 混進實體鍵盤狀態，而滾輪不會被合成，所以這裡問目前的鍵盤狀態是安全的。
+    /// 只留這一個出處，其他地方仍然不得直接讀靜態的鍵盤。
+    /// </remarks>
+    private static bool ShiftHeld => (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+
+    /// <summary>向下往右、向上往左；兩處的手感由 <see cref="WheelPanFactor"/> 保持一致。</summary>
+    private static void PanHorizontally(ScrollViewer scroll, double delta) =>
+        scroll.ScrollToHorizontalOffset(scroll.HorizontalOffset - delta * WheelPanFactor);
+
+    /// <summary>
+    /// 樹裡第一個 <see cref="ScrollViewer"/>；控制項樣板套用之前回 null。
+    /// </summary>
+    /// <remarks>
+    /// 清單續頁、差異比對的捲動與 Shift＋滾輪共用這一份：各寫一份的症狀是其中一份忘了
+    /// 處理「樣板還沒套上」的那一刻，而那是視窗剛開啟的第一個版面回合。
+    /// </remarks>
+    public static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        if (root is ScrollViewer scroll) return scroll;
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            if (FindScrollViewer(VisualTreeHelper.GetChild(root, index)) is { } child) return child;
+        }
+
+        return null;
     }
 
     private static ControlTemplate CreateOverlayScrollTemplate()
@@ -571,6 +691,9 @@ internal static partial class SqlAssistChrome
                     .WithTheme(DataGrid.RowBackgroundProperty, ThemeBrush.ListBackground);
         }
 
+        // 欄位多到放不下時資料格本來就會長出水平捲軸，而 WPF 原生只認垂直滾輪：少了這一道，
+        // 左右捲動只剩拖那條軌道。捲不動時它不攔滾輪，直欄的資料格不受影響。
+        ApplyShiftWheelPan(grid);
         return grid;
     }
 
@@ -792,6 +915,63 @@ internal static partial class SqlAssistChrome
         return template;
     }
 
+    /// <summary>
+    /// 單選鈕：與核取方塊同一個尺寸與色階，只有形狀是圓的。
+    /// </summary>
+    /// <remarks>
+    /// 形狀本身就是語意：圓的是「只能選一個」，方的是「可以選好幾個」。兩者外觀共用，
+    /// 呼叫端換的只有這一份樣板；自己在功能目錄畫一顆的症狀是同一個面板裡兩種選項的
+    /// 尺寸與對齊差一兩個 DIP，而那正好是看得出來卻說不出哪裡怪的差距。
+    ///
+    /// 內建的單選鈕與核取方塊同樣跟 Windows 佈景主題走，深色主題裡會露出白底。
+    /// </remarks>
+    public static ControlTemplate CreateRadioTemplate()
+    {
+        var layout = new FrameworkElementFactory(typeof(StackPanel));
+        layout.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        layout.SetValue(Panel.BackgroundProperty, Brushes.Transparent);
+
+        var ring = new FrameworkElementFactory(typeof(Border)) { Name = "ring" };
+        ring.SetValue(FrameworkElement.WidthProperty, 14.0);
+        ring.SetValue(FrameworkElement.HeightProperty, 14.0);
+        ring.SetValue(Border.CornerRadiusProperty, new CornerRadius(7));
+        ring.SetResourceReference(Border.BackgroundProperty, ThemeBrush.SegmentTrack);
+        ring.SetResourceReference(Border.BorderBrushProperty, ThemeBrush.Hairline);
+        ring.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        ring.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        ring.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 8, 0));
+        ring.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
+
+        var dot = new FrameworkElementFactory(typeof(Ellipse)) { Name = "dot" };
+        dot.SetValue(FrameworkElement.WidthProperty, 6.0);
+        dot.SetValue(FrameworkElement.HeightProperty, 6.0);
+        dot.SetResourceReference(Shape.FillProperty, ThemeBrush.ListForeground);
+        dot.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        dot.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        dot.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+        ring.AppendChild(dot);
+
+        var label = new FrameworkElementFactory(typeof(ContentPresenter));
+        label.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+
+        layout.AppendChild(ring);
+        layout.AppendChild(label);
+
+        var template = new ControlTemplate(typeof(RadioButton)) { VisualTree = layout };
+
+        AddTrigger(template, UIElement.IsMouseOverProperty, Border.BorderBrushProperty, ThemeBrush.Border, "ring");
+        AddTrigger(template, UIElement.IsKeyboardFocusWithinProperty,
+            Border.BorderBrushProperty, ThemeBrush.AccentBorder, "ring");
+
+        var isChecked = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
+        isChecked.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "dot"));
+        isChecked.Setters.Add(ThemeResourceSet.Setter(Border.BackgroundProperty, ThemeBrush.AccentBackground, "ring"));
+        isChecked.Setters.Add(ThemeResourceSet.Setter(Border.BorderBrushProperty, ThemeBrush.AccentBorder, "ring"));
+        template.Triggers.Add(isChecked);
+
+        return template;
+    }
+
     /// <summary>清單的一列：與分段控制器同一種圓角，選取靠底色而不是外框。</summary>
     public static Style CreateListItemStyle(Metrics metrics)
     {
@@ -907,7 +1087,7 @@ internal static partial class SqlAssistChrome
         var style = new Style(typeof(TabItem));
         style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.DimForeground));
         // Tooltip 是窄窗收起分頁文字之後仍讀得到名稱的地方。
-        var tab = new TabItem { Header = CreateMemoryLabel(icon, label), Template = CreateTabItemTemplate(), Style = style, ToolTip = label };
+        var tab = new TabItem { Header = CreateIconLabel(icon, label), Template = CreateTabItemTemplate(), Style = style, ToolTip = label };
         AutomationProperties.SetName(tab, label); return tab;
     }
 

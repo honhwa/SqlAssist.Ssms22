@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
-using System.Windows.Threading;
 using SqlAssist.Metadata.Search;
 using SqlAssist.Ssms22.UI;
 
@@ -26,26 +25,18 @@ namespace SqlAssist.Ssms22.Search;
 /// </remarks>
 internal sealed class SqlSearchPreview : UserControl, IDisposable
 {
-    /// <summary>選取停下來多久才去查；與 SQL Memory 的預覽同一個數字。</summary>
-    /// <remarks>
-    /// 短到放開方向鍵就開始載入，長到連續捲十列只發最後那一輪。
-    /// </remarks>
-    private static readonly TimeSpan LoadDelay = TimeSpan.FromMilliseconds(220);
-
     private readonly SqlSearchDefinitionLoader _loader;
     private readonly SqlReadOnlyViewer _viewer = new();
-    private readonly SqlLoadingSurface _loading;
-    private readonly TextBlock _metadata = SqlAssistChrome.CreateMetadataText("", SqlAssistChrome.DefaultMetrics);
+    private readonly SqlStateSurface _surface;
     private readonly SqlHighlightText _snippet = new();
     private readonly Border _snippetSurface;
     private readonly TextBlock _status = SqlAssistChrome.CreateStatusText(SqlAssistChrome.DefaultMetrics);
-    private readonly TextBlock _empty = SqlAssistChrome.CreateSearchEmptyState();
     private readonly Grid _body = new();
     private readonly DockPanel _content;
     private readonly Button _copyName;
     private readonly Button _wrap;
-    private readonly DispatcherTimer _delay;
-    private CancellationTokenSource _read = new();
+    private readonly WrapPanel _toolbar = new();
+    private readonly SqlSelectionLoader<SqlSearchRow> _selection;
     private bool _disposed;
 
     public SqlSearchPreview(SqlSearchCatalogs catalogs)
@@ -69,62 +60,65 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
         _snippetSurface.Visibility = Visibility.Collapsed;
 
         _viewer.ReportError = Report;
-        _loading = new SqlLoadingSurface(_viewer);
+        _surface = new SqlStateSurface(_viewer);
 
-        // 三種「現在沒有完整定義可看」疊在同一塊內容上：載入中、沒有定義的來源，
-        // 以及什麼都沒選。各占一塊版面的話，窄面板裡的指令碼會被擠到剩兩行。
-        _body.Children.Add(_loading);
+        // 「現在沒有完整定義可看」全部疊在同一塊內容上：載入中、沒有定義的來源、
+        // 讀不到的定義，以及什麼都沒選。各占一塊版面的話，窄面板裡的指令碼會被擠到剩兩行。
+        _body.Children.Add(_surface);
         _body.Children.Add(_snippetSurface);
-        _body.Children.Add(_empty);
 
-        var toolbar = new WrapPanel();
-        toolbar.Children.Add(_copyName);
-        toolbar.Children.Add(_wrap);
+        _toolbar.Children.Add(_copyName);
+        _toolbar.Children.Add(_wrap);
 
-        _metadata.TextWrapping = TextWrapping.NoWrap;
-        _metadata.TextTrimming = TextTrimming.CharacterEllipsis;
-        _metadata.Margin = new Thickness(0, 0, 0, 8);
         _status.TextWrapping = TextWrapping.Wrap;
 
+        // 內容第一列直接是工具列：這一筆是什麼，全部交給主從區抬頭上那一列膠囊，
+        // 內容裡不再放一份只換了排列順序的同樣文字。
         _content = new DockPanel();
-        DockPanel.SetDock(toolbar, Dock.Top);
-        _content.Children.Add(toolbar);
-        DockPanel.SetDock(_metadata, Dock.Top);
-        _content.Children.Add(_metadata);
+        DockPanel.SetDock(_toolbar, Dock.Top);
+        _content.Children.Add(_toolbar);
         DockPanel.SetDock(_status, Dock.Bottom);
         _content.Children.Add(_status);
         _content.Children.Add(_body);
         Content = _content;
 
-        _delay = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = LoadDelay };
-        _delay.Tick += (_, _) => SqlAssistPlatformGuard.Run("載入 SQL Search 預覽", () =>
-        {
-            _delay.Stop();
-            _ = RunAsync(LoadAsync);
-        });
+        _selection = new SqlSelectionLoader<SqlSearchRow>(Dispatcher, SqlAssistChrome.Debounce.Preview,
+            (row, token) => SqlAssistPlatformGuard.Run("載入 SQL Search 預覽", () => _ = RunAsync(() => LoadAsync(row, token))));
 
         AutomationProperties.SetName(this, "搜尋結果預覽");
         Select(null);
     }
 
-    /// <summary>主從區抬頭那一行；由分割檢視放在收合鈕旁邊，與 SQL Memory 同一個位置。</summary>
-    public FrameworkElement Summary { get; } =
-        SqlAssistChrome.CreateMetadataText("", SqlAssistChrome.DefaultMetrics);
+    /// <summary>
+    /// 主從區抬頭那一列；由分割檢視放在收合鈕旁邊，與 SQL Memory 同一個位置與同一種膠囊。
+    /// </summary>
+    /// <remarks>
+    /// 交出去的是一個吃 <see cref="SqlSearchRow"/> 的 <see cref="ContentControl"/>，不是一段字：
+    /// 樣板只有 <c>SqlAssistChrome.CreateSearchMetadataTemplate</c> 一份，與清單列同一個順序，
+    /// 兩邊各排各的話，使用者在清單上選一筆、眼睛移到這一列，同一組事實卻換了位置。
+    /// </remarks>
+    public FrameworkElement Summary { get; } = new ContentControl
+    {
+        ContentTemplate = SqlAssistChrome.CreateSearchMetadataTemplate(),
+        Focusable = false,
+        VerticalAlignment = VerticalAlignment.Center,
+        // 還沒選時整列收起來：樣板照樣會把膠囊的底畫出來，而綁不到值的那一顆就是抬頭上
+        // 那一塊沒有字的灰色方塊——看起來像是有一筆結果，只是它的名稱沒載進來。
+        Visibility = Visibility.Collapsed
+    };
 
     /// <summary>複製限定名稱；實際寫剪貼簿的失敗要看得見，所以交給宿主處理。</summary>
     public event EventHandler? CopyRequested;
 
     /// <summary>目前顯示的那一筆；沒有選取時 null。</summary>
-    public SqlSearchRow? Current { get; private set; }
+    public SqlSearchRow? Current => _selection.Current;
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _delay.Stop();
-        _loading.IsLoading = false;
-        _read.Cancel();
-        _read.Dispose();
+        _surface.State = SqlSurfaceState.None;
+        _selection.Dispose();
         _viewer.Dispose();
     }
 
@@ -136,73 +130,67 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
         if (_disposed) return;
 
         // 上一輪的結果不能污染這一次的選取，所以先取消再換狀態。
-        _delay.Stop();
-        _read.Cancel();
-        _read.Dispose();
-        _read = new CancellationTokenSource();
-
-        Current = row;
+        _selection.Select(row);
+        // 沒有選取就沒有東西可以複製或換行：停用的兩顆圖示浮在一塊空白上方，說不出
+        // 「這裡本來會有什麼」，而那一句已經由狀態表面說了。不適用的操作一律收起。
+        _toolbar.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
+        Summary.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
         _copyName.IsEnabled = row is not null;
         _wrap.IsEnabled = false;
         _viewer.SetSql("");
-        _loading.IsLoading = false;
+        _surface.State = SqlSurfaceState.None;
         _snippetSurface.Visibility = Visibility.Collapsed;
         Report("");
 
+        // 抬頭那一列直接吃這一筆；分類與命中部位是兩件事，同一個物件可以同時被名稱與本文命中，
+        // 所以兩顆膠囊各自出現，不併成一句話。
+        ((ContentControl)Summary).Content = row;
+
         if (row is null)
         {
-            _metadata.Text = "";
-            _metadata.Visibility = Visibility.Collapsed;
-            _loading.Visibility = Visibility.Collapsed;
-            _empty.Text = "選一筆結果看它的完整定義與命中位置。";
-            _empty.Visibility = Visibility.Visible;
-            ((TextBlock)Summary).Text = "";
+            // 收起唯讀檢視本身，狀態表面留著：空的檢視在說明文字後面會露出一塊編輯區底色。
+            _viewer.Visibility = Visibility.Collapsed;
+            _surface.State = SqlSurfaceState.Empty("尚未選取", "選一筆結果看它的完整定義與命中位置。");
             return;
         }
-
-        _empty.Visibility = Visibility.Collapsed;
-        // 分類與命中部位是兩件事：同一個物件可以同時被名稱與定義本文命中。
-        _metadata.Text = row.Description;
-        _metadata.ToolTip = row.Description;
-        _metadata.Visibility = Visibility.Visible;
-        ((TextBlock)Summary).Text = row.Title + " · " + row.CategoryLabel + " · " + row.TargetLabel;
 
         if (row.Hit.ActivatePayload is not SqlCatalogSearchTarget)
         {
             // 沒有目錄物件可以問的來源（之後的片段、SQL Memory）只剩片段可看；
             // 留一塊空白等於讓使用者以為載入卡住了。
-            _loading.Visibility = Visibility.Collapsed;
+            _viewer.Visibility = Visibility.Collapsed;
             _snippet.SourceText = row.Snippet;
             _snippet.Spans = row.SnippetSpans;
             _snippetSurface.Visibility = row.Snippet.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-            _empty.Text = row.Snippet.Length == 0 ? "這一筆沒有可以顯示的定義。" : "";
-            _empty.Visibility = row.Snippet.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            _surface.State = row.Snippet.Length == 0
+                ? SqlSurfaceState.Empty("沒有可以顯示的定義", "這一筆的來源只提供片段。")
+                : SqlSurfaceState.None;
             SqlAssistChrome.PlayAppear(_body);
             return;
         }
 
-        _loading.Visibility = Visibility.Visible;
-        _loading.IsLoading = true;
-        _delay.Start();
+        _viewer.Visibility = Visibility.Visible;
+        _surface.State = SqlSurfaceState.Loading;
+        _selection.Load();
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(SqlSearchRow row, CancellationToken token)
     {
-        var row = Current;
-        var token = _read.Token;
-
-        if (_disposed || row is null || row.Hit.ActivatePayload is not SqlCatalogSearchTarget target) return;
+        if (!_selection.IsCurrent(row, token) || row.Hit.ActivatePayload is not SqlCatalogSearchTarget target) return;
 
         try
         {
             var definition = await _loader.LoadAsync(target, token);
 
             // 舊請求的成功回應與舊請求的失敗一樣，都不能蓋掉目前這一列。
-            if (_disposed || token.IsCancellationRequested || !ReferenceEquals(row, Current)) return;
+            if (!_selection.IsCurrent(row, token)) return;
 
             if (definition.Failure is { } failure)
             {
-                Report(failure);
+                // 讀不到與權限不足在這裡分不開（伺服器兩種都只回「查不到」），所以走同一個
+                // 出口，由 provider 自己那一句說明可能的原因。
+                _viewer.Visibility = Visibility.Collapsed;
+                _surface.State = SqlSurfaceState.Unreadable(failure);
                 return;
             }
 
@@ -221,8 +209,8 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
         }
         finally
         {
-            // 舊請求的結束不能關掉新選取的載入效果。
-            if (!_disposed && ReferenceEquals(row, Current)) _loading.IsLoading = false;
+            // 舊請求的結束不能關掉新選取的載入效果，也不能蓋掉這一輪剛寫上去的讀不到。
+            if (_selection.IsCurrent(row, token) && _surface.IsLoading) _surface.State = SqlSurfaceState.None;
         }
     }
 

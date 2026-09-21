@@ -3,6 +3,14 @@
 跨來源找「這個名字或這段文字在哪裡」的工具窗。它是一個框架而不是單一功能：Core 定契約與
 聚合，Metadata 放來源，Ssms22 只接線。
 
+入口有兩個：**SqlAssist 工具列**的第三顆按鈕，以及**工具 → SqlAssist → SQL Search**。
+工具列那一顆的字是 **Search** 而不是 SQL Search：那一列是 `History｜Favorites｜Search`，
+三顆都帶圖示與字，多出來的「SQL」在三顆都屬於 SqlAssist 的工具列上說不出新資訊，卻實際
+佔掉工具列寬度；完整名稱留在 Tooltip 與選單上那一顆。
+工具列那一顆走 `CommandPlacement` 而不是第二顆按鈕，外觀與選單上那一顆完全相同；
+順序排在 History／Favorites 後面，理由與選單分成兩個群組相同——前兩顆找的是自己寫過的
+SQL，這一顆找的是伺服器上的物件。沒有鍵繫結，理由見 `CommandIds.ShowSqlSearch`。
+
 ## provider 契約
 
 一個來源實作 `Core/Search/ISearchProvider`：宣告自己的分類、把命中推進 `ISearchSink`，
@@ -53,6 +61,28 @@ provider 得自己守四條，每一條都是「少做一次就看不出來」�
 例外）與 `Progress` 上的 `IsUnavailable`。「沒掃完」叫使用者縮小範圍，「讀不到」叫他去看權限
 ——混成一句的症狀是使用者照前一句改三次關鍵字，而那個資料庫一次都沒被搜到。
 
+provider 擲例外那一條（`Failures`）寫到畫面上時用的是 `ISearchProvider.DisplayName`，不是 `Id`：
+Id 跨版本不得更名，而它不在介面上任何地方出現過——「『catalog』這一輪失敗」對使用者來說指不到
+自己勾的哪一個範圍。診斷仍然記 Id。
+
+回報分兩件東西：`UnavailableReason` 是一句給人看的話，Core 不解讀；`SearchUnavailableKind`
+只有 `Unknown` 與 `Denied`。不細分是因為呈現那一層要的答案只有一個——下一步是「重試或換
+條件」還是「去要權限」，而連不上、逾時與離線的下一步一樣。
+
+`Denied` 是斷言，三道關卡都「說得準才說」：provider 要伺服器給了權限錯誤碼；`BudgetedSink`
+在同一個來源說了兩種時退回 `Unknown`（句子留第一句，留哪一句都說得通，而留第一個種類等於
+斷言由賽跑決定）；`SqlSearchBrowserModel.Surface` 只在**每一個**讀不到的來源都是 `Denied`
+時才回 `SqlSurfaceState.Denied`。其中之一就換抬頭的話，使用者去要了權限，那個連不上的來源
+下一輪還是讀不到，而畫面上看不出他要錯了東西。代價不對稱：斷言不足只是少說一句話。
+
+錯誤碼由 `SqlServerErrorCodes` 認（229／230／262／297／300／916／4060）。18456 **不在**
+名單裡：登入失敗是認證不是授權，下一步是去看帳號密碼或 Entra 權杖。
+
+它靠**反射**讀 `Number`。兩個理由缺一都還是要反射：Metadata 只依賴 `System.Data`，而
+netstandard2.0 的 `DbException` 上沒有錯誤碼；執行期丟出來的又是
+`Microsoft.Data.SqlClient.SqlException`，與 `System.Data.SqlClient` 那一份是兩個型別，參照了
+也一次都不會成立，症狀是安靜地永遠回 `Unknown`。代價只在失敗的那一次付。
+
 ## 索引策略
 
 `SqlCatalogSearchIndex` 與 `SqlMetadataCatalog` 是分開的兩份，刻意不重用。那四層是**按需**
@@ -79,9 +109,7 @@ provider 得自己守四條，每一條都是「少做一次就看不出來」�
 變更並廣播通知，理由與[預覽視窗](preview-window.md)的尺寸相同。三項收成一個字串，
 認不得就整組回預設，不半套還原。
 
-伺服器、資料庫與物件種類**不記**。前兩者綁在一條連線上：記住之後換一台，工具窗會與作用中的
-查詢視窗脫鉤，或對一個不在這台上的資料庫每一輪都回報「讀不到」。種類是一次調查裡的收斂，
-不是長期的工作方式；記住它的症狀是下星期打開視窗搜 `Loan`，那張表因為上次勾過別的種類而不在。
+伺服器、資料庫與物件種類**不記**，理由與那兩顆按鈕的其餘規則見[搜尋範圍](search-scope.md)。
 
 ## 不支援
 

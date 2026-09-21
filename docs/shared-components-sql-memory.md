@@ -8,6 +8,7 @@
 | 這件事 | 唯一出處 |
 | --- | --- |
 | SQL 內容位址、版本取樣與交易式儲存契約（含連線 facets） | `Core/SqlMemory/SqlContent.cs`、`SqlCapturePlanner.cs`、`ISqlHistoryStore.cs` |
+| 「這份 SQL 沒有內容」（擷取、新增至收藏與預覽空狀態共用） | `Core/SqlMemory/SqlContent.cs` 的 `IsBlank`（清理既有資料那一份是 SQL，在 `SqliteHistoryRows.Blank`） |
 | 開啟／關閉、世代、寫入器故障、心跳、維護排程與使用者主動整理 | `Core/SqlMemory/SqlMemoryRuntime.cs`（設定轉政策在 `SqlMemoryConfiguration.cs`） |
 | 清單的篩選轉請求、分頁世代與選取還原 | `Core/SqlMemory/SqlMemoryBrowserModel.cs` |
 | 查詢視窗的文件／Session 身分與多重選取的執行文字 | `Core/SqlMemory/SqlDocumentIdentity.cs`、`SqlSelectionText.cs` |
@@ -42,7 +43,7 @@
 | 清單的鍵盤、續頁、右鍵選取與列按鈕派送 | `Ssms22/UI/SqlMemoryList.cs` 的 `SqlMemoryListBase<TAction>` |
 | 等儲存的使用者操作：拒絕重入與宿主世代檢查 | `Ssms22/SqlMemory/SqlMemoryOperationGate.cs` |
 | 收藏版本操作清單與執行（時間軸列、快捷選單、差異面板共用） | `Ssms22/UI/SqlFavoriteRevisionList.cs` 的 `SqlFavoriteRevisionCommand`、`Ssms22/SqlMemory/SqlFavoriteRevisionCommands.cs` |
-| 列上的幽靈操作按鈕（卡片與時間軸共用） | `Ssms22/UI/SqlAssistChrome.SqlMemory.cs` 的 `CreateRowActionButton` |
+| 列上的幽靈操作按鈕（卡片與時間軸共用） | `Ssms22/UI/SqlAssistChrome.Rows.cs` 的 `CreateRowActionButton` |
 | 行級差異的虛擬化呈現（標記、行號、語意底色） | `Ssms22/UI/SqlTextDiffView.cs`（樣板在 `SqlAssistChrome.Revisions.cs`） |
 | 清單頁尾 | `Ssms22/UI/SqlMemoryPager.cs`（狀態與文案在 `SqlMemoryBrowserModel.Footer`） |
 | 量表（分級色、長度動畫、不確定進度） | `Ssms22/UI/SqlUsageMeter.cs` |

@@ -35,9 +35,38 @@ SSMS 新彩色主題使用 Fluent `ShellColors`；舊 `EnvironmentColors.ToolTip
 
 ## SQL 指令碼
 
-`Preview/SqlScriptTheme` 於第一次開啟指令碼分頁時才建立，使用目前查詢視窗的
-`IClassificationFormatMap` 及 `IWpfTextView.Background`，不是通用 `"text"` 分類。
+`Preview/SqlScriptTheme` 於第一次開啟指令碼分頁時才建立。**有查詢視窗時**使用那一個視窗的
+`IClassificationFormatMap` 及 `IWpfTextView.Background`，不是通用 `"text"` 分類——同一份設定在
+不同檢視上可以套不同的外觀類別，拿通用那一份會讓預覽與旁邊的查詢視窗顏色對不上。
 分類配色、編輯器底色及主題通知皆會使外觀失效；分頁不可見時延後到顯示前更新。
+
+**一個查詢視窗都沒有**（只連了資料庫）時退回 `"text"` 這個外觀類別。兩條路要到的是同一份
+Fonts and Colors 設定，所以之後打開查詢視窗不會換一套顏色。
+
+字型、字級、底色與前景全部跟著那一份設定，**不以「有沒有檢視」當條件**。以檢視存在與否分岔的
+那一版在沒有查詢視窗時改用自己的字級，症狀是同一份 SQL 在開查詢視窗前後大小會變。
+問不到時才退回 `SqlAssistChrome.CodeFont` 與 `DefaultMetrics.Body`——同一組值也是唯讀檢視
+建立時套的那一組，因此文件建好前後不會跳動；不另寫只有這裡看得到的字級常數。
+
+底色缺檢視時改問 `IEditorFormatMap` 的 **Plain Text** 那一格——編輯器的底色畫在檢視上而不在文字上，
+`DefaultTextProperties.BackgroundBrush` 沒有檢視時是空的。底色與前景**成對**採用
+（`UI/ScriptPalette.Surface`），缺一個或它自己就讀不到時整組退回工具窗那一組，不混用兩邊。
+
+分類色對比不足時**朝可讀的方向調整、保留色相**（`UI/ScriptPalette.Classification`），只有真的問不到
+顏色才退回前景色。換成前景色的那一版讓 `keyword`／`comment`／`string`／`number` 全部相同，
+症狀是 SQL Memory 與 SQL Search 的預覽整份同一個顏色，而使用者會以為高亮壞了。觸發條件是
+**佈景主題與編輯器外觀分屬兩個設定**：「編輯器外觀 = 比對佈景主題」配上彩色深色主題（月光、
+神秘森林、辣紅）時，工具窗底色與編輯器底色不同深淺，借來的分類色過不了 4.5:1。
+
+「編輯器外觀」改動走的是 `IEditorFormatMap.FormatMappingChanged`，只有 Plain Text 那一格算數；
+本擴充自己回寫的 marker 格式不是配色輸入，不重算整輪色票。
+
+服務也要跟著換一條路拿。`SqlPreviewServices.Current` 是由**編輯器建立接聽器**登記的，
+沒有開過查詢視窗時它從頭到尾是 null；`SqlPreviewServices.Resolve()` 改向殼層的 MEF 容器
+（`SComponentModel`）要同一組服務並登記起來。要的是**那一個**容器裡的服務，不是自己 new 一份
+MEF host——後者拿到的是對不上編輯器設定的第二份外觀。取不到就回 null，呼叫端退回自己的前景色；
+著色讀不到還畫得出 SQL，整個預覽開不起來就不行。這條路每次呼叫都會重試，所以包在 `Probe` 裡，
+連續失敗不會灌爆紀錄檔。
 
 `SqlScriptDocument` 的每個 Run 保存分類資源鍵。換主題只替換筆刷與字型資源，
 不重新詞法分析、不重建 FlowDocument、不重查資料庫，既有文字選取及捲動狀態得以保留。
@@ -51,7 +80,7 @@ SSMS 新彩色主題使用 Fluent `ShellColors`；舊 `EnvironmentColors.ToolTip
 
 `SqlAssist.Ssms22.Tests` 在 net48 STA 執行產品的純 WPF 實作，不需啟動 SSMS。
 涵蓋同深淺不同色系的雙向換色、透明文字合成、雙表面對比、Run 與選取保留、
-樣板與選取配對、筆刷共用、局部系統鍵及通知合併。
+樣板與選取配對、筆刷共用、局部系統鍵及通知合併，以及指令碼表面的成對取色與分類色調整。
 共用控制項的多 DPI 渲染輸出位於被忽略的 `artifacts/theme-qa/`；這些是測試配色，
 不是 SSMS 實機截圖，也不能取代原生 Popup 的整合驗收。
 
@@ -62,8 +91,12 @@ SSMS 手動驗收：
 2. 驗證所有分頁、載入／錯誤狀態、右鍵選單、捲軸與握把，不應出現新舊主題混色。
 3. 檢查片段管理員、診斷、欄位剖析與完整儲存格內容；Windows 與 SSMS 設相反主題。
 4. 更改 SQL 字型、字級及分類色；保留選取與捲動、確認沒有額外中繼資料查詢。
-5. 高對比、100%／150%／200% DPI、最小尺寸、長字串與鍵盤焦點均需驗證。
-6. 多個查詢視窗連續切換主題再關閉，確認沒有延後更新錯誤或事件造成的視窗滯留。
+   另在**連了資料庫但一個查詢視窗都沒開**時，把「編輯器外觀」在比對佈景主題與明確配色之間切換，
+   確認預覽當場換色且四種分類分得開——這一段只有在沒有查詢視窗時才走得到。
+5. 同樣在沒有查詢視窗時看一次 SQL Memory 與 SQL Search 的預覽，再開一個查詢視窗：字型、字級與
+   底色都不應該在那一刻改變。
+6. 高對比、100%／150%／200% DPI、最小尺寸、長字串與鍵盤焦點均需驗證。
+7. 多個查詢視窗連續切換主題再關閉，確認沒有延後更新錯誤或事件造成的視窗滯留。
 
 平台依據：[VS 色彩服務](https://learn.microsoft.com/en-us/visualstudio/extensibility/ux-guidelines/colors-and-styling-for-visual-studio?view=vs-2022)、
 [Fluent 主題遷移](https://learn.microsoft.com/en-us/visualstudio/extensibility/migration/modernize-theme-colors?view=visualstudio)、

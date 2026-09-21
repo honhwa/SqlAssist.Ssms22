@@ -220,4 +220,172 @@ public sealed class SqlAssistChromeTests
             Assert.Equal(text.Text, text.ToolTip);
         });
     }
+
+    /// <summary>
+    /// 去彈跳只有一張表，而且相對關係固定。
+    /// </summary>
+    /// <remarks>
+    /// 打字驅動的搜尋最短，選取驅動的預覽次之，每一次都要查一輪的估算與比對 SQL 全文的
+    /// Memory 搜尋最寬。散在四個檔時沒有人比得出這個順序，改壞了也看不出來。
+    /// </remarks>
+    /// <summary>
+    /// 下拉的箭頭是一個<b>狀態</b>：收合朝右、展開朝下，而且轉過去而不是跳過去。
+    /// </summary>
+    /// <remarks>
+    /// 兩處各寫一次角度的下場是其中一邊轉錯邊；只在按下時轉的那一版，面板被「按到外面」
+    /// 關掉之後箭頭仍朝下，指著一個已經不在畫面上的面板。
+    /// </remarks>
+    [Fact]
+    public void 箭頭收合朝右展開朝下且動畫關掉時直接寫角度()
+    {
+        WpfTest.Run(() =>
+        {
+            var chevron = SqlAssistChrome.CreateChevron(expanded: false);
+            var rotation = Assert.IsType<RotateTransform>(chevron.RenderTransform);
+            Assert.Equal(-90, rotation.Angle);
+            Assert.Equal(new Point(0.5, 0.5), chevron.RenderTransformOrigin);
+
+            SqlAssistChrome.SetChevronExpanded(chevron, expanded: true, motion: false);
+            Assert.Equal(0, rotation.Angle);
+            Assert.False(rotation.HasAnimatedProperties);
+
+            SqlAssistChrome.SetChevronExpanded(chevron, expanded: false, motion: false);
+            Assert.Equal(-90, rotation.Angle);
+
+            // 開著動畫時走動畫；不寫 From，所以連按兩下是從轉到一半的位置反向。
+            SqlAssistChrome.SetChevronExpanded(chevron, expanded: true, motion: true);
+            Assert.True(rotation.HasAnimatedProperties);
+
+            // 關掉動畫是真的關掉：先把跑著的那一份清掉，再寫最終角度。
+            SqlAssistChrome.SetChevronExpanded(chevron, expanded: false, motion: false);
+            Assert.False(rotation.HasAnimatedProperties);
+            Assert.Equal(-90, rotation.Angle);
+
+            // 揭露這一級短到可以中途反向。
+            Assert.InRange(SqlAssistChrome.ChevronTurnDuration, System.TimeSpan.Zero, System.TimeSpan.FromMilliseconds(300));
+        });
+    }
+
+    /// <summary>
+    /// 篩選的分隔線只有兩級，SQL Memory 與 SQL Search 都從它來。
+    /// </summary>
+    [Fact]
+    public void 篩選分隔線分兩級而且群距大於群內距()
+    {
+        WpfTest.Run(() =>
+        {
+            var palette = new ThemeResourceSet();
+            var divider = SqlAssistChrome.CreateFilterGroupDivider();
+            var host = new Border { Child = divider };
+            host.Resources.MergedDictionaries.Add(palette.Resources);
+            palette.Update(ThemePaletteTests.ColorsFor("dark"));
+            host.Measure(new Size(200, 60));
+            host.Arrange(new Rect(0, 0, 200, 60));
+            host.UpdateLayout();
+
+            Assert.Equal(1, divider.Width);
+            Assert.True(divider.SnapsToDevicePixels);
+            Assert.False(divider.IsHitTestVisible);
+            // 不表達狀態，所以用髮絲線而不是任何語意色。
+            Assert.Same(palette.Resources[ThemeBrush.Hairline], divider.Background);
+            // 左右對稱，而且比群內的 4 DIP 寬：兩個數字的差就是「這是兩群」。
+            Assert.Equal(divider.Margin.Left, divider.Margin.Right);
+            Assert.True(divider.Margin.Left > 4);
+            // 比按鈕矮一截，讀起來是一條界線不是一個邊框。
+            Assert.InRange(divider.Height, 12, 24);
+
+            // 群內那一條矮一截、淡一階、間距也窄一截：每一顆之間都看得到線，而分群仍讀得出來。
+            var item = SqlAssistChrome.CreateFilterItemDivider();
+            var itemHost = new Border { Child = item };
+            itemHost.Resources.MergedDictionaries.Add(palette.Resources);
+            itemHost.Measure(new Size(200, 60));
+            itemHost.Arrange(new Rect(0, 0, 200, 60));
+            itemHost.UpdateLayout();
+
+            Assert.Equal(1, item.Width);
+            Assert.Same(palette.Resources[ThemeBrush.Hairline], item.Background);
+            Assert.Equal(item.Margin.Left, item.Margin.Right);
+            Assert.Equal(4, item.Margin.Left);
+            Assert.True(divider.Margin.Left > item.Margin.Left);
+            Assert.True(divider.Height > item.Height);
+            Assert.True(item.Opacity < divider.Opacity);
+        });
+    }
+
+    /// <summary>
+    /// 共用篩選列：依群換行、列首不留孤線，整群收起時連它的分隔線一起收。
+    /// </summary>
+    [Fact]
+    public void 篩選列依群換行而且列首不留孤線()
+    {
+        WpfTest.Run(() =>
+        {
+            FrameworkElement Cell(double width) => new Border { Width = width, Height = 24 };
+
+            var kind = Cell(80);
+            var period = Cell(80);
+            var server = Cell(80);
+            var database = Cell(80);
+            var row = new SqlFilterBar(
+                new[] { kind }, new[] { period }, new[] { server, database });
+            var host = new Border { Child = row };
+
+            void Layout(double width)
+            {
+                host.Measure(new Size(width, double.PositiveInfinity));
+                host.Arrange(new Rect(0, 0, width, host.DesiredSize.Height));
+                host.UpdateLayout();
+            }
+
+            // 每一顆自己帶前面那一條，所以它就排在這一顆的前一個位置。
+            Border Divider(FrameworkElement owner) => (Border)row.Children[row.Children.IndexOf(owner) - 1];
+
+            // 一列放得下時只有一列；列首那一條收起來，其餘三條看得見。
+            Layout(600);
+            Assert.Equal(1, row.RowCount);
+            Assert.Equal(Visibility.Collapsed, Divider(kind).Visibility);
+            foreach (var owner in new[] { period, server, database })
+                Assert.Equal(Visibility.Visible, Divider(owner).Visibility);
+            // 群內那一條比群間的窄：兩個數字的差就是「這是同一群」。
+            Assert.True(Divider(database).Margin.Left < Divider(server).Margin.Left);
+            var single = host.DesiredSize.Height;
+
+            // 整群收起時它的分隔線跟著收，而接在後面的那一群變成列首，也不留孤線。
+            kind.Visibility = period.Visibility = Visibility.Collapsed;
+            Layout(600);
+            Assert.Equal(1, row.RowCount);
+            Assert.Equal(Visibility.Collapsed, Divider(kind).Visibility);
+            Assert.Equal(Visibility.Collapsed, Divider(period).Visibility);
+            Assert.Equal(Visibility.Collapsed, Divider(server).Visibility);
+            Assert.Equal(Visibility.Visible, Divider(database).Visibility);
+            Assert.Equal(0, server.TranslatePoint(new Point(), row).X);
+
+            // 放不下就整群換行；換到列首的那一群同樣收起它前面那一條。
+            kind.Visibility = period.Visibility = Visibility.Visible;
+            Layout(300);
+            Assert.True(row.RowCount > 1);
+            Assert.True(host.DesiredSize.Height > single);
+            Assert.Equal(Visibility.Collapsed, Divider(server).Visibility);
+            Assert.Equal(0, server.TranslatePoint(new Point(), row).X);
+            // 換行的單位是群：同一群的兩顆仍在同一列。
+            Assert.Equal(server.TranslatePoint(new Point(), row).Y, database.TranslatePoint(new Point(), row).Y);
+
+            // 拉回去要回到一列，不停在換行的那一版上。
+            Layout(600);
+            Assert.Equal(1, row.RowCount);
+        });
+    }
+
+    [Fact]
+    public void 去彈跳常數維持由短到長的順序()
+    {
+        Assert.Equal(200, SqlAssistChrome.Debounce.Search.TotalMilliseconds);
+        Assert.Equal(220, SqlAssistChrome.Debounce.Preview.TotalMilliseconds);
+        Assert.Equal(250, SqlAssistChrome.Debounce.CleanupEstimate.TotalMilliseconds);
+        Assert.Equal(300, SqlAssistChrome.Debounce.MemorySearch.TotalMilliseconds);
+
+        Assert.True(SqlAssistChrome.Debounce.Search < SqlAssistChrome.Debounce.Preview);
+        Assert.True(SqlAssistChrome.Debounce.Preview < SqlAssistChrome.Debounce.CleanupEstimate);
+        Assert.True(SqlAssistChrome.Debounce.CleanupEstimate < SqlAssistChrome.Debounce.MemorySearch);
+    }
 }
