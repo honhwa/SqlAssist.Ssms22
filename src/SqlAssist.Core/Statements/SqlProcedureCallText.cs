@@ -156,8 +156,7 @@ public static class SqlProcedureCallText
                 builder.Append(indent);
             }
 
-            builder.Append("DECLARE ").Append(parameter.Name).Append(' ')
-                .Append(parameter.DataType);
+            builder.Append("DECLARE ").Append(parameter.Name).Append(' ').Append(parameter.DataType);
 
             // OUTPUT 必須寫在 <b>等號之前</b>：`DECLARE @x INT OUTPUT = 0` 合法，
             // `DECLARE @x INT = 0 OUTPUT` 是語法錯誤——T-SQL 的宣告語法是
@@ -168,13 +167,12 @@ public static class SqlProcedureCallText
             // 呼叫那一行，跟宣告隔了好幾行，不容易一眼連起來。
             if (parameter.IsOutput)
             {
-                builder.Append(" OUTPUT");
+                //builder.Append(" OUTPUT");
             }
 
             // 宣告時就先填好值：預設值來自模組定義（SqlModuleParameterDefaults），
             // 沒有的話才退回型別的預留值（SqlLiteralDefaults）。
-            builder.Append(" = ").Append(InitialValue(parameter)).Append(';')
-                .Append(newLine);
+            builder.Append(" = ").Append(InitialValue(parameter)).Append(';').Append(newLine);
         }
     }
 
