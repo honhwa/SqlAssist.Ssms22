@@ -259,7 +259,7 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
 
     public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
     {
-        var optional = SqlModuleParameterDefaults.Find(detail.Definition);
+        var defaults = SqlModuleParameterDefaults.FindValues(detail.Definition);
         var parameters = new List<SqlStatementParameter>(detail.Parameters.Count);
 
         foreach (var parameter in detail.Parameters)
@@ -270,12 +270,12 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 continue;
             }
 
-            var isOptional = optional.Contains(parameter.Name);
+            var hasDefault = defaults.TryGetValue(parameter.Name, out var defaultValue);
 
             // 省略選擇性參數是合法的呼叫方式，不是少展開一半。定義讀不到時
-            // optional 是空的，於是每個參數都算必填——寧可展開得多，也不要因為
+            // defaults 是空的，於是每個參數都算必填——寧可展開得多，也不要因為
             // 讀不到定義就把該填的參數吞掉，那一句貼上去才是真的執行不了。
-            if (isOptional && !_settings.IncludeOptionalParameters)
+            if (hasDefault && !_settings.IncludeOptionalParameters)
             {
                 continue;
             }
@@ -284,7 +284,8 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 parameter.Name,
                 parameter.DataType,
                 parameter.IsOutput,
-                isOptional));
+                hasDefault,
+                defaultValue));
         }
 
         // 沒有參數的程序展開起來與只插入名稱完全一樣，那就不必動它——

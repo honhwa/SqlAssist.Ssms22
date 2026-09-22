@@ -2,6 +2,15 @@
 
 ## 沙箱環境的固定做法
 
+- **`dotnet` 需要補環境變數才能 restore**：沙箱剝掉 `PROGRAMFILES`／`PROGRAMFILES(X86)`／
+  `PROGRAMDATA`／`ALLUSERSPROFILE`／`APPDATA`，而 NuGet 的
+  `NuGetEnvironment.CalculateFolderPath(MachineWideConfigDirectory)` 直接
+  `Path.Combine(GetEnvironmentVariable("PROGRAMFILES(X86)"), "NuGet", "Config")`，
+  缺了會拋 `Value cannot be null. (Parameter 'path1')`，整個 restore 掛掉。
+  跑 dotnet 前先補這幾個（見 `artifacts/run_tests.py` 的 env 設定）。
+- **這個 repo 上不要用 `git stash`**！它會崩潰並刪掉
+  `P:\github\SqlAssist.Ssms22\.git\worktrees\<名>\` 整個目錄，之後所有 git 指令失效。
+  要做 A/B 比對就把檔案複製到 `artifacts/backup/`。修復步驟見 `2026-09-22.md`。
 - bash 只有極少 coreutils（`ls`／`head`／`grep`／`mkdir`／`rm`／`tail`／`wc` 都沒有）：
   檔案操作走 `C:\Users\yhwa\.workbuddy\binaries\python\versions\3.13.12\python.exe`，
   搜尋走 Grep／Glob 工具，git 歷史查詢走 `git grep <rev>`、`git log -S`。
@@ -27,6 +36,11 @@
 
 `SqlAssist.Ssms22.Tests` 的 2 個視覺測試與 `SqlMetadata.Tests` 的定序回報測試在本機
 一直紅，與 master 內容相同，屬既有問題，不是合併造成的。
+
+（2026-09-22 更新）目前長期紅燈共 3 個，都與 `Statements/` 底下的展開功能無關：
+`SqlCompletionTriggerTests.目標沒收斂就不重開`、
+`SqlCompletionContextAnalyzerTests.既無前綴也無目標時不建議`、
+`NotificationChromeTests.精簡列表進度與覆蓋捲軸且收合切換圖示`（DPI 188 vs 188.666…）。
 
 ## 文件
 
