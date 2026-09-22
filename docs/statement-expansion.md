@@ -50,11 +50,20 @@ WHEN NOT MATCHED BY TARGET AND 1 = 0 THEN
 ```
 
 ```text
-DECLARE @NewDueDate datetime2(7);
-EXEC dbo.usp_Loan_Renew @LoanId = 0,                     -- int
-                        @Days = 0,                       -- int，選擇性
+DECLARE @LoanId int = 0;
+DECLARE @Days int = 7;
+DECLARE @NewDueDate datetime2(7) OUTPUT = NULL;
+EXEC dbo.usp_Loan_Renew @LoanId = @LoanId,               -- int
+                        @Days = @Days,                   -- int，選擇性
                         @NewDueDate = @NewDueDate OUTPUT -- datetime2(7)
+
+SELECT @NewDueDate AS NewDueDate;
 ```
+
+**每個**參數都先宣告，不限 `OUTPUT`；宣告裡填的是模組定義寫的預設值
+（`@Days = 7`），沒寫的才退回型別預留值。最後那一段 `SELECT` 把每個 `OUTPUT` 參數
+各印一列，一個 `OUTPUT` 都沒有時整段不寫。理由見
+[語句展開的值從哪裡來](statement-values.md)。
 
 五種展開只有「換成什麼」與「換掉哪一段」不一樣，「怎麼安全地換」是同一份：
 先把名稱插進去，用 `ITrackingSpan` 記住範圍，到背景取物件細節，回來確認原文

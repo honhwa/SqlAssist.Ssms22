@@ -34,6 +34,19 @@ public sealed class SqlObjectScriptTests
             },
             newLine: newLine);
 
+    /// <summary>同上，再加上把整份釘在來源資料庫上的那一句。</summary>
+    private static SqlScriptContext ExecutionInDatabase(string databaseName) =>
+        new(
+            SqlScriptOptions.Fidelity with
+            {
+                SetOptions = SqlSetOptionOutput.AlwaysOn,
+                BatchSeparation = SqlBatchSeparation.BetweenStatements,
+                ModuleStatement = SqlModuleStatement.Alter,
+                IncludeDatabaseContext = true
+            },
+            newLine: "\r\n",
+            databaseName: databaseName);
+
     private static SqlObjectStructure Module(
         SqlObjectKind kind,
         string name,
@@ -219,6 +232,51 @@ public sealed class SqlObjectScriptTests
 
         // 整段是註解，前面沒有 SET 批次可以跳過，所以停在第一個字元。
         Assert.Equal(0, script.CaretOffset);
+    }
+
+    /// <remarks>
+    /// 完整形狀：<c>USE</c> 自成一個批次，然後才是那兩個 <c>SET</c>，
+    /// 最後是本體。這一整段是要拿去執行的，少了任何一個 <c>GO</c> 都執行不了。
+    /// </remarks>
+    [Fact]
+    public void 模組的USE批次排在SET樣板之前()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", "CREATE PROCEDURE dbo.usp_LoanFinish\r\nAS\r\nSELECT 1;"),
+            ExecutionInDatabase("LibraryDb"));
+
+        Assert.Equal(
+            "USE [LibraryDb]\r\nGO\r\n" + Header + "ALTER PROCEDURE dbo.usp_LoanFinish\r\nAS\r\nSELECT 1;\r\nGO\r\n",
+            script.Text);
+    }
+
+    /// <remarks>
+    /// <c>USE</c> 與那兩個 <c>SET</c> 一樣是前置批次而不是內容。少跳過它的症狀
+    /// 是每一次開定義都停在整份指令碼的第一個字元——而那正好是
+    /// <see cref="SqlObjectScriptText.CaretOffset"/> 說要避免的同一件事。
+    /// </remarks>
+    [Fact]
+    public void 游標跳過USE批次停在物件名稱之後()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", "CREATE PROCEDURE dbo.usp_LoanFinish\r\n@Id int\r\nAS\r\nSELECT 1;"),
+            ExecutionInDatabase("LibraryDb"));
+
+        Assert.Equal(
+            "USE [LibraryDb]\r\nGO\r\n" + Header + "ALTER PROCEDURE dbo.usp_LoanFinish",
+            script.Text.Substring(0, script.CaretOffset));
+    }
+
+    /// <remarks>
+    /// 資料表是可以拿到任何地方執行的樣板，釘在來源資料庫上會擋掉
+    /// 「把這張表編寫到另一個資料庫」這個正常用法。
+    /// </remarks>
+    [Fact]
+    public void 資料表不補USE()
+    {
+        var script = SqlObjectScript.BuildEditable(Table(), ExecutionInDatabase("LibraryDb"));
+
+        Assert.StartsWith(Header + "CREATE TABLE [dbo].[Lib_Reader]", script.Text);
     }
 
     /// <remarks>

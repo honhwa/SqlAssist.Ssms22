@@ -136,7 +136,7 @@ public static class SqlModuleParameterDefaults
     /// 這兩個符號，而 <c>decimal(18,2)</c> 的逗號在括號裡，深度不同所以不會誤判。
     ///
     /// 有 <c>=</c> 時，值從那個等號的下一個詞法單元起算，到同層的下一個 <c>,</c>
-    /// 之前結束。取原文切片而不重組詞法單元：重組會把 <c>N'a b'</c> 的空白、
+    /// 或參數修飾詞之前結束。取原文切片而不重組詞法單元：重組會把 <c>N'a b'</c> 的空白、
     /// <c>'a''b'</c> 的跳脫字元與 <c>-1</c> 的負號寫成別的樣子。
     /// </remarks>
     private static bool TryReadDefault(
@@ -171,6 +171,16 @@ public static class SqlModuleParameterDefaults
             }
 
             if (current != depth)
+            {
+                continue;
+            }
+
+            // 參數修飾詞一律跳過。T-SQL 允許它出現在型別之前、型別之後或預設值之後：
+            //   @Result INT OUTPUT = 0     -- 在等號前
+            //   @Result INT = 0 OUTPUT     -- 在等號後
+            // 只看「同層第一個等號」的話，`@Result INT OUTPUT = 0` 會被讀成沒有預設值——
+            // 修飾詞擋在等號前面，而值那一側又從等號之後起算，兩邊都對不上。
+            if (IsParameterModifier(token))
             {
                 continue;
             }
@@ -243,6 +253,19 @@ public static class SqlModuleParameterDefaults
                 break;
             }
 
+            // 參數修飾詞一律代表值已經結束。
+            //
+            // 這裡以前不認這三個字，於是 `@cond varchar(8000) OUTPUT = ''` 這種寫法被切成
+            // `OUTPUT = ''`——修飾詞跑到 `=` 前面把它蓋掉了，值反而變成空的。切出來的字串
+            // 接著被填進展開後的宣告行，使用者看到的是一個同一個關鍵字出現兩次、
+            // 而且語法錯誤的 DECLARE。
+            //
+            // 收尾的右括號仍然算進值裡（`GETDATE()`、`(0.05)`），所以那兩條要在這一個之前判。
+            if (current == depth && IsParameterModifier(token))
+            {
+                break;
+            }
+
             end = index;
         }
 
@@ -255,6 +278,19 @@ public static class SqlModuleParameterDefaults
         var to = tokens[end].End;
         value = definition.Substring(from, to - from).Trim();
         return value.Length > 0;
+    }
+
+    /// <summary>
+    /// 這個詞法單元是不是參數修飾詞（<c>OUTPUT</c>／<c>OUT</c>／<c>READONLY</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 三個字都只能出現在參數宣告裡，而且都寫在型別之後——型別本身、值本身都不可能是它們。
+    /// 判準用 <see cref="SqlToken.IsKeyword(string)"/> 而不是比對原文：加了引號的同名識別字
+    /// （<c>[output]</c>）在那裡就自動被排除掉了。
+    /// </remarks>
+    private static bool IsParameterModifier(SqlToken token)
+    {
+        return token.IsKeyword("OUTPUT") || token.IsKeyword("OUT") || token.IsKeyword("READONLY");
     }
 
     /// <summary>這個詞法單元所在的括號深度。</summary>

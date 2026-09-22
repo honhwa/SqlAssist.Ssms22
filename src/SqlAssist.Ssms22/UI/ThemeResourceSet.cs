@@ -25,6 +25,8 @@ internal enum ThemeBrush
     BadgeBackground,
     AccentBackground,
     AccentBorder,
+    MatchHighlightBackground,
+    MatchHighlightForeground,
     DangerBackground,
     DangerPressed,
     DangerForeground,

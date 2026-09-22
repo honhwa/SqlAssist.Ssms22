@@ -183,4 +183,51 @@ public sealed class SqlProcedureCallTextTests
         Assert.Contains("DECLARE @Name nvarchar(100) = N'';", text);
         Assert.Contains("DECLARE @DueDate date = NULL;", text);
     }
+
+    /// <remarks>
+    /// 整條路徑的迴歸，兩層都驗：
+    ///
+    /// 第一層是位置的修正——定義裡寫 <c>@cond VARCHAR(8000) OUTPUT = ''</c>（修飾詞在等號<b>前</b>），
+    /// 展開出來的宣告行一度是 <c>DECLARE @cond varchar(8000) OUTPUT = '';</c>。那不只是「關鍵字
+    /// 出現兩次」的問題，而是 <c>OUTPUT</c> 落在等號<b>之後</b>：T-SQL 的宣告語法是
+    /// <c>DECLARE @變數 型別 [= 值]</c>，OUTPUT 只能緊跟在型別之後，寫在值後面會讓那一句
+    /// 執行的時候當場語法錯誤。正確形狀是把 OUTPUT 提到等號之前。
+    ///
+    /// 第二層是值的來源——修飾詞從定義被一起切進預設值（見
+    /// <see cref="SqlModuleParameterDefaultsTests.參數修飾詞不算進預設值"/>），
+    /// 宣告行只是把它原樣印出來的地方。
+    /// </remarks>
+    [Fact]
+    public void OUTPUT寫在等號之前()
+    {
+        var definition = "CREATE PROCEDURE dbo.usp_Cond_Read @cond VARCHAR(8000) OUTPUT = '' AS SELECT 1";
+        var values = SqlModuleParameterDefaults.FindValues(definition);
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter("@cond", "varchar(8000)", isOutput: true, isOptional: true,
+                    defaultValue: values["@cond"])
+            },
+            out _);
+
+        Assert.Contains("DECLARE @cond varchar(8000) OUTPUT = '';\r\n", text);
+        // 值後面不能再有第二個修飾詞，也不會有「修飾詞接在型別後又接在值後」的寫法。
+        Assert.DoesNotContain("= '' OUTPUT", text);
+        Assert.DoesNotContain("OUTPUT OUTPUT", text);
+    }
+
+    /// <remarks>
+    /// 沒有預設值的 OUTPUT 參數：修飾詞一樣在型別之後、型別預留值之前。
+    /// 這種情況下「值後面多一個 OUTPUT」與「修飾詞其實該在等號前」兩個症狀會分不開，
+    /// 所以另外釘一條。
+    /// </remarks>
+    [Fact]
+    public void 沒有預設值的OUTPUT參數修飾詞在值之前()
+    {
+        var text = Build(
+            new[] { new SqlStatementParameter("@Total", "decimal(18,2)", isOutput: true, isOptional: false) },
+            out _);
+
+        Assert.StartsWith("DECLARE @Total decimal(18,2) OUTPUT = 0;", text);
+    }
 }

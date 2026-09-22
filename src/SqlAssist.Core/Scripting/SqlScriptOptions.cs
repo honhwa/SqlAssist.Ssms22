@@ -192,6 +192,23 @@ public sealed record SqlScriptOptions
     /// <summary>模組（程序、函式、觸發程序、檢視）的定義寫成 CREATE 還是 ALTER。</summary>
     public SqlModuleStatement ModuleStatement { get; init; } = SqlModuleStatement.Create;
 
+    /// <summary>
+    /// 模組的指令碼最前面補一個 <c>USE [資料庫]</c> 批次，把它釘在物件所在的那個資料庫上。
+    /// </summary>
+    /// <remarks>
+    /// 補的是<b>物件所在</b>的資料庫，不是連線的預設資料庫：新開的查詢視窗沿用目前連線，
+    /// 而那一條連線不一定連在物件所在的資料庫上——三段式名稱指到的物件與
+    /// SQL Search 指名的那一筆都是。少了這一句，展開出來的 <c>ALTER PROCEDURE</c>
+    /// 會在錯的資料庫上執行；那一個資料庫上剛好有同名的程序時，它會靜靜地被蓋掉。
+    ///
+    /// <b>只有模組寫得出來</b>，理由見 <c>TSqlScriptRenderer</c>；資料表與其他物件
+    /// 即使開著也不會多這一句。
+    ///
+    /// 預設<b>關</b>：這一句綁死了一個資料庫名稱，而匯出用的指令碼（命令列工具、
+    /// 版控裡的 schema-as-code）要的是一份拿到哪裡都能執行的樣板。
+    /// </remarks>
+    public bool IncludeDatabaseContext { get; init; }
+
     /// <summary>檔頭註解：來源伺服器、資料庫、產生時間、工具版本與選項摘要。</summary>
     public bool IncludeHeaderComment { get; init; }
 

@@ -180,21 +180,59 @@ internal sealed class SqlScriptTheme : IDisposable
         return background is { } surface && foreground is { } written ? (surface, written) : null;
     }
 
-    /// <summary>命中底色：由主題強調色推導，對著<b>這一份指令碼</b>的底色與最淡的前景校正。</summary>
+    /// <summary>
+    /// 命中底色：與清單列上那個記號<b>同一個黃</b>，只依指令碼的底色調整明度。
+    /// </summary>
     /// <remarks>
-    /// 不直接用 <see cref="ThemeBrush.AccentBackground"/>：那一份是對著工具窗的底色算的，
-    /// 而指令碼的底色借自 SSMS 編輯器，兩者在深色主題下不一定相同——拿錯基準的症狀是
-    /// 高亮幾乎看不見，而使用者會以為命中位置根本沒有標出來。
+    /// 不直接用 <see cref="ThemeBrush.MatchHighlightBackground"/>：那一份是對著工具窗的底色算的，
+    /// 而指令碼的底色借自 SSMS 編輯器，兩者在深色主題下不一定相同。但<b>色相必須一致</b>——
+    /// 清單上標黃、預覽裡標成另一個顏色，使用者會以為兩處指的是不同的東西，
+    /// 而實際上「命中的就是這幾個字」是同一件事。
     ///
-    /// 傳進去的前景是註解色，那是這幾種著色裡最淡的一個：它在高亮上讀得到，其餘就都讀得到。
-    /// 高對比不必另外判斷——強調色在那時候已經等於前景色，校正過的結果本來就是實色反白。
+    /// <b>不能用 <c>EnsureBackgroundForText</c>。</b>那一支是為「使用者自訂的固定字色」寫的：
+    /// 它往黑或白的方向疊一層灰，直到<b>最淡的著色</b>（註解色）在高亮上也讀得到。
+    /// 拿黃當輸入時那個條件太鬆——黃本來就亮，疊上 16% 的黑就過了 4.5:1，
+    /// 而疊完的結果已經是一坨<b>橄欖色</b>。實測淺色、深色、plum、forest、mango 五種底色都會這樣，
+    /// 症狀是預覽裡的標記跟清單上那個黃看起來是兩回事。
+    ///
+    /// 改法是疊一層限量的半透明黑或白，只動明度、不動色相，校正目標改成
+    /// 「黃與指令碼底色至少差 3:1」（非文字的圖形對比）。著色本身交給既有的分類色：
+    /// 文字畫在黃底上，而記號色已經在 <see cref="ThemePalette"/> 那邊被證明配得起一般前景。
     /// </remarks>
     private static Color Highlight(Color foreground, Color background)
     {
-        var accent = ColorOf(ThemeBrush.AccentBorder, foreground);
-        // 先鋪一層半透明的強調色，再讓校正決定要往黑還是往白走；直接給實色會蓋掉語法著色。
-        var candidate = Color.FromArgb(0x59, accent.R, accent.G, accent.B);
-        return ThemeColorMath.EnsureBackgroundForText(candidate, foreground, background);
+        var mark = ColorOf(ThemeBrush.MatchHighlightBackground, foreground);
+
+        // 疊完之後再過一次圖形對比：上面那個 0.6 的上限已經留了餘裕，這裡是保險。
+        return ThemeColorMath.EnsureGraphicContrast(Fade(mark, background), background);
+    }
+
+    /// <summary>
+    /// 往黑或白的方向疊一層半透明的灰，直到與底色差 3:1；最多疊到 60%。
+    /// </summary>
+    /// <remarks>
+    /// 上限 <c>ShadeCeiling</c> 是必要的：往白色疊到底（100%）會把黃沖成白，
+    /// 那就不是「同一個黃」了。往黑疊到底則會變成灰褐。留一段上限，
+    /// 最壞情況下寧可對比差一點，也不要換掉色相——辨識得出「這是同一種標記」比
+    /// 濃淡夠不夠重要，而底色本來就已經是深淺兩極裡的其中一極。
+    /// </remarks>
+    private static Color Fade(Color mark, Color background)
+    {
+        // 底色偏暗就提亮，偏亮就壓深；用「與黑、與白哪個比較遠」判斷，不另外暴露亮度函式。
+        var lighten = ThemeColorMath.Contrast(background, Colors.Black) < ThemeColorMath.Contrast(background, Colors.White);
+        var target = lighten ? Colors.White : Colors.Black;
+
+        for (var step = 1; step <= 6; step++)
+        {
+            var candidate = ThemeColorMath.Composite(
+                Color.FromArgb((byte)Math.Round(255 * step / 10.0), target.R, target.G, target.B), mark);
+            if (ThemeColorMath.Contrast(candidate, background) >= 3)
+            {
+                return candidate;
+            }
+        }
+
+        return ThemeColorMath.Composite(Color.FromArgb(153, target.R, target.G, target.B), mark);
     }
 
     private static Color Resolve(

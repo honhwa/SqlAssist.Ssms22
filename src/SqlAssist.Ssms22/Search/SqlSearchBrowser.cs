@@ -147,7 +147,8 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
             if (_model.Server is { Length: > 0 }) SelectServer(null);
             else PickServerFromExplorer();
         });
-        _splitView = new MasterDetailView(_surface, _preview, _preview.Summary, MasterDetailView.DefaultSideBySideWidth);
+        // 結果在上、預覽在下，不論工具窗多寬；理由見 SqlSearchSplit。
+        _splitView = new MasterDetailView(_surface, _preview, _preview.Summary, SqlSearchSplit.Threshold);
         _splitView.DetailExpandedChanged += (_, _) => SqlAssistPlatformGuard.Run("切換 SQL Search 預覽", UpdatePreview);
         // 剪貼簿可能被別的程序占用；失敗要看得見，否則使用者以為下一次貼上是這個名稱。
         _preview.CopyRequested += (_, _) => Run(() => CopyName(_preview.Current));

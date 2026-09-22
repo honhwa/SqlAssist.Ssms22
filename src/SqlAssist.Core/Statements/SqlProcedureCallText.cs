@@ -156,18 +156,19 @@ public static class SqlProcedureCallText
                 builder.Append(indent);
             }
 
-            builder.Append("DECLARE ").Append(parameter.Name).Append(' ');
+            builder.Append("DECLARE ").Append(parameter.Name).Append(' ')
+                .Append(parameter.DataType);
 
-            // OUTPUT 的那一份要在宣告裡保留 OUTPUT：少了它，程序把值寫進來的權限
-            // 就不存在，而錯誤訊息（「參數不是 OUTPUT 參數」）出現在呼叫那一行，
-            // 跟宣告隔了好幾行，不容易一眼連起來。
+            // OUTPUT 必須寫在 <b>等號之前</b>：`DECLARE @x INT OUTPUT = 0` 合法，
+            // `DECLARE @x INT = 0 OUTPUT` 是語法錯誤——T-SQL 的宣告語法是
+            // `DECLARE @變數 型別 [= 值]`，而 OUTPUT 屬於「參數修飾詞」那一部分，
+            // 只能緊跟在型別之後。寫在值後面會在執行展開出來的那一句時當場失敗。
+            //
+            // 少了 OUTPUT 則程序寫不回值，而錯誤訊息（「參數不是 OUTPUT 參數」）出現在
+            // 呼叫那一行，跟宣告隔了好幾行，不容易一眼連起來。
             if (parameter.IsOutput)
             {
-                builder.Append(parameter.DataType).Append(" OUTPUT");
-            }
-            else
-            {
-                builder.Append(parameter.DataType);
+                builder.Append(" OUTPUT");
             }
 
             // 宣告時就先填好值：預設值來自模組定義（SqlModuleParameterDefaults），

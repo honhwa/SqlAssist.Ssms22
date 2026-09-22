@@ -21,11 +21,23 @@ namespace SqlAssist.Metadata.Tests.Formatting;
 /// </remarks>
 public sealed class TSqlScriptRendererTests
 {
-    private static SqlScriptContext Context(SqlScriptOptions options, string? databaseCollation = null) =>
-        new(options, databaseCollation, newLine: "\n");
+    private static SqlScriptContext Context(
+        SqlScriptOptions options,
+        string? databaseCollation = null,
+        string? databaseName = null) =>
+        new(options, databaseCollation, newLine: "\n", databaseName: databaseName);
 
     private static string Render(SqlScriptOptions options, string? databaseCollation = null) =>
         TSqlScriptRenderer.Default.Render(LoanTableFixture.Create(), Context(options, databaseCollation));
+
+    /// <summary>一個模組，以及「這一次的來源資料庫是哪一個」。</summary>
+    private static string RenderModule(SqlScriptOptions options, string? databaseName = null) =>
+        TSqlScriptRenderer.Default.Render(
+            new SqlObjectStructure(
+                new SqlObjectDetail(
+                    new SqlObjectInfo(2, "dbo", "usp_LoanFinish", SqlObjectKind.Procedure),
+                    definition: "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;")),
+            Context(options, databaseName: databaseName));
 
     // ── 版面 ──────────────────────────────────────────────────────────
 
@@ -1075,6 +1087,125 @@ public sealed class TSqlScriptRendererTests
         Assert.DoesNotContain("ALTER", script);
     }
 
+
+    // ── 資料庫內容 ────────────────────────────────────────────────────
+
+    /// <remarks>
+    /// 新開的查詢視窗沿用目前連線，而那一條連線不一定連在物件所在的資料庫上
+    /// （三段式名稱指到的物件、SQL Search 指名的那一筆都是）。少了這一句，
+    /// 展開出來的 <c>ALTER PROCEDURE</c> 會在錯的資料庫上執行。
+    /// </remarks>
+    [Fact]
+    public void 模組補上USE與GO()
+    {
+        var script = RenderModule(
+            SqlScriptOptions.Fidelity with { IncludeDatabaseContext = true }, "LibraryDb");
+
+        Assert.StartsWith("USE [LibraryDb]\nGO\n", script);
+        Assert.Contains("CREATE PROCEDURE dbo.usp_LoanFinish", script);
+    }
+
+    /// <remarks>
+    /// 綁死一個資料庫名稱是這一項的代價，所以預設關著——匯出用的指令碼
+    /// （命令列工具、版控裡的 schema-as-code）要的是一份拿到哪裡都能執行的樣板。
+    /// </remarks>
+    [Fact]
+    public void 沒開選項時模組不補USE()
+    {
+        Assert.DoesNotContain("USE ", RenderModule(SqlScriptOptions.Fidelity, "LibraryDb"));
+    }
+
+    /// <remarks>
+    /// 猜一個資料庫名稱出來比不寫嚴重；少了它最壞也只是回到這一句出現之前的行為。
+    /// </remarks>
+    [Fact]
+    public void 查不到資料庫名稱時不補USE()
+    {
+        Assert.DoesNotContain(
+            "USE ", RenderModule(SqlScriptOptions.Fidelity with { IncludeDatabaseContext = true }));
+    }
+
+    /// <remarks>
+    /// 模組規定是批次裡的第一個敘述，中間少了 <c>GO</c>，<c>USE</c> 與
+    /// <c>ALTER PROCEDURE</c> 會落在同一個批次裡而整份執行不了。
+    ///
+    /// 批次分隔關掉時尤其要看這一格：那時候只有「必須自成批次」的敘述還會補上
+    /// 分隔字元，光靠「這是一個敘述」是不夠的。
+    /// </remarks>
+    [Fact]
+    public void 批次分隔關掉時USE仍然自成一個批次()
+    {
+        var script = RenderModule(
+            SqlScriptOptions.Fidelity with
+            {
+                IncludeDatabaseContext = true,
+                BatchSeparation = SqlBatchSeparation.None
+            },
+            "LibraryDb");
+
+        Assert.StartsWith("USE [LibraryDb]\nGO\n", script);
+        Assert.EndsWith("SELECT 1;\nGO\n", script);
+    }
+
+    /// <remarks>
+    /// 這一句決定後面每一個敘述在哪一個資料庫上執行，是這份指令碼的第一件事；
+    /// 檔頭只是說明，排在它後面仍然讀得懂。
+    /// </remarks>
+    [Fact]
+    public void USE排在檔頭註解之前()
+    {
+        var script = RenderModule(
+            SqlScriptOptions.Fidelity with
+            {
+                IncludeDatabaseContext = true,
+                IncludeHeaderComment = true
+            },
+            "LibraryDb");
+
+        Assert.StartsWith("USE [LibraryDb]\nGO\n-- 來源：LibraryDb\n", script);
+    }
+
+    /// <remarks>
+    /// 資料表是「可以拿到任何地方執行的樣板」，釘在來源資料庫上反而擋掉了
+    /// 「把這張表編寫到另一個資料庫」這個正常用法。
+    /// </remarks>
+    [Theory]
+    [InlineData(SqlObjectKind.Table)]
+    [InlineData(SqlObjectKind.TableType)]
+    public void 非模組即使開著也不補USE(SqlObjectKind kind)
+    {
+        var structure = new SqlObjectStructure(
+            new SqlObjectDetail(
+                new SqlObjectInfo(1, "dbo", "Lib_Tag", kind),
+                new[] { new SqlColumnInfo(1, "TagId", "int", false) }));
+
+        var script = TSqlScriptRenderer.Default.Render(
+            structure,
+            Context(SqlScriptOptions.Fidelity with { IncludeDatabaseContext = true }, databaseName: "LibraryDb"));
+
+        Assert.DoesNotContain("USE ", script);
+    }
+
+    /// <remarks>
+    /// 資料庫名稱走的是與其餘識別字同一條加括號規則。名稱裡有空白時即使關掉
+    /// 方括號也非加不可——那不是風格，少了它那一句執行不了。
+    /// </remarks>
+    [Theory]
+    [InlineData(true, "My Db", "USE [My Db]\nGO\n")]
+    [InlineData(false, "LibraryDb", "USE LibraryDb\nGO\n")]
+    public void USE的資料庫名稱依識別字選項加括號(
+        bool quoteIdentifiers, string databaseName, string expected)
+    {
+        var script = RenderModule(
+            SqlScriptOptions.Fidelity with
+            {
+                IncludeDatabaseContext = true,
+                QuoteIdentifiers = quoteIdentifiers
+            },
+            databaseName);
+
+        Assert.StartsWith(expected, script);
+    }
 
     /// <summary>
     /// 三組風格各自與存檔的快照逐字相同。

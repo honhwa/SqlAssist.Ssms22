@@ -193,6 +193,57 @@ SELECT 1");
         Assert.Equal("N''", values["@Empty"]);
     }
 
+    /// <remarks>
+    /// <c>OUTPUT</c> 寫在等號<b>前面</b>是常見寫法，而那正是漏掉它會壞掉的情況：
+    /// 只看「同層第一個等號」的話，修飾詞會把等號蓋掉，值那一側從等號之後起算又對不上，
+    /// 於是 <c>@cond</c> 被當成沒有預設值；而值真的被切出來的那些又連修飾詞一起切進去。
+    /// 兩種都會讓展開後的宣告行變成 <c>DECLARE @cond varchar(8000) OUTPUT = '' OUTPUT;</c>
+    /// 這種同一個關鍵字出現兩次且語法錯誤的句子。
+    ///
+    /// 修飾詞在等號後面的寫法同樣要切乾淨。值本身不可能以這三個字開頭——
+    /// 它們不是型別、也不是任何合法的值。
+    /// </remarks>
+    [Fact]
+    public void 參數修飾詞不算進預設值()
+    {
+        var values = SqlModuleParameterDefaults.FindValues(@"
+CREATE PROCEDURE dbo.usp_Cond_Read
+    @cond VARCHAR(8000) OUTPUT = '',
+    @Result INT OUTPUT = 0,
+    @Token NVARCHAR(40) = N'' OUTPUT,
+    @Filter VARCHAR(20) = 'x' OUT,
+    @Rows TABLE READONLY
+AS
+SELECT 1");
+
+        Assert.Equal("''", values["@cond"]);
+        Assert.Equal("0", values["@Result"]);
+        Assert.Equal("N''", values["@Token"]);
+        Assert.Equal("'x'", values["@Filter"]);
+        // 資料表型別參數只能 READONLY，而且不能有預設值。
+        Assert.False(values.ContainsKey("@Rows"));
+    }
+
+    /// <remarks>
+    /// <c>Find</c> 是「這個參數可以整個省略」的那一份清單，與值一樣要認得修飾詞：
+    /// 修飾詞只描述傳值方向，不影響參數能不能省略。
+    /// </remarks>
+    [Fact]
+    public void 修飾詞前後的預設值都算選擇性()
+    {
+        var defaults = SqlModuleParameterDefaults.Find(@"
+CREATE PROCEDURE dbo.usp_Cond_Read
+    @cond VARCHAR(8000) OUTPUT = '',
+    @Result INT OUTPUT = 0,
+    @Reason NVARCHAR(200) OUTPUT
+AS
+SELECT 1");
+
+        Assert.Contains("@cond", defaults);
+        Assert.Contains("@Result", defaults);
+        Assert.DoesNotContain("@Reason", defaults);
+    }
+
     [Fact]
     public void 沒有預設值的參數不進字典()
     {

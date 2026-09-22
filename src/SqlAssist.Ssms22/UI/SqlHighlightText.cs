@@ -71,8 +71,13 @@ internal sealed class SqlHighlightText : TextBlock
             if (span.Start < at || span.End > text.Length) continue;
             if (span.Start > at) Inlines.Add(new Run(text.Substring(at, span.Start - at)));
 
-            var hit = new Run(text.Substring(span.Start, span.Length)) { FontWeight = FontWeights.SemiBold };
-            hit.SetResourceReference(TextElement.BackgroundProperty, ThemeBrush.AccentBackground);
+            // 命中只比對「哪幾個字」——底色要說的是「就是這一段」而不是「這裡是主題色」，
+            // 所以走獨立的記號色而不是主題強調色。
+            var hit = new Run(text.Substring(span.Start, span.Length))
+            {
+                FontWeight = FontWeights.SemiBold
+            }.WithTheme(TextElement.BackgroundProperty, ThemeBrush.MatchHighlightBackground);
+            hit.WithTheme(TextElement.ForegroundProperty, ThemeBrush.MatchHighlightForeground);
             Inlines.Add(hit);
             at = span.End;
         }

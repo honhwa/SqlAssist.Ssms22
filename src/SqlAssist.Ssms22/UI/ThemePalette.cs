@@ -72,6 +72,69 @@ internal static class ThemePalette
         Tone(ThemeBrush.FavoriteBackground, ThemeBrush.FavoritePressed, ThemeBrush.FavoriteForeground, Favorite);
         DiffTone(ThemeBrush.DiffAddedBackground, ThemeBrush.DiffAddedForeground, Added);
         DiffTone(ThemeBrush.DiffRemovedBackground, ThemeBrush.DiffRemovedForeground, Danger);
+        MarkTone();
+
+        // 搜尋命中的記號色。
+        //
+        // 用固定的黃而不是主題強調色：命中要回答的是「你找的那幾個字在哪」，那是一個與主題無關的
+        // 記號——借用強調色的話，同一個底色又同時代表選取、焦點與作用中，而命中是另一件事。
+        //
+        // 高對比不上色，沿用系統選取配對；命中改由字重辨識（SqlHighlightText 一律加粗命中區段）。
+        void MarkTone()
+        {
+            if (highContrast)
+            {
+                colors[ThemeBrush.MatchHighlightBackground] = foreground;
+                colors[ThemeBrush.MatchHighlightForeground] = background;
+                return;
+            }
+
+            // 文字落在哪裡不只記號一個：命中的那一列常常同時是選取列，而 RowSelected 是半透明的，
+            // 會再疊一層。深色主題的選取色偏白，疊完的記號亮到一般前景壓不過去——所以校正要對
+            // 「記號」與「選取底色再疊上記號」兩種結果都做，否則淺色主題過關、深色主題失敗，
+            // 而症狀是深色主題的搜尋結果整段讀不到。
+            Color[] Surfaces(Color mark)
+            {
+                var composed = ThemeColorMath.Composite(mark, background);
+                var selected = ThemeColorMath.Composite(colors[ThemeBrush.RowSelected], composed);
+                var onWindow = ThemeColorMath.Composite(mark, window.Background);
+                var selectedOnWindow = ThemeColorMath.Composite(colors[ThemeBrush.RowSelected], onWindow);
+                return new[] { composed, selected, onWindow, selectedOnWindow };
+            }
+
+            // 記號自己讓路而不是把文字改成黑色：命中那一列的字突然換色看起來像換了字型，
+            // 而記號只是背景，減淡是它該做的事。減到底還不夠就讓下面的文字校正接手。
+            bool ReadableOnAll(Color mark)
+            {
+                foreach (var surface in Surfaces(mark))
+                {
+                    if (ThemeColorMath.Contrast(foreground, surface) < 4.5)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            var mark = Mark;
+            while (mark.A > 0 && !ReadableOnAll(mark))
+            {
+                mark = Color.FromArgb((byte)(mark.A / 2), mark.R, mark.G, mark.B);
+            }
+
+            colors[ThemeBrush.MatchHighlightBackground] = mark;
+
+            // 命中的文字沿用一般前景，只校正到讀得到為止；記號本身已經在說「這一段」了，
+            // 再給它一個自己的文字色只會讓同一列出現第三種顏色。
+            var tint = foreground;
+            foreach (var surface in Surfaces(mark))
+            {
+                tint = ThemeColorMath.EnsureTextContrast(tint, surface);
+            }
+
+            colors[ThemeBrush.MatchHighlightForeground] = tint;
+        }
 
         // 差異列的底色鋪滿整行，SQL 文字直接疊在上面：一般前景必須讀得到，不夠就減淡而不換色相。
         // 標記與行號另用同色相的深／淺色，並在兩種表面上都過 4.5:1。高對比不上色，只靠 +／- 標記辨識。
@@ -130,6 +193,16 @@ internal static class ThemePalette
 
     /// <summary>收藏的種子色；星號圖示的暖金黃，不借用主題強調色以免與焦點混淆。</summary>
     private static readonly Color Favorite = Color.FromRgb(220, 160, 20);
+
+    /// <summary>
+    /// 搜尋命中的記號色；比 <see cref="Favorite"/> 淺，因為這是唯一鋪在文字後面又會被選取底色再疊一層的色票。
+    /// </summary>
+    /// <remarks>
+    /// 淺黃配深字才讀得到，而深色主題上深字剛好也是對的——所以它不像其他色票那樣跟著主題換深淺，
+    /// 只由下面的對比校正決定要不要再壓深一點。挑黃而不是別的色相，是因為這個記號要與
+    /// 選取、焦點、成功／失敗都分得開，而那幾個已經佔走了藍紫與紅綠。
+    /// </remarks>
+    private static readonly Color Mark = Color.FromRgb(255, 214, 0);
 
     private static Color Overlay(Color color, double opacity) =>
         Color.FromArgb((byte)Math.Round(color.A * opacity), color.R, color.G, color.B);

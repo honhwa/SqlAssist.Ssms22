@@ -40,6 +40,10 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
         }
 
         var statements = new List<Statement>();
+
+        // USE 排在檔頭註解之前：它決定後面每一個敘述在哪一個資料庫上執行，是這份
+        // 指令碼的第一件事；檔頭只是說明，排在它後面仍然讀得懂。
+        AppendDatabaseContext(statements, objects, context);
         AppendHeaderComment(statements, context);
 
         foreach (var structure in objects)
@@ -48,6 +52,67 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
         }
 
         return Join(statements, context);
+    }
+
+    /// <summary>
+    /// <c>USE [資料庫]</c>：把整份指令碼釘在物件所在的那一個資料庫上。
+    /// </summary>
+    /// <remarks>
+    /// 新開的查詢視窗沿用目前連線，而那一條連線不一定連在物件所在的資料庫上——
+    /// 三段式名稱指到的物件與 SQL Search 指名的那一筆都是。少了這一句，
+    /// 展開出來的 <c>ALTER PROCEDURE</c> 會在錯的資料庫上執行；那一個資料庫上
+    /// 剛好有同名的程序時，它會<b>靜靜地被蓋掉</b>，畫面上看不出任何差別。
+    ///
+    /// <b>只對模組寫。</b>模組的定義是存在資料庫裡的一份文件，<c>ALTER</c> 它就是在改
+    /// 那一份，跑錯資料庫等於改到另一個物件的同名文件。資料表沒有這個性質——
+    /// 一份 <c>CREATE TABLE</c> 是可以拿到任何地方執行的樣板，把它釘在來源資料庫上
+    /// 反而擋掉了「把這張表編寫到另一個資料庫」這個正常用法。
+    ///
+    /// 它<b>必須自成一個批次</b>（<see cref="Statement.RequiresBatch"/>）：模組規定是
+    /// 批次裡的第一個敘述，中間少了 <c>GO</c>，<c>USE</c> 與 <c>ALTER PROCEDURE</c>
+    /// 會落在同一個批次裡而整份執行不了。批次分隔關掉時尤其要看這一格——
+    /// 那時候只剩它還會補上分隔字元。
+    ///
+    /// 查不到資料庫名稱時整句不寫：猜一個名字出來比不寫嚴重，而少了它最壞也只是
+    /// 回到這一句出現之前的行為。
+    /// </remarks>
+    private static void AppendDatabaseContext(
+        List<Statement> statements,
+        IReadOnlyList<SqlObjectStructure> objects,
+        SqlScriptContext context)
+    {
+        if (!context.Options.IncludeDatabaseContext ||
+            context.DatabaseName is not { Length: > 0 } database ||
+            !AllModules(objects))
+        {
+            return;
+        }
+
+        statements.Add(new Statement(
+            "USE " + Identifier(database, context.Options), batched: true, requiresBatch: true));
+    }
+
+    /// <remarks>
+    /// 空清單不算：一份什麼都沒有的指令碼前面掛一句 <c>USE</c> 是無主的。
+    /// 多物件時全部都要是模組——單一 <see cref="SqlScriptContext.DatabaseName"/> 對
+    /// 混了資料表的清單本來就說不準，而那一條是「編寫指令碼為」的匯出路徑。
+    /// </remarks>
+    private static bool AllModules(IReadOnlyList<SqlObjectStructure> objects)
+    {
+        if (objects.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var structure in objects)
+        {
+            if (!structure.Object.Kind.IsModule())
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

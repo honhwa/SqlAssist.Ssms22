@@ -12,16 +12,21 @@ namespace SqlAssist.Ssms22.Settings;
 /// 這一次要用哪一組指令碼選項。
 /// </summary>
 /// <remarks>
-/// F12 與浮動預覽的指令碼分頁都問這裡。兩邊各自組一份 <see cref="SqlScriptContext"/>
+/// 三個表面都問這裡：F12（<c>SqlDefinitionOpener</c>）、SQL Search 的定義預覽
+/// （<c>SqlSearchDefinitionLoader</c>）與浮動預覽的指令碼分頁
+/// （<c>SqlStructurePreviewControl</c>）。各自組一份 <see cref="SqlScriptContext"/>
 /// 的症狀是同一張資料表在兩個表面上長得不一樣，而使用者會以為其中一條壞了——
 /// 那正是把組字串收斂成單一 <see cref="TSqlScriptRenderer"/> 要解決的事，
 /// 選項在呼叫端分岔的話等於白收斂。
 /// </remarks>
 internal static class SqlScriptPreferences
 {
-    /// <summary>拿來對照的那一份：浮動預覽的指令碼分頁。</summary>
+    /// <summary>拿來對照的那一份：兩個唯讀的閱讀表面。</summary>
     /// <param name="newLine">目的地文件使用的換行字元。</param>
-    /// <param name="source">產生檔頭註解要用的來源物件；沒有時檔頭少那幾行。</param>
+    /// <param name="source">
+    /// 這一份指令碼講的是哪個物件。決定檔頭註解寫不寫得出來源，也決定要不要補
+    /// <c>USE</c>（見 <see cref="Build"/>）。
+    /// </param>
     public static SqlScriptContext Create(string? newLine, SqlObjectInfo? source = null) =>
         Build(newLine, source, forExecution: false);
 
@@ -51,7 +56,12 @@ internal static class SqlScriptPreferences
         {
             IncludeExtendedProperties = settings.ScriptIncludeExtendedProperties,
             IncludeAnalyzerComments = settings.ScriptIncludeAnalyzerComments,
-            IncludeHeaderComment = settings.ScriptIncludeHeaderComment
+            IncludeHeaderComment = settings.ScriptIncludeHeaderComment,
+
+            // 這一句只由 renderer 對模組寫出來（理由在那裡），這裡只管要不要開。
+            // 三個表面都要開：預覽不執行，但它顯示的與 F12 開出來的是同一份東西，
+            // 少了一句的症狀是使用者看著預覽對照，卻在開出來的視窗裡找不到它。
+            IncludeDatabaseContext = true
         };
 
         if (forExecution)

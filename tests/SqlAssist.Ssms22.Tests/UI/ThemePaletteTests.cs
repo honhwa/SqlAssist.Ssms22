@@ -144,6 +144,50 @@ public sealed class ThemePaletteTests
         Assert.Equal(colors[ThemeBrush.ListForeground], colors[ThemeBrush.DiffRemovedForeground]);
     }
 
+    /// <remarks>
+    /// 搜尋命中的記號是黃的，而且在深淺兩種主題下都是同一個色系——它回答的是
+    /// 「你找的那幾個字在哪」，與主題無關；跟著主題換色會讓同一個記號在兩個主題裡
+    /// 指涉兩件事。高對比是例外：那裡不上色，改用系統選取配對。
+    ///
+    /// 記號底色會再疊上半透明的選取底色（<c>RowSelected</c>），所以配對文字要在
+    /// 合成之後仍然讀得到——那是這一條真正在驗的東西。記號自己會為了讓路而減淡，
+    /// 但減淡只在碰到下限時才發生，所以色相與亮度都還在「黃」的範圍裡。
+    /// </remarks>
+    [Theory]
+    [InlineData("light")]
+    [InlineData("mango")]
+    [InlineData("cool-breeze")]
+    [InlineData("dark")]
+    [InlineData("plum")]
+    [InlineData("forest")]
+    public void 命中記號是黃色且配對文字在選取底色上仍可讀(string mode)
+    {
+        var colors = ColorsFor(mode);
+        var mark = colors[ThemeBrush.MatchHighlightBackground];
+        var text = colors[ThemeBrush.MatchHighlightForeground];
+        // 黃：紅與綠都明顯高於藍，而且還是個亮色——減淡只降透明度，色相不變。
+        Assert.True(mark.G > mark.B * 1.5, $"{mode} 的命中記號不是黃的：{mark}");
+        Assert.True(mark.R > 200 && mark.G > 150, $"{mode} 的命中記號太暗：{mark}");
+
+        foreach (var surface in new[] { colors[ThemeBrush.ListBackground], colors[ThemeBrush.WindowBackground] })
+        {
+            foreach (var selection in new[] { Colors.Transparent, colors[ThemeBrush.RowSelected] })
+            {
+                var line = ThemeColorMath.Composite(selection, ThemeColorMath.Composite(mark, surface));
+                Assert.True(ThemeColorMath.Contrast(text, line) >= 4.5,
+                    $"{mode} 的命中文字在 {line} 上讀不到");
+            }
+        }
+    }
+
+    [Fact]
+    public void 高對比的命中不上色而用系統選取配對()
+    {
+        var colors = ColorsFor("high-contrast");
+        Assert.Equal(colors[ThemeBrush.ListForeground], colors[ThemeBrush.MatchHighlightBackground]);
+        Assert.Equal(colors[ThemeBrush.ListBackground], colors[ThemeBrush.MatchHighlightForeground]);
+    }
+
     [Fact]
     public void 高對比的語意色調回到系統選取色()
     {
@@ -232,7 +276,10 @@ public sealed class ThemePaletteTests
         Assert.Equal(colors[ThemeBrush.ListForeground], colors[ThemeBrush.ScrollThumb]);
         Assert.True(ColorsFor("dark")[ThemeBrush.ScrollThumb].A < ColorsFor("dark")[ThemeBrush.DimForeground].A);
         Assert.Equal((byte)0, colors[ThemeBrush.BlockRange].A);
-        foreach (var color in colors.Where(pair => pair.Key != ThemeBrush.BlockRange).Select(pair => pair.Value))
+        // 命中記號的配對文字由對比校正決定，可以把黑壓成半透明；其餘色票在高對比下都是實色。
+        foreach (var color in colors
+                     .Where(pair => pair.Key is not (ThemeBrush.BlockRange or ThemeBrush.MatchHighlightForeground))
+                     .Select(pair => pair.Value))
         {
             Assert.Equal((byte)255, color.A);
         }

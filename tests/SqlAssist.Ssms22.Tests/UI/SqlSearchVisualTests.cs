@@ -56,7 +56,8 @@ public sealed class SqlSearchVisualTests
                     .SelectMany(text => text.Inlines.OfType<Run>())
                     .Where(run => run.Background is not null).ToArray();
                 Assert.NotEmpty(highlights);
-                Assert.All(highlights, run => Assert.Same(palette.Resources[ThemeBrush.AccentBackground], run.Background));
+                Assert.All(highlights, run => Assert.Same(palette.Resources[ThemeBrush.MatchHighlightBackground], run.Background));
+                Assert.All(highlights, run => Assert.Same(palette.Resources[ThemeBrush.MatchHighlightForeground], run.Foreground));
             }
         });
     }
@@ -325,13 +326,47 @@ public sealed class SqlSearchVisualTests
             Assert.Equal(0, Grid.GetRow(master));
             Assert.Equal(2, Grid.GetRow(detail));
 
-            // 不傳門檻的主從區永遠上下分割；SQL Memory 跟 SQL Search 一樣會傳門檻，這裡只驗「沒傳就不轉向」。
-            var fixedSplit = new MasterDetailView(new Border(), new Border());
-            var fixedHost = new Border { Child = fixedSplit };
-            fixedHost.Measure(new Size(1200, 400));
-            fixedHost.Arrange(new Rect(0, 0, 1200, 400));
-            fixedHost.UpdateLayout();
-            Assert.False(fixedSplit.IsSideBySide);
+            // 不傳門檻的主從區永遠上下分割：SQL Search 現在就是這一種——結果在上、預覽在下，
+            // 不論工具窗多寬。清單要的是高度（一列一列掃），預覽要的是寬度（一行 SQL 讀完）。
+            var stacked = new MasterDetailView(new Border(), new Border());
+            var stackedHost = new Border { Child = stacked };
+            stackedHost.Measure(new Size(1200, 400));
+            stackedHost.Arrange(new Rect(0, 0, 1200, 400));
+            stackedHost.UpdateLayout();
+            Assert.False(stacked.IsSideBySide);
+        });
+    }
+
+    /// <remarks>
+    /// SQL Search 的主從區固定在上下分割：結果在上、預覽在下，寬到任何尺寸都不轉左右。
+    /// 門檻只有 <see cref="MasterDetailView"/> 讀得到，所以這一條先驗產品傳的是 null
+    /// （沒有它就一定會轉），再拿同一個值排一次版面。
+    /// </remarks>
+    [Fact]
+    public void 結果在上預覽在下而不隨寬度轉左右()
+    {
+        WpfTest.Run(() =>
+        {
+            Assert.Null(SqlSearchSplit.Threshold);
+
+            var split = new MasterDetailView(new Border(), new Border(),
+                sideBySideWidth: SqlSearchSplit.Threshold);
+            var host = new Border { Child = split };
+
+            void Layout(double width)
+            {
+                host.Measure(new Size(width, 400));
+                host.Arrange(new Rect(0, 0, width, 400));
+                host.UpdateLayout();
+            }
+
+            // 遠超過 MasterDetailView.DefaultSideBySideWidth 也仍然是上下分割。
+            foreach (var width in new[] { 360d, MasterDetailView.DefaultSideBySideWidth, 1200 })
+            {
+                Layout(width);
+                Assert.False(split.IsSideBySide, $"{width} 不該轉成左右");
+                Assert.Equal(3, split.RowDefinitions.Count);
+            }
         });
     }
 

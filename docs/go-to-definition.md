@@ -4,8 +4,11 @@
 執行的定義，並沿用你目前的連線。
 
 ```sql
-SET QUOTED_IDENTIFIER ON
+USE [LibraryDb]
+GO
 SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
 GO
 -- =============================================
 -- Author:      
@@ -20,6 +23,9 @@ BEGIN
 END
 GO
 ```
+
+最前面那句 `USE` 把整份釘在物件所在的資料庫上，只對模組寫，理由見
+[F12 物件指令碼](definition-scripts.md#最前面那句-use)。
 
 游標停在 `usp_Loan_Renew` 之後——那是讀一份定義的起點，也是接著要改參數時的位置。
 停在整份的結尾等於一打開就被捲到最後一行。
