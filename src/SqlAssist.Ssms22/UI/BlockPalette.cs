@@ -54,13 +54,13 @@ internal static class BlockPalette
 
             // 使用者指定過顏色就以他指定的為準，只做對比校正；套標記層的亮度帶等於把他挑的顏色改掉。
             var fill = ThemeColorMath.EnsureGraphicContrast(seed, background);
-            Color fill;
-            if (explicitBackground is { } chosen)
-                fill = ThemeColorMath.EnsureGraphicContrast(chosen, background);
-            else if (adjustFallback)
-                fill = ThemeColorMath.EnsureGraphicContrast(fallback, background);
-            else
-                fill = ThemeColorMath.Composite(fallback, background);
+            //Color fill;
+            //if (explicitBackground is { } chosen)
+            //    fill = ThemeColorMath.EnsureGraphicContrast(chosen, background);
+            //else if (adjustFallback)
+            //    fill = ThemeColorMath.EnsureGraphicContrast(fallback, background);
+            //else
+            //    fill = ThemeColorMath.Composite(fallback, background);
             if (explicitInk is { } requested)
                 return (requested, ThemeColorMath.EnsureBackgroundForText(fill, requested, background));
             return (ThemeColorMath.EnsureTextContrast(text, fill), fill);
