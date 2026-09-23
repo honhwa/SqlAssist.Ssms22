@@ -203,8 +203,11 @@ internal static class SqlAutoPairing
 
         var inner = new SnapshotSpan(updated, span.Start.Position + 1, span.Length);
         textView.Selection.Select(inner, isReversed: false);
-        textView.Caret.MoveTo(inner.End);
-        textView.Caret.EnsureVisible();
+
+        // 只捲動，不動游標。**選取之後不要再呼叫 Caret.MoveTo**：那會把剛做好的選取
+        // 收掉，而這裡的選取是功能的一部分——沒有它，接著打第二個分隔字元不會再包
+        // 一層，只會變成插入一個字元。Select 本身已經把游標擺在範圍末端。
+        textView.ViewScroller.EnsureSpanVisible(inner);
         SqlAssistDiagnostics.Write($"以 {typedCharacter}{closeCharacter} 包夾選取範圍", textView);
         return true;
     }

@@ -52,6 +52,12 @@
   轉傳之前做 GUID 比對與靜態旗標讀取以外的任何事——旗標只有兩個，
   `SqlSnippetSurroundPicker.IsOpen` 與 `SqlVariableRenameSession.IsActive`，都是為 false
   時連 `Guid` 複製都不做。詳見[殼層命令](shell-commands.md)。
+- **禁止**在 `Selection.Select` 之後再呼叫 `Caret.MoveTo`。那會把剛做好的選取收掉，
+  游標落到範圍的錨點（起點）。選取本身就是功能的地方症狀最重：F2 變數重新命名會把名稱
+  打成「舊名夾著新字」（`@cond` 按 F2 打 `xxxx` 得到 `@xxxxcond`），自動配對則包完之後
+  選取消失，接著打第二個分隔字元只會插入一個字元、不再包一層。`Select` 已經把游標擺在
+  範圍末端，要讓它可見用 `ViewScroller.EnsureSpanVisible`，那一個只捲動。兩處實例見
+  [變數重新命名](variable-rename.md)與[自動配對](auto-pairing.md)。
 - **禁止**改了 `Menus.vsct` 卻沒把 `ProvideMenuResource` 的版號加一，也**禁止**
   改完命令表後用 `Deploy-DebugExtension.ps1` 部署。殼層照 pkgdef 的
   `Menus.ctmenu, N` 決定要不要重讀命令表，而 pkgdef 不在部署清單裡，清快取也沒用。

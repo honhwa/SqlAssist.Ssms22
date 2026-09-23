@@ -58,6 +58,9 @@ internal sealed class SqlVariableRenameSession
     private bool _applying;
     private bool _closed;
 
+    /// <summary>緩衝區已經變更過一次沒有；用來認出「使用者打的第一個字」。</summary>
+    private bool _edited;
+
     private SqlVariableRenameSession(
         IWpfTextView view,
         IServiceProvider serviceProvider,
@@ -82,11 +85,13 @@ internal sealed class SqlVariableRenameSession
                 primary = index;
             }
 
-            // 游標那一處要跟著打字往後長（EdgePositive），其餘的由我們整段換掉，
-            // 不需要跟著邊界跑。
+            // 游標那一處要跟著打字長，而且**兩端都要收**（EdgeInclusive）。只收尾端的
+            // 話，萬一選取被殼層收掉、使用者從名稱開頭打，插進來的字會落在區段之外：
+            // 區段文字看起來沒變，鏡射因此變成一次空操作——症狀是其他出現處完全沒動。
+            // 其餘的由我們整段換掉，不需要跟著邊界跑。
             spans[index] = snapshot.CreateTrackingSpan(
                 span,
-                index == primary ? SpanTrackingMode.EdgePositive : SpanTrackingMode.EdgeExclusive);
+                index == primary ? SpanTrackingMode.EdgeInclusive : SpanTrackingMode.EdgeExclusive);
         }
 
         _spans = spans;
@@ -186,15 +191,19 @@ internal sealed class SqlVariableRenameSession
 
         _active = this;
 
-        // 訂閱放在選取之後：那一次選取會動到游標，先訂閱會立刻把自己結束掉。
+        // 先選取再訂閱：那一次選取會動到游標，先訂閱會被自己的游標事件結束掉。
+        var span = _spans[_primary].GetSpan(_buffer.CurrentSnapshot);
+        _view.Selection.Select(span, isReversed: false);
+
+        // 只捲動，不動游標。**選取之後不要再呼叫 Caret.MoveTo**：那會把選取收掉，
+        // 游標落在選取範圍的錨點（也就是名稱起點），使用者的第一個字就變成插在
+        // 「@」後面而不是取代名稱——症狀是「@cond」打成「@xxxxcond」，而且舊名還在。
+        // 選取本身已經把游標放在範圍末端，不需要再擺一次。
+        _view.ViewScroller.EnsureSpanVisible(span);
+
         _buffer.Changed += OnBufferChanged;
         _view.Caret.PositionChanged += OnCaretChanged;
         _view.Closed += OnViewClosed;
-
-        var span = _spans[_primary].GetSpan(_buffer.CurrentSnapshot);
-        _view.Selection.Select(span, isReversed: false);
-        _view.Caret.MoveTo(span.End);
-        _view.Caret.EnsureVisible();
     }
 
     private void OnBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -206,6 +215,20 @@ internal sealed class SqlVariableRenameSession
 
         var name = _spans[_primary].GetSpan(e.After).GetText();
 
+        // 第一個字另有一套算法。選取若被殼層收掉（見 Start 的說明），使用者打的字會
+        // 插進舊名裡而不是取代它，區段文字因此變成「舊名夾著他打的字」。他看到的仍然
+        // 是「整串被選取、直接打」，所以這裡替他去掉舊名，只留他打的那個字。
+        // 只在第一次變更上做：之後游標已經在新名稱裡，插在哪裡就是哪裡。
+        if (!_edited)
+        {
+            _edited = true;
+
+            if (FirstTypedText(e) is { } typed)
+            {
+                name = typed;
+            }
+        }
+
         // 打到一半的名稱（空白、減號）先不動其他出現處。鏡射下去會把它們一起改成
         // 編不過的樣子，而下一個按鍵通常就修好了——那種中間狀態不該留下痕跡。
         if (!SqlVariableRename.IsValidName(name))
@@ -214,6 +237,30 @@ internal sealed class SqlVariableRenameSession
         }
 
         Replace(name, e.After);
+    }
+
+    /// <summary>
+    /// 第一個字若是一次純插入，回傳他打進來的那串字；否則回傳 null。
+    /// </summary>
+    /// <remarks>
+    /// F2 之後名稱是「整串被選取」的狀態，所以正常情形下第一個字會取代它——那是一次
+    /// <b>取代</b>，有移除也有插入，不是純插入。純插入只可能發生在選取已經被收掉的時候
+    /// （殼層、別的擴充都可能收掉它）：那時游標落在名稱裡，字是插進去的。
+    ///
+    /// 條件只看「有沒有移除」，不看插入的位置，所以游標落在名稱的哪一格都成立；
+    /// 反過來說，使用者若先把游標移進名稱再打字，第一個字也會被當成取代——那正是
+    /// 「選取之後直接打」這個功能要的語意，而第二個字起就回到一般編輯。
+    /// </remarks>
+    private static string? FirstTypedText(TextContentChangedEventArgs e)
+    {
+        if (e.Changes.Count != 1)
+        {
+            return null;
+        }
+
+        var change = e.Changes[0];
+
+        return change.OldLength == 0 && change.NewLength > 0 ? change.NewText : null;
     }
 
     private void OnCaretChanged(object sender, CaretPositionChangedEventArgs e)
@@ -226,8 +273,11 @@ internal sealed class SqlVariableRenameSession
         var span = _spans[_primary].GetSpan(_buffer.CurrentSnapshot);
         var position = e.NewPosition.BufferPosition.Position;
 
-        // 停在名稱結尾是打字時的正常位置，不算離開。
-        if (position < span.Start.Position || position > span.End.Position)
+        // 停在名稱裡是打字時的正常位置，不算離開。起點往左多算一格：那是變數自己的
+        // 「@」，而 F2 的進入條件本來就允許游標停在它上面（見 SqlVariableRename.FindAt）。
+        // 界線若比進入條件緊，殼層把游標還原回「@」時這裡會立刻把自己結束掉，
+        // 症狀是「按了 F2 卻什麼都沒發生」。
+        if (position < span.Start.Position - 1 || position > span.End.Position)
         {
             Commit(out _);
         }
