@@ -38,7 +38,7 @@ SQL Memory 專屬元件見[專屬表](shared-components-sql-memory.md)。同一�
 | 搜尋、預覽與估算的去彈跳長度 | `Ssms22/UI/SqlAssistChrome.Delays.cs` |
 | 對話框元件與殼層 | `Ssms22/UI/SqlAssistChrome.Dialogs.cs`、`SqlAssistDialogs.cs` |
 | SQL 唯讀／著色編輯、分類、選取映射與主題 | `Ssms22/UI/SqlReadOnlyViewer.cs`、`SqlTextEditor.cs`、`Ssms22/Preview/SqlScriptDocument.cs`、`SqlScriptTheme.cs` |
-| 命中與區塊端點配色 | `Ssms22/UI/TextMarkColors.cs`、`MatchPalette.cs`；大面積分類色見[文字標記](text-marks.md) |
+| 命中與區塊端點配色 | `Ssms22/UI/TextMarkColors.cs`；大面積分類色見[文字標記](text-marks.md)，命中見[命中高亮](search-highlight.md) |
 | 上一處／下一處命中與讀數 | `Ssms22/UI/SqlMatchNavigator.cs`、`Core/Matching/MatchCursor.cs` |
 | WPF 資料格匯出、顯示順序與空欄 | `Ssms22/UI/SqlDataGridText.cs` |
 | SQL 原生圖示、語意圖示與影像插槽 | `Ssms22/UI/SqlIcons.cs`、`SqlIcon.cs`、`SqlIcons.Images.cs`、`SqlIconImage.cs` |

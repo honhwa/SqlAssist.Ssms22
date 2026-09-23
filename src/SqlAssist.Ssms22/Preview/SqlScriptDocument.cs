@@ -33,7 +33,7 @@ internal enum ScriptResource
     /// <remarks>
     /// 兩級而不是一級，是因為「哪幾處對上了」與「我現在在第幾處」是兩個問題。只有一級的
     /// 症狀是按了「下一個命中」之後畫面捲了，而使用者要在七塊一模一樣的底色裡自己找出
-    /// 剛才跳到的是哪一塊。兩級的差距由 <see cref="UI.MatchPalette"/> 保證。
+    /// 剛才跳到的是哪一塊。兩級的差距由 <c>SqlScriptTheme</c> 從同一個記號黃推出來時保證。
     /// </remarks>
     HighlightCurrent,
 
@@ -71,7 +71,7 @@ internal static class SqlScriptDocument
     /// 換的是<b>資源鍵</b>而不是筆刷：切換主題時 <c>SqlScriptTheme</c> 只更新資源而不重建文件，
     /// 保存一次性筆刷的那一版會留著上一個主題的顏色。
     ///
-    /// 兩級都蓋掉分類色：留住著色與一眼看得出來互斥，理由見 <see cref="UI.MatchPalette"/>。
+    /// 兩級都蓋掉分類色：留住著色與一眼看得出來互斥，理由見 <c>docs/search-highlight.md</c>。
     /// 字重再分一級，狀態就不是只靠顏色表達——高對比與色覺差異都還讀得出「我在第幾處」。
     /// </remarks>
     public static void SetCurrentMatch(IReadOnlyList<Run> runs, bool current)

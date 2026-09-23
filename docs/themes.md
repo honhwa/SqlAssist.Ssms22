@@ -35,20 +35,20 @@ SSMS 新彩色主題使用 Fluent `ShellColors`；舊 `EnvironmentColors.ToolTip
 
 **搜尋命中的記號是黃的**（`ThemeBrush.MatchHighlightBackground`／`MatchHighlightForeground`），
 `UI/SqlHighlightText` 的命中區段用它上底色再加粗。走固定的 `ThemePalette.Mark`，不借用主題強調色
-——強調色已經同時代表選取、焦點與作用中，而命中要回答的是「你找的那幾個字在哪」。
+——強調色已同時代表選取、焦點與作用中，而命中要回答的是「你找的那幾個字在哪」。
 
 配對文字仍是一般前景，但校正要對**四個**合成結果都做：記號疊在內容與視窗兩種底色上，各自再疊
 一層半透明的 `RowSelected`。命中的那一列常常同時是選取列，而深色主題的選取色偏白，疊完會亮到
 一般前景壓不過去；記號因此逐步減淡讓路，色相不變。高對比完全不上色，改用系統選取配對。
 
-**預覽裡的命中用同一個色系**（`ScriptResource.Highlight`，`Preview/SqlScriptTheme`），只依指令碼
-底色調整明度：疊一層限量的半透明黑或白（`Fade`，最多 60%）。不能直接拿
-`MatchHighlightBackground`——那一份對著工具窗底色算，而指令碼底色借自 SSMS 編輯器。
+**預覽的兩級從同一個黃推出來**（`ScriptResource.Highlight`／`HighlightCurrent`，
+`Preview/SqlScriptTheme`）：一般命中疊到與指令碼底色差 3:1，目前那一處疊到
+3 × `TextMarkColors.LevelSeparation` 再推開到兩級分得出來。只調明度、不動色相，上限 60%。不能直接
+拿 `MatchHighlightBackground`——那一份對著工具窗底色算，而指令碼底色借自 SSMS 編輯器。字色沿用
+指令碼自己的前景。
 
-**不能用 `ThemeColorMath.EnsureBackgroundForText`。** 它為「使用者自訂的固定字色」而寫：疊灰到
-最淡的著色（註解色）在高亮上也讀得到。拿黃當輸入時那個門檻太鬆——疊 16% 的黑就過 4.5:1，
-疊完卻是一坨**橄欖色**，與清單上那個黃看起來是兩回事。預覽的目標因此改成「黃與指令碼底色至少差
-3:1」的圖形對比。
+**不能用 `ThemeColorMath.EnsureBackgroundForText`。** 它為「使用者自訂的固定字色」而寫，門檻看的是
+最淡的著色（註解色）。拿黃當輸入時太鬆——疊 16% 的黑就過 4.5:1，疊完卻是一坨**橄欖色**。
 
 ## SQL 指令碼
 

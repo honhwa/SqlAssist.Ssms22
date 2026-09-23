@@ -84,41 +84,6 @@ public sealed class ThemePaletteTests
     [InlineData("dark")]
     [InlineData("plum")]
     [InlineData("forest")]
-    [InlineData("high-contrast")]
-    public void 命中兩級分得開且各自配得出讀得到的前景(string mode)
-    {
-        var colors = ColorsFor(mode);
-        var background = colors[ThemeBrush.ListBackground];
-
-        var match = ThemeColorMath.Composite(colors[ThemeBrush.MatchBackground], background);
-        var current = ThemeColorMath.Composite(colors[ThemeBrush.MatchCurrentBackground], background);
-
-        // 兩級都要配得出讀得到的字色；只換底色的那一版在深色主題上字會沉進去。
-        Assert.True(ThemeColorMath.Contrast(colors[ThemeBrush.MatchForeground], match) >= 4.5);
-        Assert.True(ThemeColorMath.Contrast(colors[ThemeBrush.MatchCurrentForeground], current) >= 4.5);
-
-        // 門檻與推導的規範值在 MatchPaletteTests；這裡只驗工具窗這一份確實照它填出來。
-        Assert.True(ThemeColorMath.Contrast(current, background) >= TextMarkColors.MinimumSeparation);
-        Assert.True(ThemeColorMath.Contrast(match, background) >= TextMarkColors.MinimumSeparation);
-
-        // 兩級必須是兩個看得出差別的東西。非高對比的差別是同一個色相的半透明與實色，讀的是
-        // 亮度；高對比換成兩個系統色，白與黃的亮度本來就接近，分得出來靠的是色相——對比比值
-        // 在那裡判不出來，所以只要求兩者不同。
-        Assert.NotEqual(match, current);
-        if (mode != "high-contrast") Assert.True(ThemeColorMath.Contrast(current, match) >= 1.25);
-
-        // 命中不借強調底：那一份同時是開關「開著」與核取方塊打勾的底。
-        Assert.NotEqual(colors[ThemeBrush.AccentBackground], colors[ThemeBrush.MatchBackground]);
-        Assert.NotEqual(colors[ThemeBrush.RowSelected], colors[ThemeBrush.MatchBackground]);
-    }
-
-    [Theory]
-    [InlineData("light")]
-    [InlineData("mango")]
-    [InlineData("cool-breeze")]
-    [InlineData("dark")]
-    [InlineData("plum")]
-    [InlineData("forest")]
     public void 語意色調在兩種表面都保留可讀文字且與中性回饋分得開(string mode)
     {
         var colors = ColorsFor(mode);
@@ -203,6 +168,11 @@ public sealed class ThemePaletteTests
         // 黃：紅與綠都明顯高於藍，而且還是個亮色——減淡只降透明度，色相不變。
         Assert.True(mark.G > mark.B * 1.5, $"{mode} 的命中記號不是黃的：{mark}");
         Assert.True(mark.R > 200 && mark.G > 150, $"{mode} 的命中記號太暗：{mark}");
+
+        // 命中自成一組色票，不借強調底：那一份同時是開關「開著」與核取方塊打勾的底，
+        // 而且對比不足時會把 alpha 逐次折半。理由見 docs/search-highlight.md。
+        Assert.NotEqual(colors[ThemeBrush.AccentBackground], mark);
+        Assert.NotEqual(colors[ThemeBrush.RowSelected], mark);
 
         foreach (var surface in new[] { colors[ThemeBrush.ListBackground], colors[ThemeBrush.WindowBackground] })
         {

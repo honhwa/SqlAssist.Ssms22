@@ -149,15 +149,33 @@ internal sealed class SqlScriptTheme : IDisposable
         SetBrush(ScriptResource.Comment, comment);
         SetBrush(ScriptResource.String, text);
         SetBrush(ScriptResource.Number, number);
-        // 基準是這一份指令碼自己的底色，不是工具窗那一份：指令碼借的是 SSMS 編輯器底色，
-        // 兩者在深色主題下不一定相同，拿錯基準的症狀是高亮整塊看不見。推導在 MatchPalette。
-        var matches = MatchPalette.Create(
-            ColorOf(ThemeBrush.AccentBorder, surface.Foreground), surface.Background, surface.Foreground,
-            SystemParameters.HighContrast, (SystemColors.HighlightColor, SystemColors.HighlightTextColor));
-        SetBrush(ScriptResource.Highlight, matches.Background);
-        SetBrush(ScriptResource.HighlightForeground, matches.Foreground);
-        SetBrush(ScriptResource.HighlightCurrent, matches.CurrentBackground);
-        SetBrush(ScriptResource.HighlightCurrentForeground, matches.CurrentForeground);
+        // 命中與清單列<b>同一個記號黃</b>，只依這一份指令碼自己的底色重新校正。基準不能拿工具窗
+        // 那一份：指令碼借的是 SSMS 編輯器底色，兩者在深色主題下不一定相同，拿錯基準的症狀是
+        // 高亮整塊看不見。推導在 MarkFill。
+        if (SystemParameters.HighContrast)
+        {
+            // 沒有中間色可調：一般命中用反白，目前那一處用系統選取色。兩者都是實色、都合規，
+            // 差的是色相不是明度——明度在那裡本來就只有兩級。
+            SetBrush(ScriptResource.Highlight, surface.Foreground);
+            SetBrush(ScriptResource.HighlightForeground, surface.Background);
+            SetBrush(ScriptResource.HighlightCurrent, SystemColors.HighlightColor);
+            SetBrush(ScriptResource.HighlightCurrentForeground, SystemColors.HighlightTextColor);
+        }
+        else
+        {
+            var mark = ColorOf(ThemeBrush.MatchHighlightBackground, surface.Foreground);
+            var hit = MarkFill(mark, surface.Background, GraphicContrast);
+            // 目前那一處要比一般命中更重。差距沿用同一份門檻常數，不另外寫一個只有這裡看得到的數字。
+            var current = Separate(
+                MarkFill(mark, surface.Background, GraphicContrast * TextMarkColors.LevelSeparation),
+                hit,
+                surface.Background);
+
+            SetBrush(ScriptResource.Highlight, hit);
+            SetBrush(ScriptResource.HighlightForeground, ThemeColorMath.EnsureTextContrast(surface.Foreground, hit));
+            SetBrush(ScriptResource.HighlightCurrent, current);
+            SetBrush(ScriptResource.HighlightCurrentForeground, ThemeColorMath.EnsureTextContrast(surface.Foreground, current));
+        }
         Updated?.Invoke(this, EventArgs.Empty);
     }
 
@@ -188,13 +206,16 @@ internal sealed class SqlScriptTheme : IDisposable
         return background is { } surface && foreground is { } written ? (surface, written) : null;
     }
 
+    /// <summary>命中底色與指令碼底色至少要有的一般對比；非文字的圖形門檻。</summary>
+    private const double GraphicContrast = 3;
+
     /// <summary>
-    /// 命中底色：與清單列上那個記號<b>同一個黃</b>，只依指令碼的底色調整明度。
+    /// 命中底色：與清單列上那個記號<b>同一個黃</b>，只依指令碼的底色調整明度到指定的對比。
     /// </summary>
     /// <remarks>
-    /// 不直接用 <see cref="ThemeBrush.MatchHighlightBackground"/>：那一份是對著工具窗的底色算的，
-    /// 而指令碼的底色借自 SSMS 編輯器，兩者在深色主題下不一定相同。但<b>色相必須一致</b>——
-    /// 清單上標黃、預覽裡標成另一個顏色，使用者會以為兩處指的是不同的東西，
+    /// 不直接拿 <see cref="ThemeBrush.MatchHighlightBackground"/> 當結果：那一份是對著工具窗的
+    /// 底色算的，而指令碼的底色借自 SSMS 編輯器，兩者在深色主題下不一定相同。但<b>色相必須一致</b>
+    /// ——清單上標黃、預覽裡標成另一個顏色，使用者會以為兩處指的是不同的東西，
     /// 而實際上「命中的就是這幾個字」是同一件事。
     ///
     /// <b>不能用 <c>EnsureBackgroundForText</c>。</b>那一支是為「使用者自訂的固定字色」寫的：
@@ -204,43 +225,68 @@ internal sealed class SqlScriptTheme : IDisposable
     /// 症狀是預覽裡的標記跟清單上那個黃看起來是兩回事。
     ///
     /// 改法是疊一層限量的半透明黑或白，只動明度、不動色相，校正目標改成
-    /// 「黃與指令碼底色至少差 3:1」（非文字的圖形對比）。著色本身交給既有的分類色：
-    /// 文字畫在黃底上，而記號色已經在 <see cref="ThemePalette"/> 那邊被證明配得起一般前景。
+    /// 「黃與指令碼底色至少差 <paramref name="target"/>:1」。字色由呼叫端沿用指令碼自己的前景、
+    /// 讀不到才校正——命中的記號色已經在 <see cref="ThemePalette"/> 那邊被證明配得起一般前景。
     /// </remarks>
-    private static Color Highlight(Color foreground, Color background)
-    {
-        var mark = ColorOf(ThemeBrush.MatchHighlightBackground, foreground);
-
-        // 疊完之後再過一次圖形對比：上面那個 0.6 的上限已經留了餘裕，這裡是保險。
-        return ThemeColorMath.EnsureGraphicContrast(Fade(mark, background), background);
-    }
+    private static Color MarkFill(Color mark, Color background, double target) =>
+        // 疊完之後再過一次圖形對比：下面那個 60% 的上限已經留了餘裕，這裡是保險。
+        ThemeColorMath.EnsureGraphicContrast(Fade(mark, background, target), background);
 
     /// <summary>
-    /// 往黑或白的方向疊一層半透明的灰，直到與底色差 3:1；最多疊到 60%。
+    /// 把「目前那一處」推離一般命中，直到兩級分得出來。
     /// </summary>
     /// <remarks>
-    /// 上限 <c>ShadeCeiling</c> 是必要的：往白色疊到底（100%）會把黃沖成白，
-    /// 那就不是「同一個黃」了。往黑疊到底則會變成灰褐。留一段上限，
-    /// 最壞情況下寧可對比差一點，也不要換掉色相——辨識得出「這是同一種標記」比
-    /// 濃淡夠不夠重要，而底色本來就已經是深淺兩極裡的其中一極。
+    /// 底色本來就離記號黃很遠時（深色主題的編輯器底色），上面那個較高的門檻第一次就過了，
+    /// 兩級於是拿到同一個顏色——「我在第幾處」就只剩字重，而字重在介面字型上差得太少；
+    /// <c>docs/search-highlight.md</c> 的視覺契約要求顏色與字重<b>各</b>分一級，缺一不可。
+    ///
+    /// 方向是<b>遠離指令碼底色</b>，與 <see cref="Fade"/> 同一個方向，所以色相不會跑到另一側；
+    /// 這與 <see cref="TextMarkColors.Pair"/> 把弱的那一級再往暗推是同一個做法。
     /// </remarks>
-    private static Color Fade(Color mark, Color background)
+    private static Color Separate(Color current, Color hit, Color background)
     {
-        // 底色偏暗就提亮，偏亮就壓深；用「與黑、與白哪個比較遠」判斷，不另外暴露亮度函式。
-        var lighten = ThemeColorMath.Contrast(background, Colors.Black) < ThemeColorMath.Contrast(background, Colors.White);
-        var target = lighten ? Colors.White : Colors.Black;
+        var toward = Away(background);
+
+        for (var step = 1;
+            step <= 4 && ThemeColorMath.Contrast(current, hit) < TextMarkColors.LevelSeparation;
+            step++)
+        {
+            current = ThemeColorMath.Composite(
+                Color.FromArgb((byte)Math.Round(255 * step / 10.0), toward.R, toward.G, toward.B), current);
+        }
+
+        return current;
+    }
+
+    /// <summary>遠離這個底色的那一端：底色偏暗就提亮，偏亮就壓深。</summary>
+    private static Color Away(Color background) =>
+        ThemeColorMath.Contrast(background, Colors.Black) < ThemeColorMath.Contrast(background, Colors.White)
+            ? Colors.White
+            : Colors.Black;
+
+    /// <summary>
+    /// 往遠離底色的方向疊一層半透明的灰，直到與底色差到指定對比；最多疊到 60%。
+    /// </summary>
+    /// <remarks>
+    /// 上限是必要的：往白色疊到底（100%）會把黃沖成白，那就不是「同一個黃」了；
+    /// 往黑疊到底則會變成灰褐。留一段上限，最壞情況下寧可對比差一點，也不要換掉色相——
+    /// 辨識得出「這是同一種標記」比濃淡夠不夠重要，而底色本來就已經是深淺兩極裡的其中一極。
+    /// </remarks>
+    private static Color Fade(Color mark, Color background, double target)
+    {
+        var toward = Away(background);
 
         for (var step = 1; step <= 6; step++)
         {
             var candidate = ThemeColorMath.Composite(
-                Color.FromArgb((byte)Math.Round(255 * step / 10.0), target.R, target.G, target.B), mark);
-            if (ThemeColorMath.Contrast(candidate, background) >= 3)
+                Color.FromArgb((byte)Math.Round(255 * step / 10.0), toward.R, toward.G, toward.B), mark);
+            if (ThemeColorMath.Contrast(candidate, background) >= target)
             {
                 return candidate;
             }
         }
 
-        return ThemeColorMath.Composite(Color.FromArgb(153, target.R, target.G, target.B), mark);
+        return ThemeColorMath.Composite(Color.FromArgb(153, toward.R, toward.G, toward.B), mark);
     }
 
     private static Color Resolve(

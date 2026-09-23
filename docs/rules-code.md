@@ -28,7 +28,19 @@
 - `TreatWarningsAsErrors` 與 Nullable 必須維持啟用。SSMS 更新換掉參考組件的註解時，
   先照新契約改寫，`!` 與 `#pragma` 是最後手段且要寫明理由，見[開發](development.md)。
 - 測試使用 Microsoft.Testing.Platform；執行 `tools/Run-CoreTests.ps1` 或 `dotnet test <方案>`，
-  不得加回 VSTest 轉接層。
+  不得加回 VSTest 轉接層。過濾用 `--filter-class`／`--filter-method`：`--filter` 只吃 VSTest
+  語法，給裸類別名會回 `Zero tests ran` 並以結束碼 5 收場，看起來像測試不存在。
+- 寫死 DIP 的版面斷言要先 `WpfTest.PinLayoutDpi` 把量測釘在 100%。純 WPF 的測試沒有呈現來源，
+  WPF 改用行程看到的系統 DPI 做 `UseLayoutRounding`，於是 150% 螢幕下 1 DIP 的邊框量到 1.333，
+  自動高度比設計值多 0.667。**放寬斷言不是修好**——那只是把契約磨掉，失敗會往下一條搬。
+  真正的多 DPI 覆蓋由測試自己用 `RenderTargetBitmap` 指定 96／144／192，不靠主機縮放。
+- 測試動到行程共用的靜態欄位時，那些類別歸同一個
+  `[CollectionDefinition(DisableParallelization = true)]` 集合（`SqlIconFactoryCollection`、
+  `MetadataFailureCollection`、`SqlSuggestionUsageCollection`）。只共用一個集合不夠：那擋不住
+  第三個類別在靜態值被換掉的期間讀它。症狀是單獨跑一定過、整份跑起來必失敗。
+- `SqlAssist.Ssms22.Tests` 是**逐檔列出**產品的純 WPF 原始碼（`<Compile Include>` 加 `Link`），
+  不是專案參考。新增、改名或刪除那條清單上的產品檔時要**同步改 `SqlAssist.Ssms22.Tests.csproj`**；
+  漏改的症狀是建置失敗說找不到檔案，而產品專案自己編得過。
 - 註解只寫理由、失敗方案或不照做的症狀，不逐行翻譯程式碼。
 - 公開 repo 禁止出現真實系統的 schema、資料表、欄位或程序名。測試與文件只用既有的
   圖書館領域：`Lib_Reader`／`Lib_Tag`、`PUBLISHER`／`PUBL_CODE`、
