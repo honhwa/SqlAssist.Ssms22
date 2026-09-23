@@ -28,7 +28,7 @@ namespace SqlAssist.Ssms22.UI;
 /// </remarks>
 internal sealed class SqlFilterBar : Panel
 {
-    private const double RowGap = 4;
+    private const double RowGap = SqlAssistChrome.Spacing.Tight;
 
     private readonly IReadOnlyList<Group> _groups;
     private readonly List<Line> _lines = new();
@@ -53,8 +53,8 @@ internal sealed class SqlFilterBar : Panel
             {
                 // 每一顆自己帶前面那一條：群首那一顆帶的是群間那一條，群內其餘帶矮一截的那一條。
                 var divider = items.Count == 0
-                    ? SqlAssistChrome.CreateFilterGroupDivider()
-                    : SqlAssistChrome.CreateFilterItemDivider();
+                    ? SqlAssistChrome.CreateGroupDivider()
+                    : SqlAssistChrome.CreateItemDivider();
 
                 items.Add(new Item(member, divider));
                 Children.Add(divider);

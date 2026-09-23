@@ -79,8 +79,13 @@ internal sealed class SqlMemoryBrowser : UserControl, IDisposable
         SetResourceReference(BackgroundProperty, ThemeBrush.WindowBackground);
         SetResourceReference(ForegroundProperty, ThemeBrush.WindowForeground);
         MinWidth = 300;
-        var root = new DockPanel { Margin = new Thickness(8) };
-        var header = new StackPanel();
+        var root = new DockPanel { Margin = new Thickness(SqlAssistChrome.Spacing.Group) };
+        // 分頁列、搜尋列、篩選列與主機訊息之間的間距由這一層給，整塊與清單之間也是；
+        // 子元素不自己帶 margin，否則整組收起（切到用量分頁）之後會留下半格空白。
+        var header = new SqlStack(SqlAssistChrome.Spacing.Tight)
+        {
+            Margin = new Thickness(0, 0, 0, SqlAssistChrome.Spacing.Group)
+        };
         DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
         _tabs.Items.Add(SqlAssistChrome.CreateIconTab(SqlIcon.History, "History"));
         _tabs.Items.Add(SqlAssistChrome.CreateIconTab(SqlIcon.Favorite, "Favorites"));
@@ -98,10 +103,7 @@ internal sealed class SqlMemoryBrowser : UserControl, IDisposable
         // 與 SQL Search 同一列規範：框裡是修飾搜尋字串的直接控制，框外右緣是作用在這一份
         // 清單的操作。History／Favorites 沒有排序（清單本來就依時間），所以那一格是目前連線。
         var searchRow = new SqlInputRow(
-            SqlAssistChrome.CreateInputBar(SqlIcon.Search, _search, clear), _connection, _refresh)
-        {
-            Margin = new Thickness(0, 0, 0, 6)
-        };
+            SqlAssistChrome.CreateInputBar(SqlIcon.Search, _search, clear), _connection, _refresh);
         header.Children.Add(searchRow);
         Select(_period, SqlMemoryBrowserModel.PeriodOptions, _model.Period);
         // 狀態、期間與連線是第二層的三群，併在同一列：各佔一列的那一版在停靠面板裡等於
@@ -109,15 +111,17 @@ internal sealed class SqlMemoryBrowser : UserControl, IDisposable
         _connectionFacets = new[] { _serverFacet, _databaseFacet };
         var filters = SqlAssistChrome.CreateMemoryFilterRow(
             _kind, _period, _serverFacet.Panel, _databaseFacet.Panel);
-        filters.Margin = new Thickness(0, 4, 0, 0);
         header.Children.Add(filters);
         _hostStatus.TextWrapping = TextWrapping.Wrap;
+        // 沒有訊息時整塊讓開，連同它前面那一段間距；空字串的 TextBlock 仍有行高。
+        _hostStatus.Visibility = Visibility.Collapsed;
         header.Children.Add(_hostStatus);
         // 搜尋、篩選與那一列右緣的操作只屬於清單分頁；切到用量分頁整列一起收起，
         // 用量自己的重新整理在它的狀態卡片上。
         _listChrome = new UIElement[] { searchRow, filters };
 
         _status.TextWrapping = TextWrapping.Wrap; _status.Visibility = Visibility.Collapsed;
+        _status.Margin = new Thickness(0, SqlAssistChrome.Spacing.Group, 0, 0);
         DockPanel.SetDock(_status, Dock.Bottom); root.Children.Add(_status);
 
         _list.SetRowsSource(_rows, _pager);
@@ -459,6 +463,10 @@ internal sealed class SqlMemoryBrowser : UserControl, IDisposable
         FillFacet(facet);
         panel.OptionsRequested += (_, _) => SqlMemoryActions.Run(() => ShowFacet(facet), Report);
         panel.MoreRequested += (_, _) => SqlMemoryActions.Run(() => LoadFacet(facet), Report);
+        panel.SelectAllRequested += pattern => SqlMemoryActions.Run(() => SelectAllFacet(facet, pattern), Report);
+        // 全不選與第一列那個「全部」是同一件事，走同一條清除路徑，不另寫一份狀態同步。
+        panel.ClearAllRequested += (_, _) => SqlMemoryActions.Run(() => ClearFacet(facet), Report);
+        panel.SetBulkCommands(SqlFilterBulkCommands.SelectAndClear);
         panel.SortRequested += value => SqlMemoryActions.Run(() =>
         {
             if (value is not SqlConnectionFacetSort sort || facet.Sort == sort) return;
@@ -536,6 +544,11 @@ internal sealed class SqlMemoryBrowser : UserControl, IDisposable
             on => SqlMemoryActions.Run(() => { if (on) ClearFacet(facet); }, Report)));
         facet.Panel.SetOptions(new[] { new SqlFilterGroup("", options) });
         facet.Panel.SetMore(facet.HasMore ? facet.MoreLabel : null);
+        // 名稱是分頁問回來的，全選只勾得到已經載入的那幾頁；還有下一頁時把這個界線說出來，
+        // 否則使用者按完全選會以為整份都勾了，而漏掉的那幾個他根本沒看到。
+        facet.Panel.SetSelectAllHint(facet.HasMore
+            ? "只勾得到已經載入的名稱；還有下一頁，要全部先按「" + facet.MoreLabel + "」。"
+            : null);
     }
 
     /// <summary>這一顆面板目前勾起來的名稱；模型是唯一的出處，面板與按鈕都只是把它畫出來。</summary>
@@ -558,7 +571,31 @@ internal sealed class SqlMemoryBrowser : UserControl, IDisposable
         AfterFacetChanged(facet, refill: false);
     }
 
-    /// <summary>回到「全部」；面板第一列是這個維度唯一的清除入口，所以不另畫一顆取消全選。</summary>
+    /// <summary>
+    /// 全選面板目前列得出來的名稱；打了字就只勾篩出來的那幾個。
+    /// </summary>
+    /// <remarks>
+    /// 只勾得到手上這幾頁：名稱是分頁問回來的，而面板的搜尋框本來就只篩已經載入的那些，
+    /// 按鈕做的事因此與使用者看到的一致。比對規則跟面板借同一份，兩邊各寫一次會分岔。
+    /// 逐一走 <see cref="ToggleFacet"/> 的那一版每勾一個就重查一輪並重畫一次摘要；
+    /// 這裡整批改完只收一次尾。
+    /// </remarks>
+    private void SelectAllFacet(ConnectionFacet facet, string pattern)
+    {
+        var changed = false;
+        foreach (var name in facet.Names)
+        {
+            if (!SqlFilterFlyout.Matches(name, pattern)) continue;
+            changed |= facet.Databases
+                ? _model.SetDatabaseSelected(name, selected: true)
+                : _model.SetServerSelected(name, selected: true);
+        }
+
+        // 第一列那個「全部」與其餘幾列的勾都要跟著改，所以這一支非重建不可。
+        if (changed) AfterFacetChanged(facet, refill: true);
+    }
+
+    /// <summary>回到「全部」；面板第一列那個預設與全不選共用這一份。</summary>
     private void ClearFacet(ConnectionFacet facet)
     {
         var changed = facet.Databases ? _model.ClearDatabases() : _model.ClearServers();

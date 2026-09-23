@@ -54,10 +54,12 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
     private readonly SqlStateSurface _surface;
     private readonly TextBox _search = SqlAssistChrome.CreateTextBox(SqlAssistChrome.DefaultMetrics);
     private readonly TextBlock _status = SqlAssistChrome.CreateStatusText(SqlAssistChrome.DefaultMetrics);
+    // 兩句話都說「勾起來會少掉什麼」，不說詞界、ordinal 這些只有寫程式的人讀得懂的字：
+    // 使用者要判斷的是「我現在找不到那張表，是不是被這一顆擋掉了」。
     private readonly ToggleButton _matchCasing = SqlAssistChrome.CreateSearchToggle(
-        SqlIcon.MatchCase, "大小寫", "只取大小寫完全相同的本文命中；名稱一律不分大小寫。");
+        SqlIcon.MatchCase, "大小寫相同", "大小寫要完全一樣：搜 finish 就不會找到 Finish。");
     private readonly ToggleButton _wholeWord = SqlAssistChrome.CreateSearchToggle(
-        SqlIcon.WholeWord, "全字", "本文命中前後都必須是詞界。");
+        SqlIcon.WholeWord, "整個字", "只找完整的字：搜 Copy 就不會找到 CopyNo 裡的那一段。");
     private readonly SqlSearchSegments _segments = new();
     private readonly SqlFilterFlyout _server = new("伺服器", SqlIcon.Server, SqlFilterMode.Single);
     private readonly SqlFilterFlyout _databases = new("資料庫", SqlIcon.Database, SqlFilterMode.SearchableMultiple);
@@ -81,6 +83,9 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
     /// <summary>正在把模型的值寫回控制項；寫回去觸發的事件不是使用者的操作，不重跑一輪。</summary>
     private bool _syncing;
     private bool _activating;
+
+    /// <summary>正在等物件總管展開節點；與開窗那一條分開記，兩件事可以同時在跑。</summary>
+    private bool _selecting;
     private bool _ready;
     private bool _disposed;
 
@@ -103,9 +108,13 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
         SetResourceReference(ForegroundProperty, ThemeBrush.WindowForeground);
         MinWidth = 300;
 
-        var root = new DockPanel { Margin = new Thickness(8) };
+        var root = new DockPanel { Margin = new Thickness(SqlAssistChrome.Spacing.Group) };
         // 工具窗沒有原生 Titlebar，第一列直接是工具列；不另做一條看起來像第二條標題列的粗體區塊。
-        var header = new StackPanel();
+        // 工具列與已選條件列之間、以及整塊與清單之間的間距都由這一層給，子元素不自己帶 margin。
+        var header = new SqlStack(SqlAssistChrome.Spacing.Tight)
+        {
+            Margin = new Thickness(0, 0, 0, SqlAssistChrome.Spacing.Group)
+        };
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
@@ -130,6 +139,7 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
 
         _status.TextWrapping = TextWrapping.Wrap;
         _status.Visibility = Visibility.Collapsed;
+        _status.Margin = new Thickness(0, SqlAssistChrome.Spacing.Group, 0, 0);
         DockPanel.SetDock(_status, Dock.Bottom);
         root.Children.Add(_status);
 
@@ -150,8 +160,6 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
         // 結果在上、預覽在下，不論工具窗多寬；理由見 SqlSearchSplit。
         _splitView = new MasterDetailView(_surface, _preview, _preview.Summary, SqlSearchSplit.Threshold);
         _splitView.DetailExpandedChanged += (_, _) => SqlAssistPlatformGuard.Run("切換 SQL Search 預覽", UpdatePreview);
-        // 剪貼簿可能被別的程序占用；失敗要看得見，否則使用者以為下一次貼上是這個名稱。
-        _preview.CopyRequested += (_, _) => Run(() => CopyName(_preview.Current));
         root.Children.Add(_splitView);
         Content = root;
 
@@ -164,9 +172,12 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
             foreach (var row in _rows) row.IsNew = false;
         });
 
+        // 只攔 Ctrl+F。上一處／下一處沒有鍵盤捷徑：F3 被宿主在 WPF 看到之前就吃掉了
+        // （命令路由的 pretranslate），這裡接不到，理由見 SqlMatchNavigator。
         PreviewKeyDown += (_, e) => Run(() =>
         {
             if (e.Key != Key.F || e.KeyboardDevice.Modifiers != ModifierKeys.Control) return;
+
             _search.Focus();
             e.Handled = true;
         });
@@ -222,7 +233,8 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
         var clear = SqlAssistChrome.CreateIconButton(SqlIcon.Clear, "清除搜尋");
         clear.IsEnabled = false;
         clear.Click += (_, _) => Run(() => { _search.Clear(); _search.Focus(); });
-        _search.ToolTip = "搜尋物件名稱、資料行與定義本文；名稱走模糊比對，本文是字面比對。";
+        _search.ToolTip = "搜尋物件名稱、資料行與定義本文；名稱走模糊比對，" +
+            "本文是字面比對，勾了右邊任一顆之後名稱也改成字面比對。";
         AutomationProperties.SetName(_search, "搜尋資料庫物件");
         _search.TextChanged += (_, _) => Run(() =>
         {
@@ -438,20 +450,27 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
         VsThemeBrushes.Apply(_databases);
         _databases.OptionsRequested += (_, _) => _ = RunAsync(ShowDatabasesAsync);
         // 全選等清單到齊才動手：只全選手上那一份的症狀是使用者在清單還在路上時按了它，
-        // 而勾起來的是幾個名稱而不是整台。
-        _databases.SelectAllRequested += (_, _) => _ = RunAsync(async () =>
+        // 而勾起來的是幾個名稱而不是整台。面板上打了字就只勾篩出來的那幾個，而且照面板
+        // 同一條比對規則再篩一次——這裡自己寫一份的下場是看到五個、勾起來七個。
+        _databases.SelectAllRequested += pattern => _ = RunAsync(async () =>
         {
             var databases = await _scopeDatabases.EnsureAsync(_catalogs.Resolve());
             var changed = false;
-            foreach (var database in databases) changed |= _model.SetDatabaseSelected(database.Name, selected: true);
+            foreach (var database in databases)
+            {
+                if (!SqlFilterFlyout.Matches(database.Name, pattern)) continue;
+                changed |= _model.SetDatabaseSelected(database.Name, selected: true);
+            }
+
             FillDatabases(databases);
             if (changed) FiltersChanged();
         });
-        // 取消全選與第一列那個「連線預設」是同一件事，所以走同一條清除路徑，不另寫一份狀態同步。
+        // 全不選與第一列那個「連線預設」是同一件事，所以走同一條清除路徑，不另寫一份狀態同步。
         _databases.ClearAllRequested += (_, _) => Run(ClearDatabases);
+        _databases.SetBulkCommands(SqlFilterBulkCommands.SelectAndClear);
     }
 
-    /// <summary>清掉整個資料庫維度；第一列那個預設、chip 的十字與取消全選共用這一份。</summary>
+    /// <summary>清掉整個資料庫維度；第一列那個預設、chip 的十字與全不選共用這一份。</summary>
     private void ClearDatabases()
     {
         if (!_model.ClearDatabases()) return;
@@ -538,11 +557,6 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
             new SqlFilterGroup("系統資料庫", system)
         });
         _databases.SetNotice(DatabaseNotice(seen.Count));
-        // 名單還沒到齊時一律寫著「全選」：那一顆按下去本來就會先把整份問回來，
-        // 而此刻手上這幾個名稱全勾起來並不代表整台都選了。
-        _databases.SetBulkSelection(_scopeDatabases.IsLoaded && seen.Count != 0 && _model.Databases.Count == seen.Count
-            ? SqlFilterBulkSelection.ClearAll
-            : SqlFilterBulkSelection.SelectAll);
     }
 
     /// <summary>
@@ -610,7 +624,7 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
     /// 一道硬性期限與一份說得出「哪幾台沒回來」的文案，那些都還沒有。做成看起來可以
     /// 複選的樣子，使用者勾了兩台卻只有一台的結果，而畫面上看不出少了哪一台。
     ///
-    /// 清單只在使用者打開下拉那一刻重問（沒有 I/O，見 <see cref="SsmsObjectExplorerServers"/>）。
+    /// 清單只在使用者打開下拉那一刻重問（沒有 I/O，見 <see cref="SsmsObjectExplorer"/>）。
     /// <b>禁止</b>改成輪詢：物件總管服務第一次取用會把那個工具視窗叫出來，
     /// 使用者把它關掉之後，輪詢會在他沒有要求的時候替他開回去。
     /// </remarks>
@@ -660,11 +674,7 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
         foreach (var server in servers ?? Array.Empty<SsmsObjectExplorerServer>())
         {
             // 同一台不列兩次；查詢視窗那一行已經涵蓋它，而且那一行還會跟著分頁換。
-            if (editorServer is not null &&
-                string.Equals(server.ServerName, editorServer, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
+            if (SqlSearchCatalogs.IsSameServer(server, editorServer)) continue;
 
             var selected = _catalogs.Server is { } current &&
                 string.Equals(current.RootUrn, server.RootUrn, StringComparison.Ordinal);
@@ -962,6 +972,9 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
             case SqlSearchRowAction.Activate:
                 _ = RunAsync(ActivateAsync);
                 return;
+            case SqlSearchRowAction.SelectInExplorer:
+                _ = RunAsync(SelectInExplorerAsync);
+                return;
             case SqlSearchRowAction.Copy:
                 CopyName(_list.SelectedItem as SqlSearchRow);
                 return;
@@ -989,7 +1002,7 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
     {
         if (_list.SelectedItem is not SqlSearchRow row) return;
 
-        if (!SqlSearchActivation.CanActivate(row.Hit))
+        if (!row.CanActivate)
         {
             Report("這一筆沒有可以開啟的東西。");
             return;
@@ -1015,6 +1028,39 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
         finally
         {
             _activating = false;
+        }
+    }
+
+    /// <summary>右鍵選單或列上那一顆的「在物件總管中選取」。</summary>
+    /// <remarks>
+    /// 與 <see cref="ActivateAsync"/> 各寫一支而不是共用一個帶參數的版本：可用判斷、
+    /// 進行中那句話與每一種失敗都不一樣，合起來就是一連串 if，而那正是加第三個動作時
+    /// 最難改的形狀。辨識酬載與導航都在 <see cref="SqlSearchActivation"/>。
+    /// </remarks>
+    private async Task SelectInExplorerAsync()
+    {
+        if (_list.SelectedItem is not SqlSearchRow row) return;
+
+        if (!row.CanSelectInExplorer)
+        {
+            Report("這一筆在物件總管上沒有自己的節點。");
+            return;
+        }
+
+        if (_selecting) return;
+        _selecting = true;
+
+        try
+        {
+            // 展開節點要向伺服器問資料，大的資料庫上是好幾秒；先說一句，否則按下去毫無動靜，
+            // 而物件總管的視窗還要再過一會兒才跳出來。
+            Report("正在物件總管中選取 " + row.Title + "…", "selecting");
+            var failure = await SqlSearchActivation.SelectInExplorerAsync(row.Hit, _services, _catalogs);
+            Report(failure ?? "已在物件總管中選取 " + row.Title + "。", failure is null ? "selected" : "");
+        }
+        finally
+        {
+            _selecting = false;
         }
     }
 
@@ -1049,12 +1095,10 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
 
             foreach (var (action, item) in items)
             {
-                item.IsEnabled = row is not null &&
-                    (action != SqlSearchRowAction.Activate || SqlSearchActivation.CanActivate(row.Hit));
+                item.IsEnabled = row is not null && IsAvailable(action, row);
 
                 // 空字串會畫成一個空的提示框；沒有描述就整個不掛。
-                item.ToolTip = action == SqlSearchRowAction.Activate && row is not null &&
-                    SqlSearchActivation.Describe(row.Hit) is { Length: > 0 } description
+                item.ToolTip = row is not null && DescribeAction(action, row) is { Length: > 0 } description
                     ? description
                     : null;
             }
@@ -1062,6 +1106,27 @@ internal sealed class SqlSearchBrowser : UserControl, IDisposable
 
         return menu;
     }
+
+    /// <summary>這一列做不做得到這個操作；做不到的不讓它亮著。</summary>
+    /// <remarks>
+    /// 答案在 <see cref="SqlSearchRow"/> 上算過一次，這裡只把操作對到屬性：列上那顆按鈕
+    /// 讀的是同一個值（繫結走 <c>SqlSearchRowCommand.AvailabilityPath</c>），
+    /// 兩處各算一次的症狀是選單變灰而停駐時的同一顆按得下去。
+    /// </remarks>
+    private static bool IsAvailable(SqlSearchRowAction action, SqlSearchRow row) => action switch
+    {
+        SqlSearchRowAction.Activate => row.CanActivate,
+        SqlSearchRowAction.SelectInExplorer => row.CanSelectInExplorer,
+        _ => true
+    };
+
+    /// <summary>這個操作會做什麼；沒有話可說時是空字串，呼叫端據此不掛提示框。</summary>
+    private static string DescribeAction(SqlSearchRowAction action, SqlSearchRow row) => action switch
+    {
+        SqlSearchRowAction.Activate => SqlSearchActivation.Describe(row.Hit),
+        SqlSearchRowAction.SelectInExplorer => SqlSearchActivation.DescribeSelectInExplorer(row.Hit),
+        _ => ""
+    };
 
     private void UpdateChrome()
     {

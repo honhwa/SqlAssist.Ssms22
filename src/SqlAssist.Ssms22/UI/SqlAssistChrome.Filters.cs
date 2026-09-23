@@ -17,67 +17,41 @@ namespace SqlAssist.Ssms22.UI;
 /// </remarks>
 internal static partial class SqlAssistChrome
 {
-    /// <summary>篩選群組之間那一條分隔線的高度；比按鈕矮一截，讀起來是一條界線不是一個邊框。</summary>
-    private const double FilterDividerHeight = 18d;
-
-    /// <summary>分隔線左右各留的間距；群<b>內</b>只有 4 DIP，兩個數字的差就是「這是兩群」。</summary>
-    private const double FilterDividerGap = 6d;
-
-    /// <summary>群<b>內</b>那一條的高度；比群間矮一截，兩條並排時分得出哪一條是界線。</summary>
-    private const double FilterItemDividerHeight = 10d;
-
-    /// <summary>群內分隔線左右各留的間距；與沒有線的那一版同一個數字，加線不改版面密度。</summary>
-    private const double FilterItemDividerGap = 4d;
-
-    /// <summary>群內那一條的濃度；髮絲線本來就淡，再降一階才不會讀成群界。</summary>
-    private const double FilterItemDividerOpacity = 0.55d;
-
-    /// <summary>
-    /// 工具列上兩個篩選<b>群組</b>之間的淡色分隔線。
-    /// </summary>
+    /// <summary>過濾面板裡那條橫線；把第一列那個預設與底下的複選區切開。</summary>
     /// <remarks>
-    /// 分群的規則只有一條：回答<b>同一個問題</b>的控制項是一群。
-    /// SQL Memory 的「狀態」「期間」與連線是三群，SQL Search 第二層的「搜哪裡（伺服器、資料庫）」、
-    /// 「搜什麼（種類）」與「比對哪裡（名稱／內容／欄位）」是三群。
-    ///
-    /// 沒有這條線時，一排按鈕看起來是同一組可以互相取代的選項，而使用者會去找一顆「全部」
-    /// 把它們一起關掉；全靠加大間距分群的那一版在窄窗收完字之後就分不出來了，
-    /// 因為那時候每一顆本來就只剩一個圖示。
-    ///
-    /// 群<b>內</b>另有一條矮一截、淡一階的 <see cref="CreateFilterItemDivider"/>：每一顆篩選
-    /// 之間都看得到界線，而兩級的高度與間距差讓分群仍然讀得出來。兩條畫成同一種的那一版
-    /// 等於把分群取消掉，使用者會把「種類」讀成第三個範圍條件。
-    ///
-    /// 線本身不表達狀態，所以用 <see cref="ThemeBrush.Hairline"/> 而不是任何語意色，
-    /// 也不隨停駐或選取改變；<see cref="UIElement.SnapsToDevicePixels"/> 讓它在 150% DPI 下
-    /// 仍然是實心的一條，不糊成兩條半透明的。
+    /// 與篩選列上那兩條是不同的東西：那兩條是直的，分的是工具列上一顆顆篩選按鈕
+    /// （見 <see cref="CreateGroupDivider"/>）；這一條是橫的，分的是面板裡「預設值」與
+    /// 「自己挑這些」兩區。沒有它的那一版，第一列畫成 radio 會讓人以為整份清單只能選一個。
+    /// 淡度沿用群內那一級：它分的是同一個面板裡的兩區，不是兩個問題。
     /// </remarks>
-    public static Border CreateFilterGroupDivider() =>
-        CreateFilterDivider(FilterDividerHeight, FilterDividerGap, opacity: 1d);
-
-    /// <summary>同一群裡兩顆篩選之間那一條；矮一截、淡一階，間距仍是群內的 4 DIP。</summary>
-    /// <remarks>理由與兩級的分工見 <see cref="CreateFilterGroupDivider"/>。</remarks>
-    public static Border CreateFilterItemDivider() =>
-        CreateFilterDivider(FilterItemDividerHeight, FilterItemDividerGap, FilterItemDividerOpacity);
-
-    private static Border CreateFilterDivider(double height, double gap, double opacity)
+    public static Border CreateFilterPanelDivider()
     {
         var divider = new Border
         {
-            Width = 1,
-            Height = height,
-            Margin = new Thickness(gap, 0, gap, 0),
-            Opacity = opacity,
-            VerticalAlignment = VerticalAlignment.Center,
+            Height = 1,
+            Margin = new Thickness(0, 4, 0, 4),
+            Opacity = ItemDividerOpacity,
             SnapsToDevicePixels = true,
             IsHitTestVisible = false,
             Focusable = false
         };
         divider.SetResourceReference(Border.BackgroundProperty, ThemeBrush.Hairline);
-        // 分隔線只是視覺上的分群，不唸出來：每一群的名稱已經說得出同一件事。
-        // WPF 不會替沒有內容也不可聚焦的 Border 產生自動化節點，所以這裡不必再壓一次。
         return divider;
     }
+
+    /// <summary>面板第一列那個預設；一律畫成 radio，內容由呼叫端塞一個 <see cref="SqlFilterRow"/>。</summary>
+    /// <remarks>
+    /// 它與底下每一個選項<b>互斥</b>——勾任何一個名稱它就退勾，選它就把整個維度清空——所以形狀
+    /// 要是 radio。核取方塊的合約是可勾可取消，而這一列取消不掉（「一個都不選」就是它自己），
+    /// 畫成核取方塊讀起來像壞掉。複選面板也用 radio，理由同上；互斥仍由模型負責，
+    /// <see cref="SqlFilterRow.GroupName"/> 每一列各一個，WPF 的自動互斥照樣關著。
+    ///
+    /// 它不進 <see cref="CreateFilterOptionList"/> 那份虛擬化清單：它是這個維度的預設值與
+    /// 目前狀態，捲得走的那一版在名稱上百個時把狀態藏起來，而它又是回得去的那一條路。
+    /// 留在清單外面也讓它天生不受搜尋框過濾，不必再特判一次。
+    /// </remarks>
+    public static ContentPresenter CreateFilterDefaultRow() =>
+        new() { ContentTemplate = CreateFilterOptionRow<RadioButton>(CreateRadioTemplate()) };
 
     /// <summary>工具列上的過濾下拉按鈕；與其他工具列按鈕同高，不另立一種外觀。</summary>
     public static Style CreateFilterButtonStyle()

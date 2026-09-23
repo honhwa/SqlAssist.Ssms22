@@ -21,6 +21,8 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\Preview\SqlPreviewSubject.cs" Link="Product\Preview\SqlPreviewSubject.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemeResourceSet.cs" Link="Product\UI\ThemeResourceSet.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemeColorMath.cs" Link="Product\UI\ThemeColorMath.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\TextMarkColors.cs" Link="Product\UI\TextMarkColors.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\MatchPalette.cs" Link="Product\UI\MatchPalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemePalette.cs" Link="Product\UI\ThemePalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ScriptPalette.cs" Link="Product\UI\ScriptPalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\BlockPalette.cs" Link="Product\UI\BlockPalette.cs" />
@@ -50,6 +52,7 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSearchTargets.cs" Link="Product\UI\SqlSearchTargets.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlSearchFilters.cs" Link="Product\UI\SqlSearchFilters.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFilterChipBar.cs" Link="Product\UI\SqlFilterChipBar.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlStack.cs" Link="Product\UI\SqlStack.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFilterFlyout.cs" Link="Product\UI\SqlFilterFlyout.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlFilterSummary.cs" Link="Product\UI\SqlFilterSummary.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Filters.cs" Link="Product\UI\SqlAssistChrome.Filters.cs" />
@@ -60,6 +63,7 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Search.cs" Link="Product\UI\SqlAssistChrome.Search.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchRow.cs" Link="Product\Search\SqlSearchRow.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchSplit.cs" Link="Product\Search\SqlSearchSplit.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchActivation.Targets.cs" Link="Product\Search\SqlSearchActivation.Targets.cs" />
     <!-- SqlSearchPreview 現在要 SSMS 的中繼資料服務與唯讀檢視，不再是純 WPF；可測的部分在 SqlSearchDefinition。 -->
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchDefinition.cs" Link="Product\Search\SqlSearchDefinition.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchBrowserModel.cs" Link="Product\Search\SqlSearchBrowserModel.cs" />

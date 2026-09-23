@@ -56,8 +56,13 @@ public sealed class SqlSearchVisualTests
                     .SelectMany(text => text.Inlines.OfType<Run>())
                     .Where(run => run.Background is not null).ToArray();
                 Assert.NotEmpty(highlights);
-                Assert.All(highlights, run => Assert.Same(palette.Resources[ThemeBrush.MatchHighlightBackground], run.Background));
-                Assert.All(highlights, run => Assert.Same(palette.Resources[ThemeBrush.MatchHighlightForeground], run.Foreground));
+                // 命中走自己那一組色票，不借強調底（那一份同時是開關「開著」的底，而且只有 12%
+                // 覆蓋率）；底色換了就配前景，不讓字色留在原地靠字重撐。
+                Assert.All(highlights, run =>
+                {
+                    Assert.Same(palette.Resources[ThemeBrush.MatchBackground], run.Background);
+                    Assert.Same(palette.Resources[ThemeBrush.MatchForeground], run.Foreground);
+                });
             }
         });
     }
@@ -269,7 +274,7 @@ public sealed class SqlSearchVisualTests
             // 用 DesiredSize 而不是 ActualWidth：工具列量的是含外距的那一份，兩者差幾個 DIP
             // 就足以讓門檻算在錯的一級上。
             // 群距由共用的分隔線決定（它自己帶左右間距），不是寫死的兩個 ItemGap。
-            var gap = Measured(SqlAssistChrome.CreateFilterGroupDivider()).Width * 2;
+            var gap = Measured(SqlAssistChrome.CreateGroupDivider()).Width * 2;
             var second = databases.DesiredSize.Width + kinds.DesiredSize.Width + segments.DesiredSize.Width + gap;
             var compact = Layout(second - 1);
             Assert.Equal(SqlSearchToolbarMode.Compact, toolbar.Mode);
@@ -438,7 +443,7 @@ public sealed class SqlSearchVisualTests
             var option = SqlAssistChrome.CreateCheckBoxTemplate();
             var segment = (ControlTemplate)SqlAssistChrome.CreateSegmentToggleStyle().Setters
                 .OfType<Setter>().Single(setter => setter.Property == Control.TemplateProperty).Value;
-            var toggle = (ControlTemplate)SqlAssistChrome.CreateInputToggleStyle().Setters
+            var toggle = (ControlTemplate)SqlAssistChrome.CreateToggleStyle().Setters
                 .OfType<Setter>().Single(setter => setter.Property == Control.TemplateProperty).Value;
 
             foreach (var template in new[] { card, option, segment, toggle })
@@ -525,14 +530,18 @@ public sealed class SqlSearchVisualTests
     }
 
     [Fact]
-    public void 名稱命中的高亮平移到限定名稱上而資料行取最後一段()
+    public void 名稱命中的高亮平移到限定名稱上而資料行改標在欄位那一列()
     {
         var table = new SqlSearchRow(Hit(SearchMatchTarget.Name, "[dbo].[Loan]", "Loan", new MatchSpan(0, 4)), "Table");
         Assert.Equal(new[] { new MatchSpan(7, 4) }, table.TitleSpans.ToArray());
 
+        // 資料行命中的標題已經是物件本身（聚合器要把同一張表的幾行併成一列），
+        // 所以標題上沒有東西可標；命中的是哪幾行由資料行那一列自己說。
         var column = new SqlSearchRow(
-            Hit(SearchMatchTarget.Column, "[dbo].[Cat_BookCopy].[CopyNo]", "CopyNo", new MatchSpan(0, 6)), "Column");
-        Assert.Equal(new[] { new MatchSpan(22, 6) }, column.TitleSpans.ToArray());
+            Hit(SearchMatchTarget.Column, "[dbo].[Cat_BookCopy]", "CopyNo", new MatchSpan(0, 6)), "Column");
+        Assert.Empty(column.TitleSpans);
+        Assert.Equal("CopyNo", column.Columns);
+        Assert.Equal(new[] { new MatchSpan(0, 6) }, column.ColumnSpans.ToArray());
 
         // 本文命中的片段來自定義本文，與標題沒有關係。
         var body = new SqlSearchRow(Hit(SearchMatchTarget.Text, "[dbo].[Loan]", "  JOIN Loan l", new MatchSpan(7, 4)), "Table");
@@ -541,12 +550,57 @@ public sealed class SqlSearchVisualTests
         Assert.Equal(new[] { new MatchSpan(5, 4) }, body.SnippetSpans.ToArray());
     }
 
+    /// <summary>
+    /// 併成一列之後，列上說得出對了幾種部位、幾處，以及是哪幾個資料行。
+    /// </summary>
+    /// <remarks>
+    /// 只留代表那一筆的部位等於說「它是靠名稱進來的」，而使用者勾掉名稱那一段之後這一列還在；
+    /// 資料行那一列更是唯一說得出「是哪幾行」的地方——標題已經收回物件本身。
+    /// </remarks>
+    [Fact]
+    public void 併過的列說得出幾種部位幾處與哪幾個資料行()
+    {
+        var row = new SqlSearchRow(
+            Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDate", new MatchSpan(0, 4)).WithMerged(new[]
+            {
+                Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDay", new MatchSpan(0, 4)),
+                Hit(SearchMatchTarget.Text, "[dbo].[Frm_Loan]", "    JOIN Loan l", new MatchSpan(9, 4))
+            }),
+            "Table");
+
+        Assert.Equal(3, row.MatchCount);
+        Assert.Equal("×3", row.MatchCountLabel);
+        Assert.Equal(new[] { "欄位", "內容" }, row.TargetLabels);
+
+        // 資料行名稱串成一行，高亮跟著平移到各自的位置上。
+        Assert.Equal("LoanDate、LoanDay", row.Columns);
+        Assert.Equal(new[] { new MatchSpan(0, 4), new MatchSpan(9, 4) }, row.ColumnSpans.ToArray());
+
+        // 片段那一列讀的是本文命中那一筆，而它不是這一列的代表。
+        Assert.Equal("JOIN Loan l", row.Snippet);
+        Assert.Equal(new[] { new MatchSpan(5, 4) }, row.SnippetSpans.ToArray());
+
+        Assert.Equal("Table · 欄位、內容 · 3 處命中 · LoanDate、LoanDay · " + row.Path, row.Description);
+    }
+
+    /// <summary>只有一處時不畫那顆次數膠囊：整份清單上多一欄 ×1 是沒有資訊的字。</summary>
+    [Fact]
+    public void 只有一處命中時不掛次數膠囊()
+    {
+        var row = new SqlSearchRow(Hit(SearchMatchTarget.Name, "[dbo].[Loan]", "Loan", new MatchSpan(0, 4)), "Table");
+
+        Assert.Equal(1, row.MatchCount);
+        Assert.Equal("", row.MatchCountLabel);
+        Assert.Equal("", row.Columns);
+        Assert.Equal(new[] { "名稱" }, row.TargetLabels);
+    }
+
     [Fact]
     public void 命中部位的用字在開關與列上完全相同()
     {
         // 兩邊各叫各的，使用者會以為它們是兩件事。
         var row = new SqlSearchRow(Hit(SearchMatchTarget.Text, "[dbo].[Loan]", "JOIN Loan l", new MatchSpan(5, 4)), "Table");
-        Assert.Equal(SqlSearchTargets.LabelFor(SearchMatchTarget.Text), row.TargetLabel);
+        Assert.Equal(new[] { SqlSearchTargets.LabelFor(SearchMatchTarget.Text) }, row.TargetLabels);
         Assert.Equal("Table · 內容 · " + row.Path, row.Description);
     }
 
@@ -560,7 +614,7 @@ public sealed class SqlSearchVisualTests
             // 第一列：物件名稱 → 物件類型 → 命中部位 → 彈性空白 → 伺服器 → 資料庫，操作浮在右緣。
             var wide = Render(template, new SqlSearchRow(
                 Hit(SearchMatchTarget.Name, "[dbo].[Loan]", "Loan", new MatchSpan(0, 4)), "Table"), 740);
-            var order = new[] { "name", "kind", "target", "badges" };
+            var order = new[] { "name", "kind", "targets", "badges" };
             var lefts = order.Select(part => Left(wide, part)).ToArray();
             for (var index = 1; index < order.Length; index++)
                 Assert.True(lefts[index] > lefts[index - 1], order[index] + " 應該排在 " + order[index - 1] + " 右邊");
@@ -568,7 +622,7 @@ public sealed class SqlSearchVisualTests
             Assert.Equal(0, Left(wide, "name"), 1);
             var center = Center(wide, "name");
             Assert.All(order, part => Assert.InRange(Center(wide, part) - center, -0.6, 0.6));
-            Assert.True(Right(wide, "target") + 8 < Left(wide, "badges"));
+            Assert.True(Right(wide, "targets") + 8 < Left(wide, "badges"));
             // 兩顆連線膠囊在第一列上，不再自己占一行的右半；操作層不佔寬度，所以它們排到最右。
             Assert.Equal(2, Descendants<SqlIconImage>(Part(wide, "badges")).Count());
             Assert.InRange(740 - Right(wide, "badges"), 0, 8);
@@ -595,7 +649,7 @@ public sealed class SqlSearchVisualTests
             Assert.Equal(0, Left(narrow, "name"), 1);
             Assert.InRange(name.ActualWidth, 1, SqlAssistChrome.RowNameMaxWidth);
             Assert.Equal(TextTrimming.CharacterEllipsis, ((TextBlock)name).TextTrimming);
-            Assert.InRange(Right(narrow, "target"), 0, 300);
+            Assert.InRange(Right(narrow, "targets"), 0, 300);
             // 窄版降級：連線膠囊只剩圖示，次要操作收進 overflow；物件類型是高優先，文字留著。
             Assert.Equal(Visibility.Visible, Part(narrow, "kindText").Visibility);
             Assert.Equal(Visibility.Visible, Part(narrow, "overflow").Visibility);
@@ -604,7 +658,7 @@ public sealed class SqlSearchVisualTests
             Assert.All(Descendants<TextBlock>(Part(narrow, "badges")),
                 text => Assert.Equal(Visibility.Collapsed, text.Visibility));
             // 每一組都仍在這一列的範圍內，沒有被推出去。
-            foreach (var part in new[] { "name", "kind", "target", "badges" })
+            foreach (var part in new[] { "name", "kind", "targets", "badges" })
                 Assert.InRange(Right(narrow, part), 0, 300);
 
             // 沒有路徑概念的來源不留一條空白列。
@@ -612,6 +666,53 @@ public sealed class SqlSearchVisualTests
                 SearchMatchTarget.Name, "SelectTemplate", "SelectTemplate", 10, null, "", new[] { new MatchSpan(0, 6) }),
                 "Snippet"), 740);
             Assert.Equal(Visibility.Collapsed, Part(pathless, "path").Visibility);
+        });
+    }
+
+    /// <summary>
+    /// 併過的一列畫得出好幾顆部位膠囊、一顆次數膠囊，以及命中的那幾個資料行。
+    /// </summary>
+    /// <remarks>
+    /// 這正是同一張表被好幾個資料行命中時，清單上從五列收成一列之後還說得出原因的地方。
+    /// 少了資料行那一列，使用者只看得到一個表名，而他要找的是某一行。
+    /// </remarks>
+    [Fact]
+    public void 併過的列畫出多顆部位膠囊次數與資料行()
+    {
+        WpfTest.Run(() =>
+        {
+            var template = SqlAssistChrome.CreateSearchHitTemplate();
+            var rendered = Render(template, new SqlSearchRow(
+                Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDate", new MatchSpan(0, 4)).WithMerged(new[]
+                {
+                    Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDay", new MatchSpan(0, 4)),
+                    Hit(SearchMatchTarget.Text, "[dbo].[Frm_Loan]", "    JOIN Loan l", new MatchSpan(9, 4))
+                }),
+                "Table"), 740);
+
+            // 兩種部位各一顆膠囊；同一種不重複，而它們的順序照分組先後固定。
+            Assert.Equal(
+                new[] { "欄位", "內容" },
+                Descendants<TextBlock>(Part(rendered, "targets")).Select(text => text.Text));
+
+            var count = Part(rendered, "count");
+            Assert.Equal(Visibility.Visible, count.Visibility);
+            Assert.Equal("×3", Descendants<TextBlock>(count).Single().Text);
+
+            // 資料行那一列帶高亮；標題上沒有，因為標題已經是物件本身。
+            var columns = Assert.IsType<SqlHighlightText>(Part(rendered, "columns"));
+            Assert.Equal(Visibility.Visible, columns.Visibility);
+            Assert.Equal("LoanDate、LoanDay", Rendered(columns));
+            Assert.Equal(2, columns.Inlines.OfType<Run>().Count(run => run.FontWeight == FontWeights.SemiBold));
+
+            // 被併進來的本文命中仍然畫得出片段列，即使代表那一筆是資料行命中。
+            Assert.Equal(Visibility.Visible, Part(rendered, "code").Visibility);
+
+            // 沒有資料行命中時那一列整個收起，不留一條空白。
+            var named = Render(template, new SqlSearchRow(
+                Hit(SearchMatchTarget.Name, "[dbo].[Loan]", "Loan", new MatchSpan(0, 4)), "Table"), 740);
+            Assert.Equal(Visibility.Collapsed, Part(named, "columns").Visibility);
+            Assert.Equal(Visibility.Collapsed, Part(named, "count").Visibility);
         });
     }
 
@@ -631,7 +732,7 @@ public sealed class SqlSearchVisualTests
             var row = Render(template, new SqlSearchRow(
                 Hit(SearchMatchTarget.Name, "[dbo].[Loan]", "Loan", new MatchSpan(0, 4)), "Table"), 740);
 
-            var order = new[] { "name", "kind", "target", "badges", "path" };
+            var order = new[] { "name", "kind", "targets", "badges", "path" };
             var lefts = order.Select(part => Left(row, part)).ToArray();
             for (var index = 1; index < order.Length; index++)
                 Assert.True(lefts[index] > lefts[index - 1], order[index] + " 應該排在 " + order[index - 1] + " 右邊");
@@ -639,7 +740,7 @@ public sealed class SqlSearchVisualTests
 
             // 種類與命中部位在這裡只各出現一次；預覽內容裡不再放第二份同樣的字。
             Assert.Equal("Table", Descendants<TextBlock>(Part(row, "kind")).Single().Text);
-            Assert.Equal("名稱", Descendants<TextBlock>(Part(row, "target")).Single().Text);
+            Assert.Equal("名稱", Descendants<TextBlock>(Part(row, "targets")).Single().Text);
 
             var pathless = Render(template, new SqlSearchRow(new SearchHit("snippets", "snippets.snippet",
                 SearchMatchTarget.Name, "SelectTemplate", "SelectTemplate", 10, null, "", new[] { new MatchSpan(0, 6) }),
@@ -970,10 +1071,12 @@ public sealed class SqlSearchVisualTests
             Assert.Equal(names, radios.Select(radio => (string)radio.Content).ToArray());
             Assert.True(radios[0].IsChecked);
 
-            // 全選對互斥的選項沒有意義，清除等於一個範圍都不選；兩顆都不畫。
+            // 整批命令對互斥的選項沒有意義：單選傳什麼進去都不畫那一列。
+            server.SetBulkCommands(SqlFilterBulkCommands.SelectAndClear);
+            surface.UpdateLayout();
             var labels = Descendants<TextBlock>(surface).Select(text => text.Text).ToArray();
             Assert.DoesNotContain("全選", labels);
-            Assert.DoesNotContain("清除", labels);
+            Assert.DoesNotContain("全不選", labels);
 
             // 每一列各自一個群組名：互斥交給模型，WPF 不自動去取消上一個。
             Assert.Equal(radios.Length, radios.Select(radio => radio.GroupName).Distinct().Count());
@@ -1022,11 +1125,11 @@ public sealed class SqlSearchVisualTests
             var boxes = Descendants<CheckBox>(surface).ToArray();
             Assert.Equal(names, boxes.Select(box => (string)box.Content).ToArray());
 
-            // 種類面板沒有命令鈕：「全部」是第一列那個預設，而全選會送出一份結果相同、
-            // chip 卻完全不同的條件。
+            // 種類面板沒有命令鈕：判準是有沒有搜尋框，而它沒有——「列出來的那一份」恆等於整份，
+            // 全選就與第一列那個「全部」同義，那一列只剩一顆按不出差別的鈕。
             var labels = Descendants<TextBlock>(surface).Select(text => text.Text).ToArray();
             Assert.DoesNotContain("全選", labels);
-            Assert.DoesNotContain("清除", labels);
+            Assert.DoesNotContain("全不選", labels);
 
             kinds.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
             Assert.True(kinds.IsOpen);
@@ -1048,7 +1151,8 @@ public sealed class SqlSearchVisualTests
     /// </summary>
     /// <remarks>
     /// 摘要寫著「全部」而清單上一個勾都沒有時，使用者會以為自己把條件弄丟了，
-    /// 或以為這個下拉壞了。取消勾它不是一個狀態，所以它按得上去、取消不掉。
+    /// 或以為這個下拉壞了。取消它不是一個狀態，所以它按得上去、取消不掉——因此畫成 radio
+    /// 而不是核取方塊，並且留在捲動區外面。
     /// </remarks>
     [Fact]
     public void 過濾面板第一列是沒有指名時的那個預設()
@@ -1079,23 +1183,35 @@ public sealed class SqlSearchVisualTests
             surface.UpdateLayout();
 
             var boxes = Descendants<CheckBox>(surface).ToArray();
-            Assert.Equal(new[] { "全部", "Table" }, boxes.Select(box => (string)box.Content).ToArray());
-            Assert.True(boxes[0].IsChecked);
+            Assert.Equal(new[] { "Table" }, boxes.Select(box => (string)box.Content).ToArray());
 
-            // 取消勾「全部」不是使用者做得到的狀態：勾選框彈起來了，要把它按回去，
+            // 形狀就是語意：這一列與底下每一個選項互斥，所以是 radio；核取方塊的合約是
+            // 可勾可取消，而它取消不掉，畫成核取方塊讀起來像壞掉。
+            var all = Descendants<RadioButton>(surface).Single();
+            Assert.Equal("全部", all.Content);
+            Assert.True(all.IsChecked);
+
+            // 它在捲動區外面，不是虛擬化清單的第 0 列：名稱上百個時捲下去仍看得到，
+            // 打了搜尋字一個都不相符時也還回得去。
+            var list = Descendants<ItemsControl>(surface).Single();
+            Assert.DoesNotContain(all, Descendants<RadioButton>(list));
+            // 底下那條橫線把「預設值」與「自己挑這些」切開；少了它，radio 會讓人以為整份只能選一個。
+            Assert.Contains(Descendants<Border>(surface), border => border.Height == 1);
+
+            // 取消「全部」不是使用者做得到的狀態：控制項彈起來了，要把它按回去，
             // 否則畫面上這個維度看起來沒有條件，而實際上也真的沒有。
-            boxes[0].IsChecked = false;
+            all.IsChecked = false;
             surface.UpdateLayout();
-            Assert.True(boxes[0].IsChecked);
+            Assert.True(all.IsChecked);
             Assert.Equal(0, cleared);
 
             // 別的選項變動之後由宿主改這一列，不重建整份清單：使用者可能正在連勾好幾個。
             kinds.SyncEmptyOption(false);
             surface.UpdateLayout();
-            Assert.False(boxes[0].IsChecked);
+            Assert.False(all.IsChecked);
             Assert.Equal(0, cleared);
 
-            boxes[0].IsChecked = true;
+            all.IsChecked = true;
             Assert.Equal(1, cleared);
         });
     }
@@ -1294,14 +1410,15 @@ public sealed class SqlSearchVisualTests
     }
 
     /// <summary>
-    /// 命令鈕只有一顆，全勾之後換成取消全選；取消全選走的是第一列那個預設的清除路徑。
+    /// 整批命令是兩顆並排、一直亮著的全選與全不選；全選帶著搜尋框的過濾字出去。
     /// </summary>
     /// <remarks>
-    /// 全選之後只想留兩個的人，在沒有這一顆的那一版要自己取消掉幾十個勾，而唯一的出口是
-    /// 第一列那個寫著「連線預設」的預設——它看起來不像取消全選。並排兩顆的那一版則總有一顆是灰的。
+    /// 收起其中一顆的那一版會讓剩下那一顆滑進它的位置，於是同一個像素換了意思——按完全選、
+    /// 手沒移開再按一次就全清掉；停用的那一版則永遠有一顆是灰的。兩顆帶字帶圖示並排之後
+    /// 那一列會不會在最窄的面板上擠出去，只有量得出來，所以這裡連寬度一起釘住。
     /// </remarks>
     [Fact]
-    public void 整批命令只有一顆而且字跟著狀態換()
+    public void 整批命令兩顆並排而且一直亮著()
     {
         WpfTest.Run(() =>
         {
@@ -1311,15 +1428,15 @@ public sealed class SqlSearchVisualTests
             var databases = new SqlFilterFlyout("資料庫", SqlIcon.Database, SqlFilterMode.SearchableMultiple);
             var surface = databases.PopupSurface;
             surface.Resources.MergedDictionaries.Add(palette.Resources);
-            var all = 0;
+            var asked = new List<string>();
             var cleared = 0;
-            databases.SelectAllRequested += (_, _) => all++;
+            databases.SelectAllRequested += pattern => asked.Add(pattern);
             databases.ClearAllRequested += (_, _) => cleared++;
 
-            void Layout()
+            void Layout(double width)
             {
-                surface.Measure(new Size(320, double.PositiveInfinity));
-                surface.Arrange(new Rect(0, 0, 320, surface.DesiredSize.Height));
+                surface.Measure(new Size(width, double.PositiveInfinity));
+                surface.Arrange(new Rect(0, 0, width, surface.DesiredSize.Height));
                 surface.UpdateLayout();
             }
 
@@ -1327,33 +1444,58 @@ public sealed class SqlSearchVisualTests
                 .FirstOrDefault(button => Descendants<TextBlock>(button).Any(text => text.Text == label));
 
             // 沒有人要的面板不留那一列；種類那一顆就是這樣。
-            Layout();
+            Layout(320);
             Assert.Null(Command("全選"));
-            Assert.Null(Command("取消全選"));
+            Assert.Null(Command("全不選"));
 
-            databases.SetBulkSelection(SqlFilterBulkSelection.SelectAll);
-            Layout();
-            var bulk = Command("全選");
-            Assert.NotNull(bulk);
-            bulk!.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            Assert.Equal((1, 0), (all, cleared));
+            databases.SetSortOptions(
+                new[] { new SqlFilterSortOption("name", "名稱 A–Z", "A–Z", SqlIcon.SortAscending) }, "name");
+            databases.SetBulkCommands(SqlFilterBulkCommands.SelectAndClear);
+            Layout(320);
+            var selectAll = Command("全選");
+            var clearAll = Command("全不選");
+            Assert.NotNull(selectAll);
+            Assert.NotNull(clearAll);
 
-            // 換狀態只換字，不重建按鈕：重建的那一版會在使用者按下去的那一刻把按鈕抽掉。
-            databases.SetBulkSelection(SqlFilterBulkSelection.ClearAll);
-            Layout();
-            Assert.Same(bulk, Command("取消全選"));
-            Assert.Null(Command("全選"));
-            bulk.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            Assert.Equal((1, 1), (all, cleared));
+            // 沒打字就是整份：過濾字是空字串。
+            selectAll!.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(new[] { "" }, asked);
 
-            databases.SetBulkSelection(SqlFilterBulkSelection.None);
-            Layout();
-            Assert.Equal(Visibility.Collapsed, bulk.Visibility);
+            // 按完之後兩顆都還在原位，字也沒換：同一個像素不會變成另一件事。
+            Layout(320);
+            Assert.Same(selectAll, Command("全選"));
+            Assert.Same(clearAll, Command("全不選"));
+            Assert.Equal(Visibility.Visible, selectAll.Visibility);
+            Assert.Equal(Visibility.Visible, clearAll!.Visibility);
+            Assert.True(selectAll.IsEnabled && clearAll.IsEnabled);
 
-            // 單選不畫這一顆：全選對互斥的選項沒有意義。
+            // 打了字之後全選只作用在篩出來的那一份，所以過濾字要跟著出去。
+            var filter = Descendants<TextBox>(surface).Single();
+            filter.Text = "lib";
+            Layout(320);
+            selectAll.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(new[] { "", "lib" }, asked);
+
+            clearAll.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(1, cleared);
+
+            // 最窄的面板上三顆也要排得下：DockPanel 不換行，擠不下就是直接裁掉。
+            var border = (Border)surface;
+            Layout(border.MinWidth);
+            var commands = Descendants<DockPanel>(surface).Single(panel => panel.Children.Contains(selectAll));
+            var room = border.MinWidth - border.Padding.Left - border.Padding.Right;
+            Assert.True(commands.DesiredSize.Width <= room,
+                $"命令列要 {commands.DesiredSize.Width} DIP，面板最窄時只有 {room} DIP。");
+
+            databases.SetBulkCommands(SqlFilterBulkCommands.None);
+            Layout(320);
+            Assert.Equal(Visibility.Collapsed, selectAll.Visibility);
+            Assert.Equal(Visibility.Collapsed, clearAll.Visibility);
+
+            // 單選不畫這一列：全選對互斥的選項沒有意義。
             var server = new SqlFilterFlyout("伺服器", SqlIcon.Server, SqlFilterMode.Single);
             server.PopupSurface.Resources.MergedDictionaries.Add(palette.Resources);
-            server.SetBulkSelection(SqlFilterBulkSelection.SelectAll);
+            server.SetBulkCommands(SqlFilterBulkCommands.SelectAndClear);
             server.PopupSurface.Measure(new Size(320, double.PositiveInfinity));
             server.PopupSurface.Arrange(new Rect(0, 0, 320, server.PopupSurface.DesiredSize.Height));
             Assert.DoesNotContain(Descendants<TextBlock>(server.PopupSurface), text => text.Text == "全選");

@@ -4,13 +4,16 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using SqlAssist.Core.Matching;
 using SqlAssist.Metadata.Search;
 using SqlAssist.Ssms22.UI;
 
 namespace SqlAssist.Ssms22.Search;
 
 /// <summary>
-/// 選取那一筆的完整定義，命中位置捲到可見並高亮。
+/// 選取那一筆的完整定義，每一處命中都高亮，並可以一處一處走過去。
 /// </summary>
 /// <remarks>
 /// 只讀 <c>SearchHit</c> 攤出來的欄位加上酬載指向的那個物件；指令碼本身走
@@ -33,8 +36,9 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
     private readonly TextBlock _status = SqlAssistChrome.CreateStatusText(SqlAssistChrome.DefaultMetrics);
     private readonly Grid _body = new();
     private readonly DockPanel _content;
-    private readonly Button _copyName;
-    private readonly Button _wrap;
+    private readonly Button _copyScript;
+    private readonly ToggleButton _wrap;
+    private readonly SqlMatchNavigator _navigator = new();
     private readonly WrapPanel _toolbar = new();
     private readonly SqlSelectionLoader<SqlSearchRow> _selection;
     private bool _disposed;
@@ -43,12 +47,16 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
     {
         _loader = new SqlSearchDefinitionLoader(catalogs);
 
-        _copyName = SqlAssistChrome.CreateIconButton(SqlIcon.Copy, "複製限定名稱");
-        _copyName.Click += (_, _) => CopyRequested?.Invoke(this, EventArgs.Empty);
-        // 複製定義本身不另放一顆同圖示的按鈕；唯讀檢視的右鍵選單已經有「複製全文」與
-        // 「複製選取」，兩顆 Copy 並排只會讓人先猜哪一顆是哪一個。
-        _wrap = SqlAssistChrome.CreateIconButton(SqlIcon.Wrap, "切換 SQL 顯示換行");
-        _wrap.Click += (_, _) => Guarded(() => _viewer.SetWrap(!_viewer.Wrap));
+        // 這一顆複製的是畫面上這一份定義，不是名稱：使用者按預覽裡的複製，要的是
+        // 他正在看的那段結構描述；名稱在清單的右鍵選單上（「複製名稱」），那裡才是
+        // 「這一列是什麼」的位置。與 SQL Memory 預覽的「複製全文」同一顆、同一個位置。
+        _copyScript = SqlAssistChrome.CreateIconButton(SqlIcon.Copy, "複製定義");
+        _copyScript.Click += (_, _) => Guarded(() => _viewer.CopyAll());
+        // 換行是一個維持著的狀態不是一次動作，所以是開關不是按鈕：按完之後工具列上看得出
+        // 現在是開著的，理由見 CreateIconToggle。
+        _wrap = SqlAssistChrome.CreateIconToggle(SqlIcon.Wrap, "SQL 顯示換行");
+        _wrap.Checked += (_, _) => Guarded(() => _viewer.SetWrap(true));
+        _wrap.Unchecked += (_, _) => Guarded(() => _viewer.SetWrap(false));
 
         _snippet.FontFamily = SqlAssistChrome.CodeFont;
         _snippet.TextWrapping = TextWrapping.Wrap;
@@ -67,7 +75,17 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
         _body.Children.Add(_surface);
         _body.Children.Add(_snippetSurface);
 
-        _toolbar.Children.Add(_copyName);
+        // 導覽排在最前面：這一列上它是唯一會被連按好幾次的東西，而複製與換行是各按一次的。
+        _navigator.CurrentChanged += (_, _) =>
+            SqlAssistPlatformGuard.Run("移到下一處命中", () => _viewer.ShowMatch(_navigator.Matches.Index));
+        _toolbar.Children.Add(_navigator);
+        // 導覽與命令是兩群（「走到哪一處」與「拿這一份定義做什麼」），所以中間是工具列上
+        // 那一條共用的群界線。沒有命中時導覽整組收起，這一條跟著收——綁 Visibility 而不是
+        // 在每一個換命中的路徑上各設一次，漏掉其中一條的症狀是工具列從一條孤線開始。
+        var divider = SqlAssistChrome.CreateGroupDivider();
+        divider.SetBinding(VisibilityProperty, new Binding(nameof(Visibility)) { Source = _navigator });
+        _toolbar.Children.Add(divider);
+        _toolbar.Children.Add(_copyScript);
         _toolbar.Children.Add(_wrap);
 
         _status.TextWrapping = TextWrapping.Wrap;
@@ -107,9 +125,6 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
         Visibility = Visibility.Collapsed
     };
 
-    /// <summary>複製限定名稱；實際寫剪貼簿的失敗要看得見，所以交給宿主處理。</summary>
-    public event EventHandler? CopyRequested;
-
     /// <summary>目前顯示的那一筆；沒有選取時 null。</summary>
     public SqlSearchRow? Current => _selection.Current;
 
@@ -135,8 +150,11 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
         // 「這裡本來會有什麼」，而那一句已經由狀態表面說了。不適用的操作一律收起。
         _toolbar.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
         Summary.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
-        _copyName.IsEnabled = row is not null;
+        // 兩顆都跟著「有沒有一份定義在畫面上」：只提供片段的來源複製不出結構描述，
+        // 而一顆複製得到半句話的按鈕比沒有那一顆更難解釋。定義載進來才開。
+        _copyScript.IsEnabled = false;
         _wrap.IsEnabled = false;
+        _navigator.Clear();
         _viewer.SetSql("");
         _surface.State = SqlSurfaceState.None;
         _snippetSurface.Visibility = Visibility.Collapsed;
@@ -194,17 +212,20 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
                 return;
             }
 
-            var highlights = SqlSearchDefinitionHighlight.Locate(row.Hit, definition.Script);
+            var highlights = SqlSearchDefinitionHighlight.Locate(row.Hit, definition.Script, out var truncated);
             _viewer.SetSql(definition.Script, highlights);
-            _wrap.IsEnabled = true;
+            _navigator.SetCursor(new MatchCursor(highlights));
+            _copyScript.IsEnabled = _wrap.IsEnabled = true;
+
+            // 第一處自動捲到可見，之後一律由導覽接手：一份幾百行的定義從頭顯示而命中在底下時，
+            // 使用者看不出自己選的這一筆為什麼在清單上。換一列以外的捲動都是他自己按的。
+            if (highlights.Count != 0) _viewer.ShowMatch(0);
 
             // 對不上時不高亮也不捲動，但要說一句：整份定義從頭顯示而沒有任何標記時，
             // 使用者會以為是面板壞了，而不是這一筆的位置對不起來。
             // 比對的是命中原本那幾段，不是清單攤平之後留下來的：攤平會丟掉被切掉的區段，
             // 拿它判斷會在「片段太長」時誤報成對不上。
-            Report(highlights.Count != 0 || row.Hit.SnippetSpans.Count == 0
-                ? ""
-                : "命中位置對不上這一份定義，已顯示完整定義。");
+            Report(MatchNotice(highlights.Count, truncated, row));
             SqlAssistChrome.PlayAppear(_body);
         }
         finally
@@ -212,6 +233,21 @@ internal sealed class SqlSearchPreview : UserControl, IDisposable
             // 舊請求的結束不能關掉新選取的載入效果，也不能蓋掉這一輪剛寫上去的讀不到。
             if (_selection.IsCurrent(row, token) && _surface.IsLoading) _surface.State = SqlSurfaceState.None;
         }
+    }
+
+    /// <summary>
+    /// 高亮這件事現在要說的那一句；沒有話要說時是空字串。
+    /// </summary>
+    /// <remarks>
+    /// 三種情形的下一步不同，所以不併成一句：對不上是「這一筆的位置對不起來」，
+    /// 太多是「還有沒標出來的」，其餘不必說話。少標了幾處卻不說的症狀最糟——
+    /// 使用者按到最後一處就以為看完了。
+    /// </remarks>
+    private static string MatchNotice(int located, bool truncated, SqlSearchRow row)
+    {
+        if (truncated) return $"命中太多，只標出前 {SqlSearchDefinitionHighlight.Maximum} 處。";
+        if (located != 0 || row.Hit.SnippetSpans.Count == 0) return "";
+        return "命中位置對不上這一份定義，已顯示完整定義。";
     }
 
     private void Report(string message)

@@ -25,6 +25,9 @@
 | 收藏、回溯、SQL 差異 | [版本歷史](sql-memory-revisions.md) |
 | SQL Memory 保留、清理、部署 | [維護](sql-memory-maintenance.md)／[用量](sql-memory-usage.md)／[驗收](sql-memory-validation.md) |
 | SQL Search、搜尋來源、索引 | [SQL Search](search.md) |
+| 移至定義、在物件總管中選取、節點 URN | [結果導航](search-navigation.md) |
+| 命中高亮、目前那一處、上一個／下一個命中 | [命中高亮與導覽](search-highlight.md) |
+| 文字標記底色、命中與區塊端點的配色 | [文字標記](text-marks.md) |
 | 搜尋範圍、伺服器、資料庫清單 | [範圍](search-scope.md) |
 | 建議清單、排名、IntelliSense | [補全](completion.md) |
 | CompletionContext、觸發、大小寫、述詞起點 | [上下文](completion-context.md) |
@@ -69,6 +72,8 @@
 | 建置／測試、UTF-8／LF／BOM | [開發](development.md)／[文字與編碼](text-encoding.md) |
 | 安裝／移除、VSIX 偵錯、MEF 快取 | [發布](release.md)／[偵錯](debugging.md) |
 | Debug 部署、必要／可選檔案、Deploy | [部署契約](debug-deployment.md) |
-| AI、README 圖片、提示詞 | [AI](ai-workflow.md)／[RTK](ai-rtk.md)／[圖片](images/README.md) |
+| AI 工作流程、RTK | [AI](ai-workflow.md)／[RTK](ai-rtk.md) |
+| README 圖片／GIF、靜態品牌圖提示詞 | [圖片](images/README.md)／[提示詞](images/prompts.md) |
+| VitePress、Pages、網站上線 | [網站發布](website.md) |
 
 只使用產品時讀[開始使用](getting-started.md)。
