@@ -66,6 +66,28 @@ public sealed class SqlVariableRenameTests
         Assert.Equal(input.Caret, target!.NameStart + 3);
     }
 
+    /// <remarks>
+    /// 主出現處的追蹤模式與其他出現處不同（只有它要跟著打字長），而游標可以停在
+    /// <b>任何</b>一處。呼叫端若拿 <c>NameStart</c> 自己去比對，排在主出現處前面的
+    /// 那些會在還沒找到之前就先被判成主出現處——實例是編輯器那一層的建構迴圈，
+    /// 它把索引寫成迴圈變數，於是第一處永遠拿到主出現處的追蹤模式。
+    /// </remarks>
+    [Theory]
+    [InlineData("DECLARE @rea|derId INT;\nSELECT @readerId", 0)]
+    [InlineData("DECLARE @readerId INT;\nSELECT @rea|derId", 1)]
+    [InlineData("DECLARE @readerId INT;\nSELECT @readerId;\nSELECT @rea|derId", 2)]
+    [InlineData("DECLARE @readerId INT;\nSELECT @READERID;\nSELECT @Rea|derId", 2)]
+    public void 主出現處的索引跟著游標走(string sqlWithCaret, int expected)
+    {
+        var input = SqlWithCaret.Parse(sqlWithCaret);
+
+        var target = SqlVariableRename.FindAt(input.Text, input.Caret);
+
+        Assert.NotNull(target);
+        Assert.Equal(expected, target!.PrimaryIndex);
+        Assert.Equal(target.NameStart, target.NameStarts[target.PrimaryIndex]);
+    }
+
     [Fact]
     public void 游標不在變數上時找不到()
     {

@@ -61,6 +61,8 @@ public sealed class SqlAssistPackage : AsyncPackage
             VsThemeBrushes.Initialize();
             // 工具窗由殼層在套件初始化之後才建立；接在這裡，任何視窗的圖示插槽都不會先建成空的。
             SqlIcons.RegisterImages();
+            await InlineRenameCommand.InitializeAsync(this);
+
 
             // 命令的勾選狀態要靠設定回答，所以設定必須先接上。
             SqlAssistSettingsStore.Initialize(this);

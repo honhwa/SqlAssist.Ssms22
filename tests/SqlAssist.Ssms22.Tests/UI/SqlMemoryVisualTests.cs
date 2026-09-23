@@ -843,9 +843,16 @@ public sealed class SqlMemoryVisualTests
             var left = new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, 120) { RoutedEvent = UIElement.PreviewMouseWheelEvent };
             summary.RaiseEvent(left); split.UpdateLayout();
             Assert.True(scroll.HorizontalOffset < scroll.ScrollableWidth);
+            // 修飾鍵要由測試指定：預覽區的捲動處理常式開頭就是
+            // `if (args.KeyboardDevice.Modifiers != ModifierKeys.None) return;`，
+            // 而 Keyboard.PrimaryDevice 讀的是執行緒的 Win32 按鍵狀態——實體鍵盤上只要
+            // 壓著 Ctrl／Shift／Alt／Win 的任一個，合成出來的 Home 就會被當成有修飾鍵、
+            // 直接 return，Handled 留在 false。這是平行跑整套時偶發紅燈的來源
+            // （單獨跑與 --max-threads 1 都是綠的）。理由詳見 TestKeyboardDevice。
+            var device = new TestKeyboardDevice();
             foreach (var key in new[] { Key.Home, Key.End, Key.Left, Key.Right })
             {
-                var keyboard = new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                var keyboard = new KeyEventArgs(device, source, 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
                 scroll.RaiseEvent(keyboard); split.UpdateLayout(); Assert.True(keyboard.Handled);
                 if (key == Key.Home) Assert.Equal(0, scroll.HorizontalOffset);
                 if (key == Key.End) Assert.Equal(scroll.ScrollableWidth, scroll.HorizontalOffset);

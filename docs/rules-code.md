@@ -38,6 +38,14 @@
   `[CollectionDefinition(DisableParallelization = true)]` 集合（`SqlIconFactoryCollection`、
   `MetadataFailureCollection`、`SqlSuggestionUsageCollection`）。只共用一個集合不夠：那擋不住
   第三個類別在靜態值被換掉的期間讀它。症狀是單獨跑一定過、整份跑起來必失敗。
+- 合成鍵盤事件要傳 `TestKeyboardDevice`，不要傳 `Keyboard.PrimaryDevice`：後者讀的是執行緒的
+  Win32 按鍵狀態，實體鍵盤上壓著 Ctrl／Shift／Alt／Win 就會混進去。產品碼讀
+  `KeyEventArgs.KeyboardDevice.Modifiers`，於是合成的 Home 被當成有修飾鍵、處理常式提前
+  `return`，`Handled` 留在 false。症狀與上一條同一個形狀（單獨跑、`--max-threads 1` 都綠，
+  整份跑偶發一條紅），但成因不在靜態欄位而在 OS 輸入狀態，加 `[Collection]` 治不好。
+  兩側都有守護測試：`KeyboardDeviceUsageTests` 掃產品碼的靜態 `Keyboard` 讀取（例外只有
+  `ShiftHeld`），也掃測試裡的 `Keyboard.PrimaryDevice`。產品碼唯一的合法用法是
+  `SqlSnippetSurroundPicker` 把殼層解析掉的按鍵推回輸入管線——那裡要的正是實體修飾鍵。
 - `SqlAssist.Ssms22.Tests` 是**逐檔列出**產品的純 WPF 原始碼（`<Compile Include>` 加 `Link`），
   不是專案參考。新增、改名或刪除那條清單上的產品檔時要**同步改 `SqlAssist.Ssms22.Tests.csproj`**；
   漏改的症狀是建置失敗說找不到檔案，而產品專案自己編得過。

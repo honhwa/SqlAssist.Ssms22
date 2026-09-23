@@ -40,11 +40,13 @@ public sealed class SqlVariableRenameTarget
     internal SqlVariableRenameTarget(
         string name,
         int nameStart,
+        int primaryIndex,
         IReadOnlyList<int> nameStarts,
         IReadOnlyList<string> otherNames)
     {
         Name = name;
         NameStart = nameStart;
+        PrimaryIndex = primaryIndex;
         NameStarts = nameStarts;
         OtherNames = otherNames;
     }
@@ -54,6 +56,17 @@ public sealed class SqlVariableRenameTarget
 
     /// <summary>游標那一處的名稱起點，也就是小老鼠之後的那一個字元。</summary>
     public int NameStart { get; }
+
+    /// <summary>
+    /// 游標那一處在 <see cref="NameStarts"/> 裡的索引。
+    /// </summary>
+    /// <remarks>
+    /// 主出現處與其他出現處的處理方式不同——它要跟著打字長，其他的是被整段換掉——
+    /// 所以呼叫端得認得出哪一個是它。游標可以停在<b>任何</b>一處，這個索引因此不一定是 0：
+    /// 呼叫端自己拿 <see cref="NameStart"/> 去比對 <see cref="NameStarts"/> 的話，
+    /// 排在主出現處前面的那些會在還沒找到之前就先被判成主出現處。
+    /// </remarks>
+    public int PrimaryIndex { get; }
 
     /// <summary>
     /// 名稱長度。
@@ -125,6 +138,7 @@ public static class SqlVariableRename
 
         var starts = new List<int>();
         var others = new List<string>();
+        var primaryIndex = 0;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var position = first; position < last; position++)
@@ -145,6 +159,13 @@ public static class SqlVariableRename
 
             if (string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase))
             {
+                // 主出現處就是詞法單元索引等於游標那一處的那一個；游標可以在任何一處，
+                // 所以它的位置在 starts 裡不固定。這裡當場記下來，呼叫端就不必再找一次。
+                if (position == index)
+                {
+                    primaryIndex = starts.Count;
+                }
+
                 starts.Add(token.Start + 1);
                 continue;
             }
@@ -158,6 +179,7 @@ public static class SqlVariableRename
         return new SqlVariableRenameTarget(
             name,
             target.Start + 1,
+            primaryIndex,
             Array.AsReadOnly(starts.ToArray()),
             Array.AsReadOnly(others.ToArray()));
     }

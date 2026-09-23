@@ -56,8 +56,14 @@
   游標落到範圍的錨點（起點）。選取本身就是功能的地方症狀最重：F2 變數重新命名會把名稱
   打成「舊名夾著新字」（`@cond` 按 F2 打 `xxxx` 得到 `@xxxxcond`），自動配對則包完之後
   選取消失，接著打第二個分隔字元只會插入一個字元、不再包一層。`Select` 已經把游標擺在
-  範圍末端，要讓它可見用 `ViewScroller.EnsureSpanVisible`，那一個只捲動。兩處實例見
+  範圍末端，要讓它可見用 `Caret.EnsureVisible`——它只捲動，游標與選取都不動。兩處實例見
   [變數重新命名](variable-rename.md)與[自動配對](auto-pairing.md)。
+- **禁止**在「進行中」的狀態真的可用之前就把它公布出去。旗標（`IsActive`、`IsOpen`
+  這類）要在所有會失敗的步驟都做完、事件處理常式都掛好之後才設起，結束的路徑一律
+  `try`／`finally` 收尾，而且編輯器事件本身要走 `SqlAssistPlatformGuard`。理由：殼層
+  命令濾鏡靠那個旗標認領 ↑／↓／Enter／Esc，一個「活著卻沒有處理常式」的工作階段會讓
+  那些鍵永遠被吞掉——症狀是「按了某個鍵之後鍵盤沒有反應」，而且只能重開 SSMS 才解得掉。
+  實例見[變數重新命名](variable-rename.md)。
 - **禁止**改了 `Menus.vsct` 卻沒把 `ProvideMenuResource` 的版號加一，也**禁止**
   改完命令表後用 `Deploy-DebugExtension.ps1` 部署。殼層照 pkgdef 的
   `Menus.ctmenu, N` 決定要不要重讀命令表，而 pkgdef 不在部署清單裡，清快取也沒用。

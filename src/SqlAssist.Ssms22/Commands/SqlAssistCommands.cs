@@ -85,13 +85,13 @@ internal sealed class SqlAssistCommands
             SurroundWith,
             SqlSnippetSurroundAction.IsAvailable);
 
-        // F2。狀態守門刻意與 F12 同一條界線，只問「有沒有 SQL 編輯器」：
-        // 問「游標是不是在變數上」要詞法分析整份指令碼，而命令狀態在每一次按鍵、
-        // 每一次閒置都會被問一次。做不做得到由命令本身回報。
-        AddCommand(
-            CommandIds.RenameVariable,
-            RenameVariable,
-            () => SqlAssistSettingsStore.Current.Enabled && ActiveSqlEditor.Current is not null);
+        //// F2。狀態守門刻意與 F12 同一條界線，只問「有沒有 SQL 編輯器」：
+        //// 問「游標是不是在變數上」要詞法分析整份指令碼，而命令狀態在每一次按鍵、
+        //// 每一次閒置都會被問一次。做不做得到由命令本身回報。
+        //AddCommand(
+        //    CommandIds.RenameVariable,
+        //    RenameVariable,
+        //    () => SqlAssistSettingsStore.Current.Enabled && ActiveSqlEditor.Current is not null);
 
         // 右鍵與工具選單使用不同的 VSCT ID 才能有不同圖示，但共用執行與狀態邏輯。
         // SQL Memory 關著或沒有東西可收就變灰，不讓使用者按下去才知道。

@@ -206,8 +206,8 @@ internal static class SqlAutoPairing
 
         // 只捲動，不動游標。**選取之後不要再呼叫 Caret.MoveTo**：那會把剛做好的選取
         // 收掉，而這裡的選取是功能的一部分——沒有它，接著打第二個分隔字元不會再包
-        // 一層，只會變成插入一個字元。Select 本身已經把游標擺在範圍末端。
-        textView.ViewScroller.EnsureSpanVisible(inner);
+        // 一層，只會變成插入一個字元。EnsureVisible 只捲動到游標，游標與選取都不動。
+        textView.Caret.EnsureVisible();
         SqlAssistDiagnostics.Write($"以 {typedCharacter}{closeCharacter} 包夾選取範圍", textView);
         return true;
     }

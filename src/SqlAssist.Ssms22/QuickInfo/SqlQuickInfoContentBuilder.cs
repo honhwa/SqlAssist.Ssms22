@@ -503,8 +503,8 @@ internal static class SqlQuickInfoContentBuilder
 
             if (parameter.IsOutput)
             {
-                runs.Add(Text("  "));
-                runs.Add(Comment("OUTPUT"));
+                //runs.Add(Text("  "));
+                //runs.Add(Comment("OUTPUT"));
             }
 
             yield return new ClassifiedTextElement(runs);
