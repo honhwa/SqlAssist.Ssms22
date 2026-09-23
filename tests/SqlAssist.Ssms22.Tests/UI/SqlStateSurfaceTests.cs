@@ -13,6 +13,7 @@ using Xunit;
 namespace SqlAssist.Ssms22.Tests.UI;
 
 /// <summary>四種狀態只有一份實作：載入、空、讀不到與權限不足疊在同一塊內容上。</summary>
+[Collection(SqlIconFactoryCollection.Name)]
 public sealed class SqlStateSurfaceTests
 {
     static SqlStateSurfaceTests() => SqlIconImage.Factory = icon => new Border { Width = 16, Height = 16, Tag = icon };

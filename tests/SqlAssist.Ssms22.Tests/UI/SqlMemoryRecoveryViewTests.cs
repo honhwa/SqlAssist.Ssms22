@@ -6,6 +6,7 @@ using Xunit;
 
 namespace SqlAssist.Ssms22.Tests.UI;
 
+[Collection(SqlIconFactoryCollection.Name)]
 public sealed class SqlMemoryRecoveryViewTests
 {
     static SqlMemoryRecoveryViewTests() => SqlIconImage.Factory = HostImage;

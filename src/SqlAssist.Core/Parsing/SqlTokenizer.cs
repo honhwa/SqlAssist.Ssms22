@@ -333,13 +333,25 @@ public static partial class SqlTokenizer
     /// <c>#</c> 是暫存表、<c>_</c> 是一般名稱，兩者都可以開頭。
     /// T-SQL 允許 Unicode 字母，因此用 <see cref="char.IsLetter(char)"/> 而非 A-Z 比對，
     /// 中文資料表名稱才不會被切碎。
+    ///
+    /// 公開是為了讓「這個名字會不會被讀成一個識別字」只有這一份答案：
+    /// 變數重新命名要拿它驗證使用者打到一半的名稱（見 <c>SqlVariableRename</c>），
+    /// 自己再抄一份字元表的話，兩邊遲早會對不上，而症狀是打得出名字、
+    /// 那個名字卻不被詞法分析器當成一個詞元。
     /// </remarks>
-    private static bool IsIdentifierStart(char value)
+    public static bool IsIdentifierStart(char value)
     {
         return char.IsLetter(value) || value == '_' || value == '#';
     }
 
-    private static bool IsIdentifierPart(char value)
+    /// <summary>
+    /// 識別字第一個字元之後可以出現的字元。
+    /// </summary>
+    /// <remarks>
+    /// <c>@</c> 不在裡面：變數的小老鼠由 <see cref="ReadVariable"/> 單獨處理，
+    /// 混進來會讓 <c>a@b</c> 變成一個識別字。
+    /// </remarks>
+    public static bool IsIdentifierPart(char value)
     {
         return char.IsLetterOrDigit(value) || value == '_' || value == '#' || value == '$';
     }

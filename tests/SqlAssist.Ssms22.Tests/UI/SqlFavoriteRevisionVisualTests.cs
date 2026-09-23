@@ -14,6 +14,7 @@ using Xunit;
 
 namespace SqlAssist.Ssms22.Tests.UI;
 
+[Collection(SqlIconFactoryCollection.Name)]
 public sealed class SqlFavoriteRevisionVisualTests
 {
     static SqlFavoriteRevisionVisualTests() => SqlIconImage.Factory = icon => new Border { Width = 16, Height = 16, Background = Brushes.Gray, Tag = icon };

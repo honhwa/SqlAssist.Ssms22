@@ -85,6 +85,14 @@ internal sealed class SqlAssistCommands
             SurroundWith,
             SqlSnippetSurroundAction.IsAvailable);
 
+        // F2。狀態守門刻意與 F12 同一條界線，只問「有沒有 SQL 編輯器」：
+        // 問「游標是不是在變數上」要詞法分析整份指令碼，而命令狀態在每一次按鍵、
+        // 每一次閒置都會被問一次。做不做得到由命令本身回報。
+        AddCommand(
+            CommandIds.RenameVariable,
+            RenameVariable,
+            () => SqlAssistSettingsStore.Current.Enabled && ActiveSqlEditor.Current is not null);
+
         // 右鍵與工具選單使用不同的 VSCT ID 才能有不同圖示，但共用執行與狀態邏輯。
         // SQL Memory 關著或沒有東西可收就變灰，不讓使用者按下去才知道。
         AddCommand(
@@ -283,6 +291,47 @@ internal sealed class SqlAssistCommands
             // 同上：這條路徑綁著按鍵，例外也走狀態列。
             SqlAssistDiagnostics.WriteAlways($"開啟物件定義失敗：{exception}");
             SqlAssistStatusBar.Show(_package, $"開啟物件定義失敗：{exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 就地重新命名游標所在的區域變數，同一批次裡的每一處一起改。
+    /// </summary>
+    /// <remarks>
+    /// 與 F12 同一條路徑、同一套回饋：這個命令綁著 F2，所以成敗一律走狀態列，
+    /// <b>不跳對話框</b>——按鍵路徑上一個要按確定才消失的視窗比沒有反應更糟。
+    ///
+    /// 真正的判斷（游標在不在變數上、新名撞不撞名）都在
+    /// <see cref="SqlVariableRenameSession"/> 與 Core 那一半，這裡只負責接線與回報。
+    /// </remarks>
+    private void RenameVariable(object? sender, EventArgs eventArgs)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 已經擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, "SqlAssist 目前已停用。");
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is not { } textView)
+            {
+                SqlAssistStatusBar.Show(_package, "請先把游標放進 SQL 查詢視窗。");
+                return;
+            }
+
+            if (!SqlVariableRenameSession.Begin(textView, _package, out var message))
+            {
+                SqlAssistStatusBar.Show(_package, message);
+            }
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"重新命名變數失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, $"重新命名變數失敗：{exception.Message}");
         }
     }
 

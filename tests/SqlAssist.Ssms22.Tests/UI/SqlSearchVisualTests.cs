@@ -56,12 +56,13 @@ public sealed class SqlSearchVisualTests
                     .SelectMany(text => text.Inlines.OfType<Run>())
                     .Where(run => run.Background is not null).ToArray();
                 Assert.NotEmpty(highlights);
-                // 命中走自己那一組色票，不借強調底（那一份同時是開關「開著」的底，而且只有 12%
-                // 覆蓋率）；底色換了就配前景，不讓字色留在原地靠字重撐。
+                // 命中走固定的記號黃，不借強調底（那一份同時是開關「開著」與核取方塊打勾的底，
+                // 而且只有 12% 覆蓋率）；底色換了就配前景，不讓字色留在原地靠字重撐。
+                // 預覽的指令碼用的是同一個色系，所以兩塊看起來是同一件事。
                 Assert.All(highlights, run =>
                 {
-                    Assert.Same(palette.Resources[ThemeBrush.MatchBackground], run.Background);
-                    Assert.Same(palette.Resources[ThemeBrush.MatchForeground], run.Foreground);
+                    Assert.Same(palette.Resources[ThemeBrush.MatchHighlightBackground], run.Background);
+                    Assert.Same(palette.Resources[ThemeBrush.MatchHighlightForeground], run.Foreground);
                 });
             }
         });

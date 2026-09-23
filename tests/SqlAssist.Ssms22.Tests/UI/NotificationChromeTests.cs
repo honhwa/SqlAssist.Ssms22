@@ -268,6 +268,10 @@ public sealed class NotificationChromeTests
         WpfTest.Run(() =>
         {
             var root = SqlAssistChrome.CreateNotificationCard();
+            // 這一條整支都在量 DIP 設計值（188／140／3／16…），而卡片外框是 1 DIP 加
+            // UseLayoutRounding：不釘住縮放的話，150% 螢幕下量到的是捨入後的 188.6667，
+            // 斷言失敗看起來像版面壞了。理由見 WpfTest.PinLayoutDpi。
+            WpfTest.PinLayoutDpi(root);
             var summary = root.SummaryButton;
             var details = root.DetailsPanel;
             var center = new NotificationCenter();

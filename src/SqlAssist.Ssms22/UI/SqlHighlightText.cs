@@ -15,9 +15,9 @@ namespace SqlAssist.Ssms22.UI;
 /// 換列時重建 Run，換主題時只換資源，兩件事都不必重建控制項。
 ///
 /// 高亮換的是底色、字色與字重，不改字級與邊界：改了尺寸的話，同一列在命中與不命中之間會跳動。
-/// 色票是命中自己那一組（<see cref="ThemeBrush.MatchBackground"/>），不是強調底——理由見
-/// <c>docs/search-highlight.md</c> 的視覺契約。這一列沒有「第幾處」那個狀態，所以只有第一級：
-/// 導覽走的是定義全文的位置，與名稱、資料行這幾段不是同一組座標。
+/// 色票是固定的記號黃（<see cref="ThemeBrush.MatchHighlightBackground"/>），不是強調底——理由見
+/// <c>docs/themes.md</c> 與 <c>docs/search-highlight.md</c> 的視覺契約。這一列沒有「第幾處」那個狀態，
+/// 所以只有第一級：導覽走的是定義全文的位置，與名稱、資料行這幾段不是同一組座標。
 /// </remarks>
 internal sealed class SqlHighlightText : TextBlock
 {
@@ -75,16 +75,14 @@ internal sealed class SqlHighlightText : TextBlock
             if (span.Start > at) Inlines.Add(new Run(text.Substring(at, span.Start - at)));
 
             // 命中只比對「哪幾個字」——底色要說的是「就是這一段」而不是「這裡是主題色」，
-            // 所以走獨立的記號色而不是主題強調色。
+            // 所以走固定的記號黃（ThemePalette.Mark）而不是主題強調色：強調色已經同時代表選取、
+            // 焦點與作用中，而命中要回答的是「你找的那幾個字在哪」。
             var hit = new Run(text.Substring(span.Start, span.Length))
             {
                 FontWeight = FontWeights.SemiBold
             }.WithTheme(TextElement.BackgroundProperty, ThemeBrush.MatchHighlightBackground);
+            // 底色換了就配前景：只換底的那一版在深色主題上字會沉進去，而字重撐不住這個差別。
             hit.WithTheme(TextElement.ForegroundProperty, ThemeBrush.MatchHighlightForeground);
-            //var hit = new Run(text.Substring(span.Start, span.Length)) { FontWeight = FontWeights.SemiBold };
-            //hit.SetResourceReference(TextElement.BackgroundProperty, ThemeBrush.MatchBackground);
-            /// 底色換了就配前景：只換底的那一版在深色主題上字會沉進去，而字重撐不住這個差別。
-            //hit.SetResourceReference(TextElement.ForegroundProperty, ThemeBrush.MatchForeground);
             Inlines.Add(hit);
             at = span.End;
         }

@@ -161,6 +161,21 @@ internal sealed class SqlShellCommandFilter : IOleCommandTarget
                 }
             }
 
+            // 重新命名進行中時認領結束用的那幾個鍵，理由與包夾清單完全相同：
+            // 編輯器把某個命令回報成停用時殼層不會派送 Exec，那個鍵會安靜地消失。
+            if (SqlVariableRenameSession.IsActive)
+            {
+                var group = pguidCmdGroup;
+                var command = prgCmds[0].cmdID;
+                if (SqlAssistPlatformGuard.Run("回報變數重新命名的按鍵狀態",
+                        () => SqlVariableRenameSession.TryHandleShellCommand(_textView, group, command, execute: false),
+                        fallback: false))
+                {
+                    prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
+                    return VSConstants.S_OK;
+                }
+            }
+
             if (pguidCmdGroup == StandardCommandSet)
             {
                 if (prgCmds[0].cmdID == GoToDefinitionCommandId &&
@@ -203,6 +218,20 @@ internal sealed class SqlShellCommandFilter : IOleCommandTarget
             var group = pguidCmdGroup;
             if (SqlAssistPlatformGuard.Run("把按鍵交還包夾清單",
                     () => SqlSnippetSurroundPicker.TryHandleShellCommand(_textView, group, nCmdID, execute: true),
+                    fallback: false))
+            {
+                return VSConstants.S_OK;
+            }
+        }
+
+        // 重新命名進行中時，↑／↓／Enter／Esc 是「改完了」與「不改了」，不是移動游標
+        // 或換行。排在包夾清單之後：清單開著時焦點在清單上，那時按鍵歸它管。
+        // 兩者實務上互斥，先後只影響同時成立時誰優先，而那時該優先的是有焦點的那一個。
+        if (SqlVariableRenameSession.IsActive)
+        {
+            var group = pguidCmdGroup;
+            if (SqlAssistPlatformGuard.Run("處理變數重新命名的按鍵",
+                    () => SqlVariableRenameSession.TryHandleShellCommand(_textView, group, nCmdID, execute: true),
                     fallback: false))
             {
                 return VSConstants.S_OK;

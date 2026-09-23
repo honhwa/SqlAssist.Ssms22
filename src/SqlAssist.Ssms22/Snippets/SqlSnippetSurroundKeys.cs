@@ -14,6 +14,12 @@ namespace SqlAssist.Ssms22.Snippets;
 /// 與 <c>WORDPREV</c>／<c>WORDNEXT</c>（Ctrl+←／→）都對回同一個方向鍵就好。
 ///
 /// 對照不到的命令不攔——多攔一個就是讓某個鍵在清單開著時安靜地失效。
+///
+/// <b>類別名稱比它的用途窄。</b>第二個使用者是
+/// <see cref="SqlAssist.Ssms22.Editor.SqlVariableRenameSession"/>：它要認得
+/// ↑／↓／Enter／Esc，也就是「改完了」與「不改了」。那幾個鍵的殼層命令識別碼與這裡
+/// 完全同一組（<c>*_EXT</c>／<c>*_EXT_COL</c> 都在），所以沿用同一張表；另外抄一份
+/// 的話，漏掉 Shift 延伸選取那一組的症狀會是「按 Shift+↓ 沒結束，反而多選了一行」。
 /// </remarks>
 internal static class SqlSnippetSurroundKeys
 {

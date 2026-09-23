@@ -30,6 +30,11 @@
 後面那份 SQL——與焦點在哪個視窗無關，換視窗殼層修不掉。作法與規則見
 [片段包夾](snippet-surround.md)。
 
+同一個機制也用在 **F2 變數重新命名**上：命令表把 F2 綁在 `cmdidRenameVariable`，
+繫結生效之後那一段期間的 ↑／↓／Enter／Esc 則由濾鏡交給 `SqlVariableRenameSession`
+（見[變數重新命名](variable-rename.md)）。F2 本身沒有第二條路——SSMS 的查詢視窗沒有把
+F2 綁在任何編輯器命令上，所以濾鏡不攔它，只攔那一段期間的四個結束鍵。
+
 包夾命令兩條路都有：命令表把 Ctrl+Alt+S 綁在自己的命令上，濾鏡再攔
 `VSStd2K/SURROUNDWITH`，接使用者自己綁在 `Edit.SurroundWith` 上的鍵。命令表不綁
 Ctrl+K, Ctrl+S——那條和絃在 SSMS 上解析得到的是內建行為，搶不到（見

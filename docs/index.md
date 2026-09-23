@@ -39,10 +39,6 @@
 | Scope、括號、重開 | [範圍與重開](completion-reopen.md) |
 | 提交名稱、結構描述、方括號、自動別名 | [插入文字](completion-insertion.md) |
 | 整句展開、游標、復原 | [整句展開](statement-expansion.md) |
-| 別名欄位、ColumnSource、暫存表 | [欄位](completion-columns.md)／[指令碼宣告](script-tables.md) |
-| Scope、括號 | [範圍與重開](completion-reopen.md) |
-| 提交名稱、結構描述、方括號 | [插入文字](completion-insertion.md) |
-| 游標、復原 | [整句展開](statement-expansion.md) |
 | INSERT 欄位、EXEC 參數、預留值 | [展開內容](statement-values.md) |
 | 自訂函式括號、引數預留值 | [函式呼叫](function-call-insertion.md) |
 | 關鍵字產生器、位置旗標、物件過濾 | [關鍵字](completion-keywords.md) |
@@ -64,6 +60,7 @@
 | 通知生命週期、可見度、分級、文案 | [通知提示](notifications.md)／[呈現與驗證](notifications-ui.md)／[可見度](notifications-visibility.md)／[設計](notifications-design.md)／[訊息](notifications-messages.md) |
 | 指令碼風格、降級註解 | [指令碼產生](script-generation.md)／[結構健檢](schema-analysis.md) |
 | 失敗註解、新查詢 | [F12 指令碼](definition-scripts.md)／[移至定義](go-to-definition.md) |
+| F2 變數重新命名、就地改名、撞名 | [變數重新命名](variable-rename.md) |
 | ShellCommandFilter、命令表、鍵繫結 | [殼層命令](shell-commands.md) |
 | ResultGrid 命令、JSON、欄位剖析、字面值 | [結果格線](result-grid.md)／[格線輸出](result-grid-generation.md) |
 | enableWhen、enum 相容 | [設定](settings.md)／[入口](settings-entries.md)／[設定結構](settings-schema.md) |

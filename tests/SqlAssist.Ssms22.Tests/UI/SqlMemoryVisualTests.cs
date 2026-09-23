@@ -17,6 +17,7 @@ using Xunit;
 
 namespace SqlAssist.Ssms22.Tests.UI;
 
+[Collection(SqlIconFactoryCollection.Name)]
 public sealed class SqlMemoryVisualTests
 {
     // 純 WPF 沒有 VS 影像服務；以與 CrispImage 同尺寸的實心方塊代替，對齊檢查才量得到圖示。

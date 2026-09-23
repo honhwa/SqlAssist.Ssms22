@@ -103,6 +103,17 @@ internal static class CommandIds
     public const int ShowSqlSearch = 0x021B;
 
     /// <summary>
+    /// 就地重新命名游標所在的區域變數；<c>Menus.vsct</c> 把 F2 綁在這一個上。
+    /// </summary>
+    /// <remarks>
+    /// 只有命令表這一條路。SSMS 的查詢視窗沒有把 F2 綁在任何編輯器命令上，
+    /// 所以不像 F12 那樣還有一個 <c>Edit.GoToDefinition</c> 可以攔；
+    /// <c>SqlShellCommandFilter</c> 不碰 F2，它接手的是繫結生效之後那一段期間的
+    /// ↑／↓／Enter／Esc。
+    /// </remarks>
+    public const int RenameVariable = 0x021C;
+
+    /// <summary>
     /// 結果格線的內部探測，只在「詳細記錄」打開時出現。
     /// </summary>
     /// <remarks>

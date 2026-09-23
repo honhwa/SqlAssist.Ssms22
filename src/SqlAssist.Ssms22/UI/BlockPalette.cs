@@ -30,15 +30,20 @@ internal static class BlockPalette
         var hint = highContrast ? background : ThemeColorMath.Composite(Tint(graphic, background, text, 0.06), background);
         var globalInk = ReadOptionalColor(settings?.BlockKeywordForeground);
         var inherited = ReadOptionalColor(settings?.BlockKeywordBackground);
-        //var keyword = Endpoint(globalInk, inherited, accent, true);
         var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground);
         // 細項只覆寫指定通道；留空或無效值繼承全域「原始基準值」，再依實際背景校正。
         // 全域也留空時，符號改用淡黃 mark 當預設：它直接蓋在游標旁的字元上，不套圖形對比才不會被壓成橄欖色。
-        //var symbol = Endpoint(ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk, ReadOptionalColor(settings?.BlockSymbolBackground), inherited ?? SymbolMark, inherited is not null);
-        var symbol = Endpoint(ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk, settings?.BlockSymbolBackground, ReadColor(settings?.BlockKeywordBackground, accent));
+        var symbol = Endpoint(
+            ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk,
+            settings?.BlockSymbolBackground,
+            inherited ?? SymbolMark,
+            adjustFallback: inherited is not null);
 
-        //(Color Foreground, Color Background) Endpoint(Color? explicitInk, Color? explicitBackground, Color fallback, bool adjustFallback)
-        (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, Color? defaultBackground = null)
+        (Color Foreground, Color Background) Endpoint(
+            Color? explicitInk,
+            string? backgroundPreference,
+            Color? defaultBackground = null,
+            bool adjustFallback = true)
         {
             // 端點面積小，採實色高亮而非區間淡底；分類標籤才能改字色，marker 前景其實是框線。
             if (highContrast) return (background, text);
@@ -55,14 +60,14 @@ internal static class BlockPalette
             }
 
             // 使用者指定過顏色就以他指定的為準，只做對比校正；套標記層的亮度帶等於把他挑的顏色改掉。
-            var fill = ThemeColorMath.EnsureGraphicContrast(seed, background);
-            //Color fill;
-            //if (explicitBackground is { } chosen)
-            //    fill = ThemeColorMath.EnsureGraphicContrast(chosen, background);
-            //else if (adjustFallback)
-            //    fill = ThemeColorMath.EnsureGraphicContrast(fallback, background);
-            //else
-            //    fill = ThemeColorMath.Composite(fallback, background);
+            //
+            // 唯一不校正的是符號的內建淡黃（理由見 docs/block-colors.md）：它是螢光筆，3:1 會把它
+            // 往目標色推成橄欖綠，蓋住正在輸入的字元。那一種只與編輯器底色混合——SymbolMark 自己
+            // 帶著 80% 的透明度，深色佈景因此自動轉為柔和的芥黃而不是刺眼的純黃。
+            var fill = adjustFallback
+                ? ThemeColorMath.EnsureGraphicContrast(seed, background)
+                : ThemeColorMath.Composite(seed, background);
+
             if (explicitInk is { } requested)
                 return (requested, ThemeColorMath.EnsureBackgroundForText(fill, requested, background));
             return (ThemeColorMath.EnsureTextContrast(text, fill), fill);

@@ -198,6 +198,14 @@
           <LocCanonicalName>SqlAssist.移至定義</LocCanonicalName>
         </Strings>
       </Button>
+      <Button guid="guidSqlAssistCommandSet" id="cmdidRenameVariable" priority="0x0120" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorActionsGroup" />
+        <Strings>
+          <ButtonText>重新命名變數</ButtonText>
+          <CanonicalName>SqlAssist.RenameVariable</CanonicalName>
+          <LocCanonicalName>SqlAssist.重新命名變數</LocCanonicalName>
+        </Strings>
+      </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidShowObjectStructure" priority="0x0150" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorActionsGroup" />
         <Strings>
@@ -496,6 +504,19 @@
                 editor="guidVSStd97"
                 key1="VK_F12" />
     <!--
+      F2。SSMS 的查詢視窗沒有把 F2 綁在任何編輯器命令上，所以這是全新的繫結，
+      不是覆蓋誰；也因此沒有第二條路可走（不像 F12 還有 Edit.GoToDefinition），
+      SqlShellCommandFilter 不攔 F2，只接手繫結生效之後那一段期間的 ↑／↓／Enter／Esc。
+
+      全域範圍（guidVSStd97）的理由與 F12 完全相同。代價是在物件總管上也綁到，
+      而那裡自己的 F2 是重新命名節點，所以命令必須在沒有 SQL 編輯器時回報停用——
+      停用的命令不會被派送，那些地方的 F2 就照常落回殼層。
+    -->
+    <KeyBinding guid="guidSqlAssistCommandSet"
+                id="cmdidRenameVariable"
+                editor="guidVSStd97"
+                key1="VK_F2" />
+    <!--
       Alt+F12 在 SSMS 22 實機上不會抵達命令表或命令濾鏡；改用 Ctrl+F12，並沿用
       F12 的全域範圍。命令狀態守門可避免在沒有 SQL 編輯器時攔走按鍵。
     -->
@@ -560,6 +581,7 @@
       <IDSymbol name="cmdidCheckForUpdates" value="0x0219" />
       <IDSymbol name="cmdidShowSqlMemoryUsageFromSettings" value="0x021A" />
       <IDSymbol name="cmdidShowSqlSearch" value="0x021B" />
+      <IDSymbol name="cmdidRenameVariable" value="0x021C" />
       <IDSymbol name="cmdidProbeResultGrid" value="0x0300" />
       <IDSymbol name="cmdidResultGridTempTable" value="0x0301" />
       <IDSymbol name="cmdidResultGridInPredicate" value="0x0302" />

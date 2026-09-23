@@ -88,6 +88,9 @@ public sealed class SqlCompletionTriggerTests
     /// 這一條與「輸入幾個字元之後才開始建議」是同一個設定在說話：前綴是空的，
     /// 而觸發字元數最少是 1，所以建議來源本來就不會參與。在這裡先擋掉，
     /// 只是省下一次白跑的來回。
+    ///
+    /// 述詞的起點<b>不在</b>這一份名單上：<c>WHERE </c> 之後判得出來要的是條件，
+    /// 空前綴就參與，因此它屬於 <c>目標收斂的關鍵字後方要重開</c>。
     /// </remarks>
     [Fact]
     public void 目標沒收斂就不重開()
@@ -95,7 +98,6 @@ public sealed class SqlCompletionTriggerTests
         Assert.False(ShouldReopen("SELECT |"));
         Assert.False(ShouldReopen("SELECT COUNT(|"));
         Assert.False(ShouldReopen("SELECT a.X, |"));
-        Assert.False(ShouldReopen("SELECT * FROM A a WHERE |"));
         Assert.False(ShouldReopen("SELECT * FROM A a |"));
     }
 

@@ -167,7 +167,7 @@ public static class SqlProcedureCallText
             // 呼叫那一行，跟宣告隔了好幾行，不容易一眼連起來。
             if (parameter.IsOutput)
             {
-                //builder.Append(" OUTPUT");
+                builder.Append(" OUTPUT");
             }
 
             // 宣告時就先填好值：預設值來自模組定義（SqlModuleParameterDefaults），

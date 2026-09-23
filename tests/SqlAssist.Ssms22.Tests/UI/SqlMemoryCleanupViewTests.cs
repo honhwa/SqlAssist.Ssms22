@@ -11,6 +11,7 @@ using Xunit;
 
 namespace SqlAssist.Ssms22.Tests.UI;
 
+[Collection(SqlIconFactoryCollection.Name)]
 public sealed class SqlMemoryCleanupViewTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 17, 8, 0, 0, TimeSpan.Zero);

@@ -11,6 +11,7 @@ using Xunit;
 
 namespace SqlAssist.Ssms22.Tests.UI;
 
+[Collection(SqlIconFactoryCollection.Name)]
 public sealed class SqlMemoryUsageViewTests
 {
     private const long Megabyte = 1024L * 1024;
