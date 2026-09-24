@@ -129,7 +129,6 @@ public sealed class SqlFavoriteRequest
     /// <param name="servers">伺服器標註；空名單表示不限，不隱含「未標註」。</param>
     /// <param name="databases">資料庫標註；不需要先指定伺服器。</param>
     public SqlFavoriteRequest(int pageSize, IEnumerable<string>? servers = null, IEnumerable<string>? databases = null,
-        string? search = null, string? cursor = null, TextMatchOptions matchOptions = TextMatchOptions.None)
     {
         if (pageSize < 1 || pageSize > 200) throw new ArgumentOutOfRangeException(nameof(pageSize));
         PageSize = pageSize;
@@ -150,7 +149,6 @@ public sealed class SqlFavoriteRequest
     public IReadOnlyList<string> Databases { get; }
 
     /// <summary>
-    /// 字面子字串，與 History 搜尋同語意；命中名稱、說明或目前版本的 SQL 全文即納入。
     /// 它是標註篩選之上的額外條件，不是 FTS 或萬用字元比對。
     /// </summary>
     public string? Search { get; }
