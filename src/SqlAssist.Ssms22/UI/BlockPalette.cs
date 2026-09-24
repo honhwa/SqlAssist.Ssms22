@@ -30,20 +30,15 @@ internal static class BlockPalette
         var hint = highContrast ? background : ThemeColorMath.Composite(Tint(graphic, background, text, 0.06), background);
         var globalInk = ReadOptionalColor(settings?.BlockKeywordForeground);
         var inherited = ReadOptionalColor(settings?.BlockKeywordBackground);
+        //var keyword = Endpoint(globalInk, inherited, accent, true);
         var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground);
         // 細項只覆寫指定通道；留空或無效值繼承全域「原始基準值」，再依實際背景校正。
         // 全域也留空時，符號改用淡黃 mark 當預設：它直接蓋在游標旁的字元上，不套圖形對比才不會被壓成橄欖色。
-        var symbol = Endpoint(
-            ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk,
-            settings?.BlockSymbolBackground,
-            inherited ?? SymbolMark,
-            adjustFallback: inherited is not null);
+        //var symbol = Endpoint(ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk, ReadOptionalColor(settings?.BlockSymbolBackground), inherited ?? SymbolMark, inherited is not null);
+        var symbol = Endpoint(ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk, settings?.BlockSymbolBackground, ReadColor(settings?.BlockKeywordBackground, accent));
 
-        (Color Foreground, Color Background) Endpoint(
-            Color? explicitInk,
-            string? backgroundPreference,
-            Color? defaultBackground = null,
-            bool adjustFallback = true)
+        //(Color Foreground, Color Background) Endpoint(Color? explicitInk, Color? explicitBackground, Color fallback, bool adjustFallback)
+        (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, Color? defaultBackground = null)
         {
             // 端點面積小，採實色高亮而非區間淡底；分類標籤才能改字色，marker 前景其實是框線。
             if (highContrast) return (background, text);
