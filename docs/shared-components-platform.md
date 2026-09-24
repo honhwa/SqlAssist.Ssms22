@@ -12,6 +12,7 @@ SQL Memory 專屬元件見[專屬表](shared-components-sql-memory.md)。同一�
 | F12、預覽的指令碼選項 | `Ssms22/Settings/SqlScriptPreferences.cs` |
 | 物件總管的伺服器、連線與導航 | `Ssms22/Connections/SsmsObjectExplorer.cs` |
 | SSMS 狀態列的進度與失敗 | `Ssms22/SqlAssistStatusBar.cs` |
+| 主視窗、作用中框架、焦點移動與對話框擁有者 | `Ssms22/UI/SsmsWindows.cs` |
 | 編輯器換行判定 | `Ssms22/Editor/SnapshotNewLine.cs` |
 | 延後至本輪命令結束 | `Ssms22/Editor/TextViewDispatch.cs` |
 | Tab／Shift+Tab／Enter 優先順序 | `Ssms22/Editor/SqlTabCommandHandler.cs` |
@@ -51,7 +52,10 @@ SQL Memory 專屬元件見[專屬表](shared-components-sql-memory.md)。同一�
 | WPF 資料格匯出、顯示順序與空欄 | `Ssms22/UI/SqlDataGridText.cs`（加引號規則在 `SqlTabularText`） |
 | SQL 原生圖示、語意圖示與影像插槽 | `Ssms22/UI/SqlIcons.cs`、`SqlIcon.cs`、`SqlIcons.Images.cs`、`SqlIconImage.cs` |
 | 宿主筆刷、主題色階、動作對比與動態資源刷新 | `Ssms22/UI/VsThemeBrushes.cs`、`ThemePalette.cs`、`ThemeColorMath.cs`、`ThemeResourceSet.cs`、`ThemeRefreshQueue.cs` |
-| 通知內容、單一卡片、生命週期與視窗宿主 | `Ssms22/Notifications/NotificationPresenter.cs`、`NotificationSurface.cs`、`NotificationSurfaceController.cs`、`NotificationWindowHost.cs` |
+| 通知島的形態狀態機、浮層定位、表面、提醒檢視與附條 | `Ssms22/Notifications/NotificationIslandState.cs`、`NotificationPlacement.cs`、`Ssms22/UI/NotificationIsland.cs`、`NotificationPromptView.cs`、`NotificationActivityStrip.cs` |
+| 通知島的對齊基準、狀態圖示與換字 | `Ssms22/UI/NotificationLayout.cs`、`NotificationStatusIcon.cs`、`NotificationTicker.cs` |
+| 通知表面的時長、緩動、勾號彈出與短震；可中斷的彈簧 | `Ssms22/UI/NotificationMotion.cs`、`SpringMotion.cs` |
+| 通知內容、活動期限、全域控制器、右下浮層與提醒按鈕派送 | `Ssms22/Notifications/NotificationPresenter.cs`、`NotificationLifecycle.cs`、`NotificationIslandController.cs`、`NotificationOverlay.cs`、`NotificationActionRouter.cs` |
 | UTF-8 輸出、SSMS 路徑與擴充 Id 探索 | `tools/SqlAssist.Tools.psm1` |
 | 部署預檢、SHA-256 與 VSIX 白名單 | `tools/SqlAssist.Deployment.psm1` |
 | 診斷紀錄的排隊、批次寫檔與倒出 | `Ssms22/SqlAssistDiagnostics.cs` |

@@ -11,6 +11,8 @@
 - 完成後的措辭由目錄依 `Status` 產生，呼叫端不自己寫。
 - 不放 SQL、路徑、認證或例外原文；`Message` 上限 512 字。
 
+- 目錄的常數欄位只放標題；提醒按鈕的識別字在 `NotificationActionIds`，其餘措辭是屬性或方法。
+
 | Status | 畫面 |
 |---|---|
 | Running | 標題＋主體 |
@@ -115,26 +117,40 @@
 | 重建 SQL Memory 資料庫 | 範圍 | User | Info |
 | 回溯收藏版本 | 範圍 | User | Info |
 | 丟棄 SQL 擷取 | 事件 | Ambient | Notice |
-| 超過 SQL Memory 容量警戒 | 事件 | Ambient | Notice |
-| 開始擷取 SQL Memory | 事件 | Ambient | Notice |
 
 逐處見[用量](sql-memory-usage.md)與 [UI](sql-memory-ui.md)；背景維護批次失敗沿用「維護」標題。
 當場完成的動作留在視窗裡，只有會等儲存的長操作才開通知。
 
-事件走 `NotificationCenter.Post`；標題動詞開頭，才不會轉成「已未保存…」。丟棄是**失敗**——那一段
-SQL 完全沒有記錄，值得進「通知失敗」回看；容量是**降級**——資料都還在，進失敗清單會洗掉真正的
-錯誤。原因短語由 Core 給（`SqlCaptureDroppedEventArgs.Reason` 是常數，擷取在熱路徑上）。
+丟棄走 `NotificationCenter.Post`；標題動詞開頭，才不會轉成「已未保存…」。它是**失敗**——那一段
+SQL 完全沒有記錄，值得進「通知失敗」回看，而使用者沒有可做的決定。原因短語由 Core 給
+（`SqlCaptureDroppedEventArgs.Reason` 是常數，擷取在熱路徑上）。
 
-「開始擷取」在第一次真正接上儲存時說一次，記在狀態存放區裡，每台電腦只出現一次：總開關
-預設是開的，不能安靜地開始記錄使用者的 SQL。那一句只說資料在這台電腦、去哪裡看、去哪裡關，
-敘述在 `NotificationCatalog.SqlMemoryFirstCaptureNotice`。
+容量警戒與首次擷取要使用者決定，是下面的提醒。首次擷取在第一次真正接上儲存時說一次，記在
+狀態存放區裡，每台電腦只出現一次：總開關預設是開的，不能安靜地開始記錄使用者的 SQL。那一句
+只說資料在這台電腦、去哪裡看、去哪裡關，敘述在 `NotificationCatalog.SqlMemoryFirstCaptureNotice`。
 
 ## 更新
 
-只有「檢查更新」一則（`Update` 種類）。手動是範圍（`User`／`Info`，要等 HTTP），三種結論都有
-卡片，查不到記為失敗——使用者按了之後要知道這一次沒有答案，而不是以為自己是最新版。啟動時的
-自動檢查是事件（`Ambient`／`Notice`），只有真的有新版才出現：每次開 SSMS 都說一次「已是最新版」
-是噪音。版本號與文案由 `SqlAssistUpdateCheck` 給。
+手動的「檢查更新」是範圍（`Update`／`User`／`Info`，要等 HTTP）：「已是最新版」與「查不到」留在
+那一列，查不到記為失敗——使用者按了之後要知道這一次沒有答案。有新版時那一列只收尾，結論是下面的
+`update` 提醒（`User`，不理會略過與稍後）。啟動時的自動檢查不開活動，只有新版而且不是略過的那一版
+才送提醒（`Ambient`／`Notice`）：每次開 SSMS 都說一次「已是最新版」是噪音。版本號與文案由
+`SqlAssistUpdateCheck` 給。
+
+## 提醒
+
+標題不守動詞開頭的契約：不轉過去式，回答「要決定什麼」。叉號 ToolTip 是「稍後提醒」；
+按鈕由次要排到主要，括號是參數。
+
+| 鍵 | 標題 | 按鈕 | 嚴重度 |
+|---|---|---|---|
+| `update` | SqlAssist 有新版 | 略過此版本 `update.skip`（版本號）、前往下載 `update.download`（那一版的發行頁） | Info |
+| `sqlmemory.capacity` | SQL Memory 超過容量警戒 | 開啟維護 `sqlmemory.open-maintenance` | Warning |
+| `sqlmemory.first-capture` | SQL Memory 已開始擷取 | 開啟 SQL Memory `sqlmemory.open` | Info |
+
+通知島的膠囊一項時是「標題 · 主體」，多項時是「N 項工作 · 成功數/總數」，由 `CapsuleSummary` 產生；
+多項的那一句就是清單抬頭（`ProgressSummary`），變形時只有數字會變。抬頭的失敗標記是「N 項失敗」，
+附條的動作是「查看」與「回到提醒」，暫看時的摘要是「N 則提醒待處理」。
 
 ## 已知缺口
 
