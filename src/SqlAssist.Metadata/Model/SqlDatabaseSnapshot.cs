@@ -142,7 +142,7 @@ public sealed class SqlDatabaseSnapshot
     /// 理由也一樣：幾列名稱不值得多養一層快取與它的失效規則。
     ///
     /// 這份清單本身<b>不需要</b>對任何一台連結伺服器送出查詢——<c>sys.servers</c>
-    /// 就在目前這條連線上。沒有它的話，只看文字分不出 <c>SQL209.</c> 是結構描述、
+    /// 就在目前這條連線上。沒有它的話，只看文字分不出 <c>LIBSQL02.</c> 是結構描述、
     /// 資料庫還是伺服器，而右對齊會一律猜成結構描述，於是清單一筆都比不中。
     /// </remarks>
     public IReadOnlyList<string> LinkedServers { get; }

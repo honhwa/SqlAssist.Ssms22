@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using SqlAssist.Core.Matching;
 using SqlAssist.Core.Search;
 using SqlAssist.Metadata.Search;
 using Xunit;
@@ -295,7 +296,7 @@ public sealed class SqlCatalogSearchProviderTests
     {
         var server = NewBodyServer("SELECT CopyNo FROM dbo.Loan");
 
-        var sensitive = await RunAsync(server, new SearchQuery("copyno", options: SearchOptions.MatchCasing));
+        var sensitive = await RunAsync(server, new SearchQuery("copyno", options: TextMatchOptions.MatchCasing));
         Assert.Empty(sensitive.Hits);
 
         var insensitive = await RunAsync(NewBodyServer("SELECT CopyNo FROM dbo.Loan"), new SearchQuery("copyno"));
@@ -324,7 +325,7 @@ public sealed class SqlCatalogSearchProviderTests
         var server = new FakeCatalogServer();
         server.Add("Library").WithObject(1, "dbo", "PUBLISHER", "U");
 
-        var sink = await RunAsync(server, new SearchQuery("publisher", options: SearchOptions.MatchCasing));
+        var sink = await RunAsync(server, new SearchQuery("publisher", options: TextMatchOptions.MatchCasing));
 
         Assert.Empty(sink.Hits);
     }
@@ -338,7 +339,7 @@ public sealed class SqlCatalogSearchProviderTests
             .WithObject(1, "dbo", "Loan", "U")
             .WithColumn(1, "CopyNote");
 
-        var sink = await RunAsync(server, new SearchQuery("CopyNo", options: SearchOptions.WholeWord));
+        var sink = await RunAsync(server, new SearchQuery("CopyNo", options: TextMatchOptions.WholeWord));
 
         Assert.Empty(sink.Hits);
     }
@@ -347,7 +348,7 @@ public sealed class SqlCatalogSearchProviderTests
     /// 兩顆修飾都開著時，名稱不再收「字母湊得出來」的那一種命中。
     /// </summary>
     /// <remarks>
-    /// 模糊比對允許字母散在候選各處，<c>DF_Form_LeaveKind_isShow</c> 確實湊得出
+    /// 模糊比對允許字母散在候選各處，<c>DF_Lib_Reader_NoticeIsShown</c> 確實湊得出
     /// <c>finish</c> 的每一個字母。使用者把兩顆都開著、範圍也縮到只剩條件約束，卻仍然
     /// 看到這一筆——他關掉的東西一個都沒關掉。
     /// </remarks>
@@ -359,7 +360,7 @@ public sealed class SqlCatalogSearchProviderTests
 
         var strict = await RunAsync(
             NewConstraintServer(),
-            new SearchQuery("finish", options: SearchOptions.MatchCasing | SearchOptions.WholeWord));
+            new SearchQuery("finish", options: TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord));
 
         Assert.Empty(strict.Hits);
     }
@@ -367,7 +368,7 @@ public sealed class SqlCatalogSearchProviderTests
     private static FakeCatalogServer NewConstraintServer()
     {
         var server = new FakeCatalogServer();
-        server.Add("Library").WithObject(1, "dbo", "DF_Form_LeaveKind_isShow", "D");
+        server.Add("Library").WithObject(1, "dbo", "DF_Lib_Reader_NoticeIsShown", "D");
         return server;
     }
 
@@ -382,7 +383,7 @@ public sealed class SqlCatalogSearchProviderTests
     public async Task 名稱的字面命中可以落在名稱中間()
     {
         var casing = await RunAsync(
-            NewNamedServer("DF_Loan_CopyNo"), new SearchQuery("CopyNo", options: SearchOptions.MatchCasing));
+            NewNamedServer("DF_Loan_CopyNo"), new SearchQuery("CopyNo", options: TextMatchOptions.MatchCasing));
 
         var hit = Assert.Single(casing.Hits);
         var span = Assert.Single(hit.SnippetSpans);
@@ -393,12 +394,12 @@ public sealed class SqlCatalogSearchProviderTests
         Assert.Equal(6, span.Length);
 
         var wholeWord = await RunAsync(
-            NewNamedServer("DF_Loan_CopyNo"), new SearchQuery("CopyNo", options: SearchOptions.WholeWord));
+            NewNamedServer("DF_Loan_CopyNo"), new SearchQuery("CopyNo", options: TextMatchOptions.WholeWord));
 
         Assert.Empty(wholeWord.Hits);
 
         var exact = await RunAsync(
-            NewNamedServer("CopyNo"), new SearchQuery("CopyNo", options: SearchOptions.WholeWord));
+            NewNamedServer("CopyNo"), new SearchQuery("CopyNo", options: TextMatchOptions.WholeWord));
 
         Assert.Single(exact.Hits);
     }
@@ -415,7 +416,7 @@ public sealed class SqlCatalogSearchProviderTests
     {
         var wholeWord = await RunAsync(
             NewBodyServer("SELECT CopyNoTotal FROM dbo.Loan"),
-            new SearchQuery("CopyNo", options: SearchOptions.WholeWord));
+            new SearchQuery("CopyNo", options: TextMatchOptions.WholeWord));
 
         Assert.Empty(wholeWord.Hits);
 
@@ -431,7 +432,7 @@ public sealed class SqlCatalogSearchProviderTests
     {
         var sink = await RunAsync(
             NewBodyServer("INSERT INTO #CopyNo SELECT 1;"),
-            new SearchQuery("CopyNo", options: SearchOptions.WholeWord));
+            new SearchQuery("CopyNo", options: TextMatchOptions.WholeWord));
 
         Assert.Single(sink.Hits);
     }
@@ -480,10 +481,11 @@ public sealed class SqlCatalogSearchProviderTests
         var server = NewBodyServer("SELECT CopyNo FROM dbo.Loan");
         var cache = new SqlCatalogSearchIndexCache();
 
-        await RunAsync(server, new SearchQuery("CopyNo", targets: SearchTargets.Name), cache: cache);
+        // 指名那一個資料庫：「全部」每一輪會多問一次清單，這裡量的是索引那幾條。
+        await RunAsync(server, new SearchQuery("CopyNo", targets: SearchTargets.Name, scope: LibraryOnly), cache: cache);
         server.Commands.Clear();
 
-        var sink = await RunAsync(server, new SearchQuery("CopyNo", 1), cache: cache);
+        var sink = await RunAsync(server, new SearchQuery("CopyNo", 1, scope: LibraryOnly), cache: cache);
 
         Assert.Single(sink.Hits);
         Assert.Equal(1, server.CountCommands("sys.sql_modules"));
@@ -543,11 +545,49 @@ public sealed class SqlCatalogSearchProviderTests
         Assert.Equal("[Library].[dbo].[Loan01]", sink.Checkpoint);
     }
 
+    /// <summary>
+    /// 名稱、資料行與本文三種命中都帶著搜到它的那一台。
+    /// </summary>
+    /// <remarks>
+    /// 清單比範圍活得久：換了查詢視窗之後，舊列點下去要找的仍是這一台。少帶一種的症狀
+    /// 只在那一種命中上發作，而導航會拿換過之後那一台的同名物件回答。
+    /// </remarks>
+    [Fact]
+    public async Task 三種命中都帶著搜到它的那一台()
+    {
+        var server = new FakeCatalogServer();
+        server.Add("Library")
+            .WithObject(1, "dbo", "Loan", "U")
+            .WithColumn(1, "LoanNo")
+            .WithObject(2, "dbo", "Lib_Tag", "V", "SELECT LoanNo FROM dbo.Loan;");
+        var origin = new SqlSearchOrigin("LIBSQL02");
+        var provider = new SqlCatalogSearchProvider(server.SourceFor("Library"), origin);
+        var sink = new RecordingSearchSink();
+
+        await provider.SearchAsync(new SearchQuery("Loan"), sink, CancellationToken.None);
+
+        Assert.Contains(sink.Hits, hit => hit.MatchTarget == SearchMatchTarget.Name);
+        Assert.Contains(sink.Hits, hit => hit.MatchTarget == SearchMatchTarget.Column);
+        Assert.Contains(sink.Hits, hit => hit.MatchTarget == SearchMatchTarget.Text);
+        Assert.All(
+            sink.Hits,
+            hit => Assert.Same(origin, Assert.IsType<SqlCatalogSearchTarget>(hit.ActivatePayload).Origin));
+    }
+
+    [Fact]
+    public void 沒有伺服器就不建立來源()
+    {
+        var server = new FakeCatalogServer();
+        server.Add("Library");
+
+        Assert.Throws<ArgumentNullException>(() => new SqlCatalogSearchProvider(server.SourceFor("Library"), null!));
+    }
+
     [Fact]
     public async Task 取消時擲出取消例外()
     {
         var server = SqlCatalogSearchIndexTests.NewServer();
-        var provider = new SqlCatalogSearchProvider(server.SourceFor("Library"));
+        var provider = new SqlCatalogSearchProvider(server.SourceFor("Library"), Origin);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -664,6 +704,44 @@ public sealed class SqlCatalogSearchProviderTests
             Assert.Equal(SearchUnavailableKind.Unknown, sink.UnavailableKind);
             Assert.Contains("連不上、逾時", sink.UnavailableReason);
         }
+    }
+
+    /// <summary>
+    /// 沒有指名資料庫就是「全部」：這台上進得去的每一個都搜，不是只搜連線那一個。
+    /// </summary>
+    [Fact]
+    public async Task 沒有指名資料庫時搜這台伺服器上的每一個()
+    {
+        var server = new FakeCatalogServer();
+        server.Add("Library").WithObject(1, "dbo", "Loan", "U");
+        server.Add("LibArchive").WithObject(1, "dbo", "LoanDetail", "U");
+        server.Add("master", isSystem: true);
+
+        var sink = await RunAsync(server, new SearchQuery("Loan"), databaseName: "master");
+
+        Assert.Equal(
+            new[] { "[LibArchive].[dbo].[LoanDetail]", "[Library].[dbo].[Loan]" },
+            sink.Hits.Select(hit => hit.DedupeKey).OrderBy(key => key, StringComparer.Ordinal));
+        Assert.False(sink.IsUnavailable);
+    }
+
+    /// <summary>
+    /// 「全部」而清單問不到：照實說這一輪沒搜，不退回只搜連線那一個——那一份答案看起來完全正常，
+    /// 只是少了使用者以為有搜的其他資料庫。
+    /// </summary>
+    [Fact]
+    public async Task 全部而問不到資料庫清單時照實說而不退回連線那一個()
+    {
+        var server = new FakeCatalogServer();
+        server.Add("Library").WithObject(1, "dbo", "Loan", "U");
+
+        var provider = new SqlCatalogSearchProvider(server.SourceFor("Library"), Origin, listDatabases: (_, _) => null);
+        var sink = new RecordingSearchSink();
+        await provider.SearchAsync(new SearchQuery("Loan"), sink, CancellationToken.None);
+
+        Assert.Empty(sink.Hits);
+        Assert.True(sink.IsUnavailable);
+        Assert.Contains("資料庫清單", sink.UnavailableReason);
     }
 
     /// <summary>幾個資料庫的結果併在同一輪裡回來，各自帶著自己的資料庫膠囊。</summary>
@@ -836,8 +914,9 @@ public sealed class SqlCatalogSearchProviderTests
         var server = SqlCatalogSearchIndexTests.NewServer();
         var cache = new SqlCatalogSearchIndexCache();
 
-        await RunAsync(server, new SearchQuery("Loan"), cache: cache);
-        await RunAsync(server, new SearchQuery("Lib"), cache: cache);
+        // 指名那一個資料庫：「全部」每一輪會多開一條連線問清單，這裡量的是索引。
+        await RunAsync(server, new SearchQuery("Loan", scope: LibraryOnly), cache: cache);
+        await RunAsync(server, new SearchQuery("Lib", scope: LibraryOnly), cache: cache);
 
         Assert.Equal(1, cache.Builds);
         Assert.Equal(1, server.Opened);
@@ -848,7 +927,7 @@ public sealed class SqlCatalogSearchProviderTests
     public async Task 回報的分類出自自己宣告的清單()
     {
         var server = SqlCatalogSearchIndexTests.NewServer();
-        var provider = new SqlCatalogSearchProvider(server.SourceFor("Library"));
+        var provider = new SqlCatalogSearchProvider(server.SourceFor("Library"), Origin);
         var sink = new RecordingSearchSink();
 
         await provider.SearchAsync(new SearchQuery("o"), sink, CancellationToken.None);
@@ -876,7 +955,7 @@ public sealed class SqlCatalogSearchProviderTests
     }
 
     private static async Task<SearchHit> SingleBodyHitAsync(
-        string definition, string text, SearchOptions options = SearchOptions.None)
+        string definition, string text, TextMatchOptions options = TextMatchOptions.None)
     {
         var sink = await RunAsync(NewBodyServer(definition), new SearchQuery(text, options: options));
 
@@ -891,6 +970,10 @@ public sealed class SqlCatalogSearchProviderTests
         return server;
     }
 
+    private static readonly SqlSearchOrigin Origin = new("LIBSQL01");
+
+    private static readonly SearchScope LibraryOnly = new(null, new[] { "Library" });
+
     private static async Task<RecordingSearchSink> RunAsync(
         FakeCatalogServer server,
         SearchQuery query,
@@ -898,7 +981,7 @@ public sealed class SqlCatalogSearchProviderTests
         SqlCatalogSearchIndexCache? cache = null,
         string databaseName = "Library")
     {
-        var provider = new SqlCatalogSearchProvider(server.SourceFor(databaseName), cache);
+        var provider = new SqlCatalogSearchProvider(server.SourceFor(databaseName), Origin, cache);
         var sink = new RecordingSearchSink(acceptLimit);
 
         await provider.SearchAsync(query, sink, CancellationToken.None);

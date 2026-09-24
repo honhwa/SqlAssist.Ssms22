@@ -38,18 +38,31 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
     public const string ProviderId = "catalog";
 
     private readonly ISqlConnectionSource _connectionSource;
+    private readonly SqlSearchOrigin _origin;
     private readonly SqlCatalogSearchIndexCache _indexCache;
+    private readonly Func<ISqlConnectionSource, CancellationToken, IReadOnlyList<SqlCatalogSearchDatabase>?> _listDatabases;
 
+    /// <param name="origin">
+    /// <paramref name="connectionSource"/> 連著哪一台；每一筆命中都帶著它。由呼叫端給而不是
+    /// 從連線推：連線來源只說得出快取鍵，而伺服器名稱的寫法只有接線層那一份。
+    /// </param>
     /// <param name="indexCache">
     /// 索引快取；不給時自己建一份。同一個查詢視窗的多個 provider 實例要共用同一份時
     /// 由呼叫端傳進來——各自持有一份的症狀是同一個資料庫被掃好幾次全表。
     /// </param>
+    /// <param name="listDatabases">
+    /// 沒有指名資料庫（「全部」）時向伺服器要清單的那一條；測試換掉它就不必真的連資料庫。
+    /// </param>
     public SqlCatalogSearchProvider(
         ISqlConnectionSource connectionSource,
-        SqlCatalogSearchIndexCache? indexCache = null)
+        SqlSearchOrigin origin,
+        SqlCatalogSearchIndexCache? indexCache = null,
+        Func<ISqlConnectionSource, CancellationToken, IReadOnlyList<SqlCatalogSearchDatabase>?>? listDatabases = null)
     {
         _connectionSource = connectionSource ?? throw new ArgumentNullException(nameof(connectionSource));
+        _origin = origin ?? throw new ArgumentNullException(nameof(origin));
         _indexCache = indexCache ?? new SqlCatalogSearchIndexCache();
+        _listDatabases = listDatabases ?? ((source, token) => SqlCatalogSearchDatabases.TryList(source, token));
         Categories = SqlCatalogSearchCategories.Create(ProviderId);
     }
 
@@ -76,7 +89,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
         if (query is null) throw new ArgumentNullException(nameof(query));
         if (sink is null) throw new ArgumentNullException(nameof(sink));
 
-        var sources = ResolveSources(query.Scope);
+        var sources = await ResolveSourcesAsync(query.Scope, sink, cancellationToken).ConfigureAwait(false);
 
         if (sources.Count == 0)
         {
@@ -92,7 +105,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
             var round = new DatabaseRound(source.DatabaseName);
             rounds[index] = round;
             runs[index] = Task.Run(
-                () => SearchDatabase(source, query, sink, round, _indexCache, cancellationToken), cancellationToken);
+                () => SearchDatabase(source, _origin, query, sink, round, _indexCache, cancellationToken), cancellationToken);
         }
 
         try
@@ -189,6 +202,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
     /// </remarks>
     private static void SearchDatabase(
         ISqlConnectionSource source,
+        SqlSearchOrigin origin,
         SearchQuery query,
         ISearchSink sink,
         DatabaseRound round,
@@ -236,7 +250,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
             var badges = new[] { new SearchBadge(index.DatabaseName, SearchBadge.DatabaseIcon) };
 
             if (query.IncludesTarget(SearchMatchTarget.Name) &&
-                !SearchObjectNames(index, query, sink, counter, badges, cancellationToken))
+                !SearchObjectNames(index, origin, query, sink, counter, badges, cancellationToken))
             {
                 round.Truncated = true;
                 return;
@@ -248,13 +262,13 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
             }
 
             if (query.IncludesTarget(SearchMatchTarget.Column) &&
-                !SearchColumnNames(index, query, sink, counter, badges, cancellationToken))
+                !SearchColumnNames(index, origin, query, sink, counter, badges, cancellationToken))
             {
                 round.Truncated = true;
                 return;
             }
 
-            if (needsText && !SearchDefinitions(index, query, sink, counter, badges, cancellationToken))
+            if (needsText && !SearchDefinitions(index, origin, query, sink, counter, badges, cancellationToken))
             {
                 round.Truncated = true;
             }
@@ -268,6 +282,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
 
     private static bool SearchObjectNames(
         SqlCatalogSearchIndex index,
+        SqlSearchOrigin origin,
         SearchQuery query,
         ISearchSink sink,
         SearchExamineCounter counter,
@@ -312,7 +327,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
                 info.Name,
                 match.Spans,
                 new SqlCatalogSearchTarget(
-                    index.DatabaseName, info.SchemaName, info.Name, info.Kind, info.ObjectId),
+                    origin, index.DatabaseName, info.SchemaName, info.Name, info.Kind, info.ObjectId),
                 badges);
 
             if (!sink.TryReport(hit))
@@ -331,6 +346,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
     /// </remarks>
     private static bool SearchColumnNames(
         SqlCatalogSearchIndex index,
+        SqlSearchOrigin origin,
         SearchQuery query,
         ISearchSink sink,
         SearchExamineCounter counter,
@@ -376,7 +392,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
                 column.Name,
                 match.Spans,
                 new SqlCatalogSearchTarget(
-                    index.DatabaseName, owner.SchemaName, owner.Name, owner.Kind, owner.ObjectId, column.Name),
+                    origin, index.DatabaseName, owner.SchemaName, owner.Name, owner.Kind, owner.ObjectId, column.Name),
                 badges);
 
             if (!sink.TryReport(hit))
@@ -390,6 +406,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
 
     private static bool SearchDefinitions(
         SqlCatalogSearchIndex index,
+        SqlSearchOrigin origin,
         SearchQuery query,
         ISearchSink sink,
         SearchExamineCounter counter,
@@ -422,7 +439,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
 
             // 本文比的是使用者打進去的原文，不是正規化後的樣式：後者一律小寫，
             // 拿它做區分大小寫的比對永遠比不中任何大寫的字。
-            var matches = SqlCatalogBodySearch.FindAll(definition, query.Text, query.Options);
+            var matches = SqlCatalogBodySearch.FindAll(definition, query.Matcher);
 
             if (matches.Count == 0)
             {
@@ -444,7 +461,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
                 snippet,
                 spans,
                 new SqlCatalogSearchTarget(
-                    index.DatabaseName, info.SchemaName, info.Name, info.Kind, info.ObjectId),
+                    origin, index.DatabaseName, info.SchemaName, info.Name, info.Kind, info.ObjectId),
                 badges);
 
             if (!sink.TryReport(hit))
@@ -460,12 +477,13 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
     /// 這一輪要搜哪幾個資料庫。
     /// </summary>
     /// <remarks>
-    /// 沒有指名就只搜目前這條連線的那一個——把每一個進得去的資料庫都索引一遍
-    /// 是明文禁止的：共用主機上等於幾十次全表掃描，而其中九成九不會有人搜。
-    /// 使用者要挑的時候，清單走 <see cref="SqlCatalogSearchDatabases.TryList"/>，
-    /// 而那一條只列名稱，不建任何索引。
+    /// 沒有指名就是<b>全部</b>：這台伺服器上這個登入進得去、而且在線上的每一個
+    /// （<see cref="SqlCatalogSearchDatabases.TryList"/>），與 <see cref="SearchScope"/>「空表示不限制」
+    /// 同一個意思。那是使用者在範圍上明確選的，第一輪要把每一個都索引一遍；清單本身每一輪重問，
+    /// 剛建好或剛卸除的資料庫下一輪就對得上。清單問不到時照實說一句，<b>不</b>退回只搜連線
+    /// 那一個——那一份答案看起來完全正常，只是少了使用者以為有搜的其他資料庫。
     ///
-    /// 指名了就換目錄，走 <see cref="SqlDatabaseScopedConnectionSource"/>：查詢一律寫成
+    /// 換資料庫換的是目錄，走 <see cref="SqlDatabaseScopedConnectionSource"/>：查詢一律寫成
     /// 不加限定的 <c>sys.</c>，決定查哪一個資料庫的是連線。換不過去（資料庫不存在、
     /// 離線、沒有權限）時開連線會丟 <see cref="System.Data.Common.DbException"/>，
     /// 由索引那一層降級成「這一輪沒有這個資料庫的資料」——<b>絕不</b>退回拿目前連線裡
@@ -477,22 +495,37 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
     /// 而拿本機的東西當成對面那台的答案正是上一段禁止的事。連結伺服器要的是
     /// <c>SqlCatalogQualifier</c> 與 <c>OPENQUERY</c> 那一條路，不是換個資料庫就行。
     /// </remarks>
-    private IReadOnlyList<ISqlConnectionSource> ResolveSources(SearchScope scope)
+    private async Task<IReadOnlyList<ISqlConnectionSource>> ResolveSourcesAsync(
+        SearchScope scope, ISearchSink sink, CancellationToken cancellationToken)
     {
         if (scope.Servers.Count > 0)
         {
             return Array.Empty<ISqlConnectionSource>();
         }
 
-        if (scope.Databases.Count == 0)
+        var names = scope.Databases;
+
+        if (names.Count == 0)
         {
-            return new[] { _connectionSource };
+            // 清單查詢是同步的阻塞工作；丟到背景，別讓同一輪的其他來源等它。
+            var listed = await Task.Run(() => _listDatabases(_connectionSource, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+
+            if (listed is null)
+            {
+                sink.ReportUnavailable("問不到這台伺服器的資料庫清單（連不上、逾時，或這個登入沒有權限），這一輪沒有搜任何資料庫。");
+                return Array.Empty<ISqlConnectionSource>();
+            }
+
+            var all = new List<string>(listed.Count);
+            foreach (var database in listed) all.Add(database.Name);
+            names = all;
         }
 
-        var sources = new List<ISqlConnectionSource>(scope.Databases.Count);
+        var sources = new List<ISqlConnectionSource>(names.Count);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var databaseName in scope.Databases)
+        foreach (var databaseName in names)
         {
             if (databaseName.Length == 0 || !seen.Add(databaseName))
             {
@@ -517,7 +550,7 @@ public sealed class SqlCatalogSearchProvider : ISearchProvider
     ///
     /// 不含命中部位：同一個物件被名稱與定義本文同時命中時，聚合器要把它們併成一列，
     /// 靠的就是兩邊寫出同一個鍵。<b>資料行命中也走物件那一份鍵</b>（<paramref name="columnName"/>
-    /// 傳 null）——一張表有三個資料行對上時，使用者要的是一列 <c>Frm_Acceptance</c> 加上
+    /// 傳 null）——一張表有三個資料行對上時，使用者要的是一列 <c>Cat_BookCopy</c> 加上
     /// 「命中了這三行」，不是三列同一張表。接了資料行的那一份只剩一個用途：
     /// <see cref="SearchExamineCounter"/> 的續掃位置，那裡問的是「掃到哪一行」。
     ///

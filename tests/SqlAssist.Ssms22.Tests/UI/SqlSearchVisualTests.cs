@@ -138,7 +138,7 @@ public sealed class SqlSearchVisualTests
                 SqlIcon.Search,
                 SqlAssistChrome.CreateTextBox(SqlAssistChrome.DefaultMetrics),
                 SqlAssistChrome.CreateIconButton(SqlIcon.Clear, "清除搜尋"));
-            var connection = SqlAssistChrome.CreateMemoryConnectionButton();
+            var connection = SqlAssistChrome.CreateIconButton(SqlIcon.SortDescending, "排序");
             var refresh = SqlAssistChrome.CreateIconButton(SqlIcon.Refresh, "重新整理");
             var row = new SqlInputRow(input, connection, refresh);
             var host = new Border { Child = row };
@@ -186,6 +186,31 @@ public sealed class SqlSearchVisualTests
     /// 它們不上已選條件列，所以這一顆本身就是唯一的呈現；關著與開著只差一條髮絲線的那一版
     /// 等於沒有狀態。
     /// </remarks>
+    /// <summary>
+    /// 兩個工具窗共用的比對開關：值與按鈕一一對應，寫回去不算使用者按的。
+    /// </summary>
+    /// <remarks>寫回也發事件的那一版，宿主每還原一次就重跑一輪，再寫回來一次。</remarks>
+    [Fact]
+    public void 比對開關寫回不發變更只有使用者按的才算()
+    {
+        WpfTest.Run(() =>
+        {
+            var toggles = new SqlMatchToggles();
+            var changed = 0;
+            toggles.Changed += (_, _) => changed++;
+
+            toggles.Options = TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord;
+            Assert.Equal(0, changed);
+            Assert.Equal(TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord, toggles.Options);
+            Assert.Equal(2, toggles.Buttons.Count);
+
+            ((ToggleButton)toggles.Buttons[1]).IsChecked = false;
+            Assert.Equal(1, changed);
+            Assert.Equal(TextMatchOptions.MatchCasing, toggles.Options);
+            Assert.Equal("大小寫相同", System.Windows.Automation.AutomationProperties.GetName(toggles.Buttons[0]));
+        });
+    }
+
     [Fact]
     public void 搜尋框裡的開關開著時用強調色而不是與搜尋框同底的外框()
     {
@@ -241,7 +266,7 @@ public sealed class SqlSearchVisualTests
             var sort = SqlAssistChrome.CreateIconButton(SqlIcon.SortDescending, "排序");
             var refresh = SqlAssistChrome.CreateIconButton(SqlIcon.Refresh, "重新整理");
             var toolbar = new SqlSearchToolbar(
-                search, segments, new[] { new[] { databases }, new[] { kinds } }, sort, refresh);
+                new SqlInputRow(search, sort, refresh), segments, new[] { new[] { databases }, new[] { kinds } });
 
             var host = new Border { Child = toolbar };
 
@@ -261,15 +286,15 @@ public sealed class SqlSearchVisualTests
             Assert.Equal(SqlSearchToolbarMode.Full, toolbar.Mode);
             Assert.False(kinds.IsCompact);
 
-            // 第一層是搜尋框與排序／重新整理；filters 與分段開關在第二層。
+            // 上層是 filters 與分段開關；搜尋框與排序／重新整理在下層，貼著清單。
             Assert.InRange(Math.Abs(Middle(sort) - Middle(search)), 0, 1);
             Assert.InRange(Math.Abs(Middle(refresh) - Middle(search)), 0, 1);
-            Assert.True(Middle(databases) > Middle(search) + search.ActualHeight / 2);
+            Assert.True(Middle(search) > Middle(databases) + databases.ActualHeight / 2);
             Assert.InRange(Math.Abs(Middle(segments) - Middle(databases)), 0, 1);
-            // 搜尋框吃滿第一層剩下的寬度：右邊只留那兩顆圖示鈕。
+            // 搜尋框吃滿那一層剩下的寬度：右邊只留那兩顆圖示鈕。
             Assert.True(search.ActualWidth > 720 - sort.DesiredSize.Width - refresh.DesiredSize.Width - 40);
 
-            // 第二層放不下帶字的過濾按鈕就先收字；不換行，所以高度不變。
+            // 過濾那一層放不下帶字的過濾按鈕就先收字；不換行，所以高度不變。
             // 門檻是量出來的內容寬度：差一個 DIP 就該換一級，不必寫死一個數字。
             // 用 DesiredSize 而不是 ActualWidth：工具列量的是含外距的那一份，兩者差幾個 DIP
             // 就足以讓門檻算在錯的一級上。
@@ -290,6 +315,8 @@ public sealed class SqlSearchVisualTests
             Assert.True(Middle(segments) > Middle(databases) + databases.ActualHeight / 2);
             // 換行的單位是群：兩顆過濾按鈕仍在同一列，不會掉一顆下去。
             Assert.InRange(Math.Abs(Middle(kinds) - Middle(databases)), 0, 1);
+            // 過濾換成兩列之後，搜尋列仍在最下面，不被擠到過濾之間。
+            Assert.True(Middle(search) > Middle(segments) + segments.ActualHeight / 2);
 
             // 拉回去要回到完整版，不停在窄版上。
             Layout(720);
@@ -342,58 +369,7 @@ public sealed class SqlSearchVisualTests
     }
 
     [Fact]
-    public void 已選條件列只在非預設時出現而且永遠只有一列()
-    {
-        WpfTest.Run(() =>
-        {
-            var chips = new SqlFilterChipBar();
-            Assert.Equal(Visibility.Collapsed, chips.Visibility);
-
-            var removed = new List<string>();
-            var opened = new List<string>();
-            chips.RemoveRequested += chip => removed.Add((string)chip);
-            chips.OpenRequested += chip => opened.Add((string)chip);
-            // 上這一列的都是清得掉、也開得了面板的維度；大小寫與全字是搜尋框裡常駐的開關，不上來。
-            chips.SetChips(new[] { "伺服器: LIBSQL01", "資料庫: 8 個", "種類: 2 種" }, chip => chip);
-            Assert.Equal(Visibility.Visible, chips.Visibility);
-
-            var host = new Border { Child = chips };
-            host.Measure(new Size(400, 100));
-            host.Arrange(new Rect(0, 0, 400, 100));
-            host.UpdateLayout();
-
-            // 每一顆都有本體與十字。
-            var buttons = Descendants<Button>(chips).ToArray();
-            Assert.Equal(6, buttons.Length);
-
-            // 十字清掉整個維度；本體開的是那個維度自己的面板。
-            buttons.Single(button => (string)button.ToolTip == "清除條件：資料庫: 8 個")
-                .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            Assert.Equal(new[] { "資料庫: 8 個" }, removed.ToArray());
-            buttons.Single(button => (string)button.ToolTip == "種類: 2 種：開啟面板調整")
-                .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            Assert.Equal(new[] { "種類: 2 種" }, opened.ToArray());
-
-            // 條件再多也只有一列：放不下時橫向捲動，不換行。
-            var strip = Descendants<StackPanel>(chips).First(panel => panel.Orientation == Orientation.Horizontal);
-            var single = strip.DesiredSize.Height;
-            chips.SetChips(
-                new[] { "伺服器: LIBSQL01.分公司.內部網路", "資料庫: 12 個", "種類: 6 種" },
-                chip => chip);
-            host.Measure(new Size(200, 100));
-            host.Arrange(new Rect(0, 0, 200, 100));
-            host.UpdateLayout();
-            Assert.Equal(single, strip.DesiredSize.Height, 1);
-            Assert.InRange(chips.DesiredSize.Height, 0, single + 12);
-
-            chips.SetChips(Array.Empty<string>(), chip => chip);
-            // 沒篩選就不佔那一列；Collapsed 才真的不參與量測。
-            Assert.Equal(Visibility.Collapsed, chips.Visibility);
-        });
-    }
-
-    [Fact]
-    public void 結果卡片分段開關與篩選chip的互動狀態只換筆刷不改版面尺寸()
+    public void 結果卡片與分段開關的互動狀態只換筆刷不改版面尺寸()
     {
         WpfTest.Run(() =>
         {
@@ -412,7 +388,13 @@ public sealed class SqlSearchVisualTests
             var toggle = (ControlTemplate)SqlAssistChrome.CreateToggleStyle().Setters
                 .OfType<Setter>().Single(setter => setter.Property == Control.TemplateProperty).Value;
 
-            foreach (var template in new[] { card, option, segment, toggle })
+            // 過濾按鈕有條件時換強調底框（取代原本工具列下面那一列已選條件）；宣告在停駐與按下
+            // 前面，那兩種回饋照常出現。
+            var filter = SqlAssistChrome.CreateFilterButtonTemplate();
+            var narrowed = Assert.IsType<Trigger>(filter.Triggers[0]);
+            Assert.Equal(SqlFilterFlyout.IsNarrowedProperty, narrowed.Property);
+
+            foreach (var template in new[] { card, option, segment, toggle, filter })
             foreach (var trigger in template.Triggers.OfType<Trigger>())
             {
                 Assert.DoesNotContain(trigger.Setters.OfType<Setter>(), setter => layoutProperties.Contains(setter.Property));
@@ -527,10 +509,10 @@ public sealed class SqlSearchVisualTests
     public void 併過的列說得出幾種部位幾處與哪幾個資料行()
     {
         var row = new SqlSearchRow(
-            Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDate", new MatchSpan(0, 4)).WithMerged(new[]
+            Hit(SearchMatchTarget.Column, "[dbo].[LoanDetail]", "LoanDate", new MatchSpan(0, 4)).WithMerged(new[]
             {
-                Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDay", new MatchSpan(0, 4)),
-                Hit(SearchMatchTarget.Text, "[dbo].[Frm_Loan]", "    JOIN Loan l", new MatchSpan(9, 4))
+                Hit(SearchMatchTarget.Column, "[dbo].[LoanDetail]", "LoanDay", new MatchSpan(0, 4)),
+                Hit(SearchMatchTarget.Text, "[dbo].[LoanDetail]", "    JOIN Loan l", new MatchSpan(9, 4))
             }),
             "Table");
 
@@ -649,10 +631,10 @@ public sealed class SqlSearchVisualTests
         {
             var template = SqlAssistChrome.CreateSearchHitTemplate();
             var rendered = Render(template, new SqlSearchRow(
-                Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDate", new MatchSpan(0, 4)).WithMerged(new[]
+                Hit(SearchMatchTarget.Column, "[dbo].[LoanDetail]", "LoanDate", new MatchSpan(0, 4)).WithMerged(new[]
                 {
-                    Hit(SearchMatchTarget.Column, "[dbo].[Frm_Loan]", "LoanDay", new MatchSpan(0, 4)),
-                    Hit(SearchMatchTarget.Text, "[dbo].[Frm_Loan]", "    JOIN Loan l", new MatchSpan(9, 4))
+                    Hit(SearchMatchTarget.Column, "[dbo].[LoanDetail]", "LoanDay", new MatchSpan(0, 4)),
+                    Hit(SearchMatchTarget.Text, "[dbo].[LoanDetail]", "    JOIN Loan l", new MatchSpan(9, 4))
                 }),
                 "Table"), 740);
 
@@ -818,7 +800,7 @@ public sealed class SqlSearchVisualTests
             var databases = new SqlFilterFlyout("資料庫", SqlIcon.Database, SqlFilterMode.SearchableMultiple);
             var kinds = new SqlFilterFlyout("種類", SqlIcon.Filter);
             var toolbar = new SqlSearchToolbar(
-                search, segments, new[] { new[] { server, databases }, new[] { kinds } });
+                new SqlInputRow(search), segments, new[] { new[] { server, databases }, new[] { kinds } });
             var host = new Border { Child = toolbar };
 
             void Layout(double width)

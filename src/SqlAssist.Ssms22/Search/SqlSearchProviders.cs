@@ -27,7 +27,7 @@ internal sealed class SqlSearchProviders
 {
     private readonly SqlCatalogSearchIndexCache _indexCache = new();
     private readonly SqlAgentJobSearchSnapshotCache _jobCache = new();
-    private SqlMetadataCatalog? _catalog;
+    private SqlSearchConnection? _connection;
 
     /// <remarks>
     /// 順序就是分類 pill 的順序（聚合器照 provider 串接）：先資料庫物件，再伺服器層級的
@@ -42,16 +42,24 @@ internal sealed class SqlSearchProviders
     /// <summary>視窗握著的那一個；分類 pill 也由它的 <see cref="SearchAggregator.Categories"/> 產生。</summary>
     public SearchAggregator Aggregator { get; }
 
-    public bool HasConnection => Volatile.Read(ref _catalog) is not null;
+    public bool HasConnection => Volatile.Read(ref _connection) is not null;
 
     /// <summary>
-    /// 換上目前查詢視窗那條連線的目錄。
+    /// 換上這一輪範圍的目錄，以及它連著哪一台。
     /// </summary>
     /// <remarks>
     /// 由 UI 執行緒在每一輪搜尋之前呼叫；背景的 provider 只讀。目錄本身是註冊表共用的，
     /// 留一份參考沒有所有權問題——不能留的是它底下那個連線來源。
+    ///
+    /// 兩者裝在<b>同一個</b>欄位裡一次換掉：分兩個欄位的話，背景那一輪可能讀到新的目錄配上
+    /// 舊的伺服器，而那一輪每一筆命中都帶著錯的那一台。null 就是沒有連線。
+    ///
+    /// 「換了沒有」也由這裡回答，因為上一份只有這裡握著：呼叫端自己再記一份的話，
+    /// 每輪搜尋前那一次重讀先把新值記下，連線事件那一次就看不出換過，舊結果留著。
     /// </remarks>
-    public void UseCatalog(SqlMetadataCatalog? catalog) => Volatile.Write(ref _catalog, catalog);
+    /// <returns>換到另一個目錄或另一台時為 true；同一份重設一次為 false。</returns>
+    public bool UseConnection(SqlSearchConnection? connection) =>
+        !SqlSearchConnection.SameScope(Interlocked.Exchange(ref _connection, connection), connection);
 
     /// <summary>
     /// 這一輪的目標資料庫已經有索引了嗎；false 表示可能要先掃一次全表（含定義本文）。
@@ -59,19 +67,22 @@ internal sealed class SqlSearchProviders
     /// <remarks>
     /// 只用來決定載入表面要不要出現，答錯的代價是多轉一圈或少轉一圈的載入圖示，不影響結果。
     /// 指名多個資料庫時只要有一個沒索引就算沒有：使用者要等的是最慢那一個。
+    /// 範圍是「全部」時照手上那份資料庫清單算；還不知道有哪幾個就當成沒有，第一輪多半要掃。
     /// </remarks>
-    public bool IsIndexed(SearchScope scope)
+    /// <param name="knownDatabases">這台伺服器上已知的資料庫；範圍是「全部」時才用到。</param>
+    public bool IsIndexed(SearchScope scope, IReadOnlyList<string> knownDatabases)
     {
         if (scope is null) throw new ArgumentNullException(nameof(scope));
+        if (knownDatabases is null) throw new ArgumentNullException(nameof(knownDatabases));
 
-        var catalog = Volatile.Read(ref _catalog);
-        if (catalog is null) return true;
+        if (Volatile.Read(ref _connection) is not { } connection) return true;
 
-        var source = catalog.ConnectionSource;
+        var source = connection.Catalog.ConnectionSource;
+        var databases = scope.Databases.Count != 0 ? scope.Databases : knownDatabases;
 
-        if (scope.Databases.Count == 0) return _indexCache.IsFresh(source.CacheKey);
+        if (databases.Count == 0) return false;
 
-        foreach (var database in scope.Databases)
+        foreach (var database in databases)
         {
             var key = string.Equals(database, source.DatabaseName, StringComparison.OrdinalIgnoreCase)
                 ? source.CacheKey
@@ -124,12 +135,11 @@ internal sealed class SqlSearchProviders
 
         public Task SearchAsync(SearchQuery query, ISearchSink sink, CancellationToken cancellationToken)
         {
-            var catalog = Volatile.Read(ref _owner._catalog);
-
             // 沒有連線不是失敗：畫面上已經有「尚未連線」那一句，再記一筆例外只會蓋掉真正的錯誤。
-            if (catalog is null) return Task.CompletedTask;
+            if (Volatile.Read(ref _owner._connection) is not { } connection) return Task.CompletedTask;
 
-            return new SqlCatalogSearchProvider(catalog.ConnectionSource, _owner._indexCache)
+            return new SqlCatalogSearchProvider(
+                    connection.Catalog.ConnectionSource, connection.Origin, _owner._indexCache)
                 .SearchAsync(query, sink, cancellationToken);
         }
     }
@@ -164,12 +174,11 @@ internal sealed class SqlSearchProviders
 
         public Task SearchAsync(SearchQuery query, ISearchSink sink, CancellationToken cancellationToken)
         {
-            var catalog = Volatile.Read(ref _owner._catalog);
-
             // 沒有連線不是失敗：畫面上已經有「尚未連線」那一句。
-            if (catalog is null) return Task.CompletedTask;
+            if (Volatile.Read(ref _owner._connection) is not { } connection) return Task.CompletedTask;
 
-            return new SqlAgentJobSearchProvider(catalog.ConnectionSource, _owner._jobCache)
+            return new SqlAgentJobSearchProvider(
+                    connection.Catalog.ConnectionSource, connection.Origin, _owner._jobCache)
                 .SearchAsync(query, sink, cancellationToken);
         }
     }

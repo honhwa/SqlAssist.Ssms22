@@ -38,11 +38,12 @@ namespace SqlAssist.Ssms22.Search;
 internal static partial class SqlSearchActivation
 {
     /// <summary>
-    /// 啟動一筆結果：把它的定義開進一個沿用目前連線的新查詢視窗。
+    /// 啟動一筆結果：把它的定義開進新查詢視窗——同一台就沿用目前連線，別台就不連線。
     /// </summary>
     /// <returns>
-    /// 成功時為 null，否則是要顯示在工具窗頁尾的那一句；<b>一律在 UI 執行緒上完成</b>，
-    /// 呼叫端接到之後可以直接寫進畫面。
+    /// <c>Failure</c> 成功時為 null，否則是要顯示在工具窗頁尾的那一句；<c>Unconnected</c>
+    /// 說開出來的是不是未連線的視窗，成功那一句要照它講（<see cref="DescribeOpened"/>）。
+    /// <b>一律在 UI 執行緒上完成</b>，呼叫端接到之後可以直接寫進畫面。
     /// </returns>
     /// <remarks>
     /// 執行緒分工與 F12 同一套：UI 執行緒只解析服務，查詢與組指令碼在背景，
@@ -54,7 +55,7 @@ internal static partial class SqlSearchActivation
     /// <see cref="SqlCatalogSearchTarget.DatabaseName"/>，<c>object_id</c> 只在那個資料庫裡
     /// 唯一，所以先組出帶資料庫的 <see cref="SqlObjectInfo"/>，再讓中繼資料層換目錄。
     /// </remarks>
-    public static async Task<string?> ActivateAsync(
+    public static async Task<(string? Failure, bool Unconnected)> ActivateAsync(
         SearchHit hit, IServiceProvider services, SqlSearchCatalogs catalogs)
     {
         if (hit is null) throw new ArgumentNullException(nameof(hit));
@@ -73,50 +74,31 @@ internal static partial class SqlSearchActivation
             // 明寫 true 而不是留空：這一支答應回來時在 UI 執行緒上，而整個專案滿是
             // ConfigureAwait(false)，不寫的那一個看起來像漏掉的。已經在 UI 執行緒上時
             // 續程原地跑，不多一次派送。
-            return await ActivateJobAsync(job, services, catalogs).ConfigureAwait(true);
+            return await ActivateJobAsync(hit, job, services, catalogs).ConfigureAwait(true);
         }
 
         if (hit.ActivatePayload is not SqlCatalogSearchTarget target)
         {
-            return "這一筆沒有可以開啟的定義。";
-        }
-
-        // 新視窗沿用的是查詢視窗那一條連線。這一筆來自別台伺服器時，那份定義會落在一個連著
-        // 另一台伺服器的視窗裡——使用者在那裡按 F5 就是對錯的伺服器執行。
-        // 這一步<b>不</b>悄悄照做：右邊的預覽已經讀得到完整定義，而開錯視窗看不出差別。
-        // 問的是「是不是同一台」而不是「有沒有指名」：指名的那一台常常正是查詢視窗連著的
-        // 那一台，用後者代答就是把使用者擋在他自己已經連好的伺服器外面。
-        if (!catalogs.SharesActiveEditorServer())
-        {
-            return $"這一筆在 {catalogs.Server?.DisplayName} 上。新查詢視窗只沿用得到目前查詢視窗那條連線，" +
-                "請先把查詢視窗連到那一台，或直接看右邊的定義預覽。";
-        }
-
-        // 沒有查詢視窗就沒有連線可沿用，而 SSMS 的新查詢視窗一定要帶著一組連線資訊才開得起來。
-        var view = ActiveSqlEditor.Current;
-
-        if (view is null)
-        {
-            return "請先開啟一個已連線的 SQL 查詢視窗，新視窗才有連線可以沿用。";
+            return ("這一筆沒有可以開啟的定義。", false);
         }
 
         var objectInfo = ToObjectInfo(target);
-        var documentName = ActiveSqlEditor.GetDocumentName(view);
 
         // 取結構與預覽走同一份目錄（同一個 SqlSearchCatalogs），不另問中繼資料服務：
-        // 兩邊各問一次的症狀是預覽與新視窗的內容來自不同的地方。
-        if (catalogs.ResolveFor(objectInfo) is not { } catalog)
+        // 兩邊各問一次的症狀是預覽與新視窗的內容來自不同的地方。先問這一步，是因為範圍已經
+        // 換到別台時，下面那兩句（去開查詢視窗、去看預覽）都給錯了下一步——該做的是重新搜尋。
+        var catalog = catalogs.ResolveFor(objectInfo, target.Origin, out var elsewhere);
+
+        if (elsewhere) return (SqlSearchCatalogs.ElsewhereNotice(target.Origin), false);
+
+        if (catalog is null)
         {
-            return $"在 {target.DatabaseName} 取不到 {objectInfo.QualifiedName} 的結構，可能是連線已中斷或權限不足。";
+            return ($"在 {target.DatabaseName} 取不到 {objectInfo.QualifiedName} 的結構，可能是連線已中斷或權限不足。", false);
         }
 
-        using var notification = NotificationCenter.Default.Begin(
-            NotificationCatalog.GoingToDefinition,
-            NotificationKind.Navigation,
-            NotificationOrigin.User,
-            NotificationLevel.Info,
-            objectInfo.QualifiedName,
-            documentName);
+        var (unconnected, documentName) = ChooseWindow(catalogs, target.Origin);
+
+        using var notification = BeginGoingToDefinition(objectInfo.QualifiedName, documentName, target.Origin, unconnected);
 
         // Task.Run 而不是直接 await：GetStructureAsync 在第一個 await 之前是同步跑的，
         // 留在 UI 執行緒上就是第四層查詢的準備工作卡住畫面。
@@ -129,17 +111,73 @@ internal static partial class SqlSearchActivation
             notification.Fail();
             // 回到 UI 執行緒再交還：呼叫端拿這一句去寫工具窗的頁尾。
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            return $"在 {target.DatabaseName} 取不到 {objectInfo.QualifiedName} 的結構，可能是連線已中斷或權限不足。";
+            return ($"在 {target.DatabaseName} 取不到 {objectInfo.QualifiedName} 的結構，可能是連線已中斷或權限不足。", false);
         }
 
         var script = await Task.Run(() => SqlDefinitionScript.Build(structure, documentName)).ConfigureAwait(false);
 
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-        var failure = SqlDefinitionScript.WriteToNewWindow(services, script, objectInfo, documentName);
+        var failure = SqlDefinitionScript.WriteToNewWindow(
+            services, WithHeader(script, hit, unconnected), objectInfo, documentName, unconnected);
 
         if (failure is not null) notification.Fail();
 
-        return failure;
+        return (failure, unconnected);
+    }
+
+    /// <summary>
+    /// 這一筆要開哪一種視窗：與作用中查詢視窗同一台就沿用它的連線，否則開未連線的。
+    /// </summary>
+    /// <returns>是不是未連線，以及發起的文件名稱（沒有查詢視窗時是空字串）。</returns>
+    /// <remarks>
+    /// 新視窗沿用得到的只有查詢視窗那一條連線。這一筆來自別台時沿用它，定義就落在連著另一台
+    /// 的視窗裡，使用者在那裡按 F5 就是對錯的伺服器執行，而畫面看不出差別。所以那一種改開
+    /// <b>未連線</b>的視窗：SSMS 在第一次執行時要求連線，什麼都不會跑在錯的那一台上。
+    /// 沒有查詢視窗時同樣開未連線的——沒有連線可沿用不等於做不到。
+    ///
+    /// 問的是「這一筆與查詢視窗是不是同一台」，不是「有沒有指名」，也不是「範圍與查詢視窗
+    /// 是不是同一台」：前者讓使用者在他自己已經連好的伺服器上也拿到一個未連線的視窗，後者在
+    /// 換過查詢視窗之後恆真，而清單上的舊列來自上一台。列上事先那一句
+    /// （<see cref="OpensUnconnected"/>）與這裡走同一份比對規則；這裡是按下去那一刻再問一次，
+    /// 以此為準。
+    /// </remarks>
+    private static (bool Unconnected, string DocumentName) ChooseWindow(
+        SqlSearchCatalogs catalogs, SqlSearchOrigin origin)
+    {
+        var view = ActiveSqlEditor.Current;
+        var unconnected = view is null || !catalogs.SharesActiveEditorServer(origin);
+
+        return (unconnected, view is null ? "" : ActiveSqlEditor.GetDocumentName(view));
+    }
+
+    /// <summary>
+    /// 「移至定義」那一則通知；未連線時換一個標題，並把來源那一台放在出處上。
+    /// </summary>
+    /// <remarks>
+    /// 標題是常數，說不出伺服器名稱，所以那一台放 <c>source</c>：通知是使用者按完之後第一個看到
+    /// 的東西，只寫「移至定義」的話，他要到按 F5 跳出連線對話框才發現這個視窗沒有連線。
+    /// </remarks>
+    private static NotificationScope BeginGoingToDefinition(
+        string subject, string documentName, SqlSearchOrigin origin, bool unconnected) =>
+        NotificationCenter.Default.Begin(
+            unconnected ? NotificationCatalog.GoingToDefinitionUnconnected : NotificationCatalog.GoingToDefinition,
+            NotificationKind.Navigation,
+            NotificationOrigin.User,
+            NotificationLevel.Info,
+            subject,
+            documentName,
+            source: unconnected ? origin.ServerName : "");
+
+    /// <summary>未連線時在指令碼開頭加上來源那幾行，游標跟著往後移。</summary>
+    private static SqlObjectScriptText WithHeader(SqlObjectScriptText script, SearchHit hit, bool unconnected)
+    {
+        if (!unconnected) return script;
+
+        var header = UnconnectedHeader(hit, Environment.NewLine);
+
+        return header.Length == 0
+            ? script
+            : new SqlObjectScriptText(header + script.Text, header.Length + script.CaretOffset);
     }
 
     /// <summary>
@@ -152,9 +190,8 @@ internal static partial class SqlSearchActivation
     /// 執行緒分三段：UI 執行緒挑伺服器與目錄，背景問父物件是誰，回到 UI 執行緒逐一導航。
     /// 中間那一段由 <c>GetParentAsync</c> 自己讓出執行緒，這一層不再包一次 <c>Task.Run</c>。
     ///
-    /// 這一條與<see cref="ActivateAsync">移至定義</see>互補，所以<b>沒有</b>那一道
-    /// 「只沿用得到查詢視窗那條連線」的守門：伺服器由樹上那一台決定，指名別台時正好是
-    /// 這一顆還能用。兩顆都擋掉的話，指名伺服器之後一列結果什麼都做不了。
+    /// 伺服器由這一筆自己那一台在樹上的節點決定，與查詢視窗連著哪一台無關；
+    /// <see cref="ActivateAsync">移至定義</see>則要看查詢視窗，才決定新視窗沿不沿用它的連線。
     ///
     /// 候選由 <see cref="SqlObjectExplorerUrn"/> 排好，這裡<b>依序</b>試到第一個指得到的為止，
     /// 並且說出停在哪一層。試到第二個就默默當成成功的話，使用者會以為自己正看著那個條件約束，
@@ -169,26 +206,22 @@ internal static partial class SqlSearchActivation
 
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-        if (catalogs.ResolveExplorerServer() is not { } server)
+        if (OriginOf(hit) is not { } origin) return "這一筆在物件總管上指不到節點。";
+
+        // 照這一筆自己的伺服器找，不照現在的範圍：換過查詢視窗或指名別台之後，範圍答的是
+        // 另一台，而那一台上同名的物件會被選起來，畫面上看起來完全正常。
+        if (catalogs.ResolveExplorerServer(origin) is not { } server)
         {
-            // 兩句的下一步不同：一句是「去物件總管連上那台」，另一句是「先連上查詢視窗」。
-            return catalogs.ActiveEditorServerName() is { Length: > 0 } name
-                ? $"物件總管上沒有連到 {name} 的連線；在那裡連上這一台之後再按一次。"
-                : "目前的查詢視窗沒有連線，說不出要在物件總管的哪一台上找。";
+            return $"物件總管上沒有連到 {origin} 的連線；在那裡連上這一台之後再按一次。";
         }
 
         // 接下來每一步都碰 UI（導覽服務、頁尾那幾句），所以 true。這裡曾經是 false，
         // 而症狀只在條件約束與觸發程序上出現——也只有那兩種真的 await 過一趟查詢，
         // 其餘種類同步完成、續程原地跑，看起來完全正常。
-        var nodes = await ResolveNodesAsync(hit, server.RootUrn, catalogs).ConfigureAwait(true);
+        var (nodes, failure) = await ResolveNodesAsync(hit, server.RootUrn, catalogs).ConfigureAwait(true);
 
-        if (nodes.Count == 0)
-        {
-            return hit.ActivatePayload is SqlCatalogSearchTarget missing &&
-                SqlObjectExplorerUrn.RequiresParent(missing.Kind)
-                ? $"問不到 {missing.Name} 掛在哪一個物件上，可能是連線已中斷或它已經卸除。"
-                : "這一筆在物件總管上指不到節點。";
-        }
+        if (failure is not null) return failure;
+        if (nodes.Count == 0) return "這一筆在物件總管上指不到節點。";
 
         using var notification = NotificationCenter.Default.Begin(
             NotificationCatalog.SelectingInObjectExplorer,
@@ -199,23 +232,23 @@ internal static partial class SqlSearchActivation
             // 出處是樹上那一台伺服器，不是一份文件：這條路徑沒有開任何查詢視窗。
             source: server.DisplayName);
 
-        for (var index = 0; index < nodes.Count; index++)
+        // 不給取消權杖：使用者按的是「帶我過去」，中途放掉等於按了沒反應。
+        // 整串候選交給導航一次試完：從哪裡開始自己走只有 SqlObjectExplorerUrn 知道（AnchorUrn），
+        // 同一個錨點底下的幾個候選要一趟一起找，這一層一個一個遞進去就做不到。
+        var selected = await SsmsObjectExplorer
+            .TrySelectFirstAsync(services, nodes, CancellationToken.None)
+            .ConfigureAwait(true);
+
+        // 比位址不比索引：資料表的第二個候選是同一個節點的另一條路（導覽服務指不到時
+        // 從資料庫往下走），選到它不是降級。
+        if (selected >= 0 && string.Equals(nodes[selected].Urn, nodes[0].Urn, StringComparison.OrdinalIgnoreCase))
         {
-            // 不給取消權杖：使用者按的是「帶我過去」，中途放掉等於按了沒反應。
-            // 帶上 OwnerUrn，導航才知道這一個是不是畫在別人底下的——那幾種指不到樹根，
-            // 要先到父物件再往下找。哪一種畫在誰底下只有 SqlObjectExplorerUrn 知道，
-            // 這一層照欄位走，不自己判斷種類。
-            var node = nodes[index];
+            return null;
+        }
 
-            if (!await SsmsObjectExplorer.TryNavigateAsync(
-                    services, node.Urn, node.OwnerUrn, CancellationToken.None))
-            {
-                continue;
-            }
-
-            return index == 0
-                ? null
-                : $"物件總管上找不到{Describe(nodes[0])}，已改為選取{Describe(nodes[index])}。";
+        if (selected > 0)
+        {
+            return $"物件總管上找不到{Describe(nodes[0])}，已改為選取{Describe(nodes[selected])}。";
         }
 
         notification.Fail();
@@ -239,13 +272,17 @@ internal static partial class SqlSearchActivation
     /// （<c>GetParentAsync</c> 內部就是 <c>Task.Run</c>），所以這裡直接 await：
     /// 再包一層只是多排一次工作，UI 執行緒一樣不會停在查詢上。
     ///
+    /// 問父物件用的目錄必須在這一筆那一台上（<see cref="SqlSearchCatalogs.ResolveFor"/>）：
+    /// 範圍換過之後拿現在那一台的目錄去問，同號的另一個物件會交出一個看起來很正常的父物件。
+    /// 那一種與「問不到」各回各的一句，第二個值就是那一句。
+    ///
     /// 組位址是純字串，留在哪一條執行緒上都不影響畫面；回來時在哪一條由呼叫端的
     /// <c>await</c> 決定，這一支<b>不</b>替呼叫端切回去。恢復執行緒是階段邊界的事，
     /// 不是資料解析函式的事——寫在這裡的話，呼叫端一個 <c>ConfigureAwait(false)</c>
     /// 就能把它作廢，而看起來像是這一支失了信。真正擋住那一種錯的是
-    /// <c>SsmsObjectExplorer.TryNavigateAsync</c> 自己切。
+    /// <c>SsmsObjectExplorer.TrySelectFirstAsync</c> 自己切。
     /// </remarks>
-    private static async Task<IReadOnlyList<SqlExplorerNode>> ResolveNodesAsync(
+    private static async Task<(IReadOnlyList<SqlExplorerNode> Nodes, string? Failure)> ResolveNodesAsync(
         SearchHit hit, string rootUrn, SqlSearchCatalogs catalogs)
     {
         // 目錄要在 UI 執行緒上問（SqlSearchCatalogs 的解析都有 assert）。呼叫端已經切過，
@@ -255,35 +292,39 @@ internal static partial class SqlSearchActivation
         // 這是唯一可以辨識酬載型別的地方，與啟動那一支同一條紅線。
         if (hit.ActivatePayload is SqlAgentJobSearchTarget job)
         {
-            return SqlObjectExplorerUrn.ForJob(rootUrn, job.JobName);
+            return (SqlObjectExplorerUrn.ForJob(rootUrn, job.JobName), null);
         }
 
-        if (hit.ActivatePayload is not SqlCatalogSearchTarget target) return Array.Empty<SqlExplorerNode>();
+        if (hit.ActivatePayload is not SqlCatalogSearchTarget target) return (Array.Empty<SqlExplorerNode>(), null);
 
         if (SqlObjectExplorerUrn.RequiresParent(target.Kind))
         {
             var child = ToObjectInfo(target);
+            var catalog = catalogs.ResolveFor(child, target.Origin, out var elsewhere);
 
-            if (catalogs.ResolveFor(child) is not { } catalog) return Array.Empty<SqlExplorerNode>();
+            if (elsewhere) return (Array.Empty<SqlExplorerNode>(), SqlSearchCatalogs.ElsewhereNotice(target.Origin));
 
-            var parent = await catalog
-                .GetParentAsync(child, CancellationToken.None, NotificationOrigin.User)
-                .ConfigureAwait(false);
+            var parent = catalog is null
+                ? null
+                : await catalog
+                    .GetParentAsync(child, CancellationToken.None, NotificationOrigin.User)
+                    .ConfigureAwait(false);
 
             return parent is null
-                ? Array.Empty<SqlExplorerNode>()
-                : SqlObjectExplorerUrn.ForChild(rootUrn, parent, target.Name);
+                ? (Array.Empty<SqlExplorerNode>(),
+                    $"問不到 {target.Name} 掛在哪一個物件上，可能是連線已中斷或它已經卸除。")
+                : (SqlObjectExplorerUrn.ForChild(rootUrn, parent, target.Name), null);
         }
 
-        return target.ColumnName is { Length: > 0 } column
+        return (target.ColumnName is { Length: > 0 } column
             ? SqlObjectExplorerUrn.ForColumn(
                 rootUrn, target.DatabaseName, target.SchemaName, target.Name, target.Kind, column)
             : SqlObjectExplorerUrn.ForObject(
-                rootUrn, target.DatabaseName, target.SchemaName, target.Name, target.Kind);
+                rootUrn, target.DatabaseName, target.SchemaName, target.Name, target.Kind), null);
     }
 
     /// <summary>
-    /// 啟動一筆作業結果：把它的步驟命令開進一個沿用目前連線的新查詢視窗。
+    /// 啟動一筆作業結果：把它的步驟命令開進新查詢視窗，連線的選法與目錄物件相同。
     /// </summary>
     /// <remarks>
     /// <b>為什麼是「開進查詢視窗」而不是「複製作業名稱」。</b>清單上同時有目錄物件與作業，
@@ -299,47 +340,33 @@ internal static partial class SqlSearchActivation
     /// 執行緒分工與目錄那一條完全相同：UI 執行緒只解析服務，查詢與組字串在背景，
     /// 開窗與寫入回到 UI 執行緒。
     /// </remarks>
-    private static async Task<string?> ActivateJobAsync(
-        SqlAgentJobSearchTarget job, IServiceProvider services, SqlSearchCatalogs catalogs)
+    private static async Task<(string? Failure, bool Unconnected)> ActivateJobAsync(
+        SearchHit hit, SqlAgentJobSearchTarget job, IServiceProvider services, SqlSearchCatalogs catalogs)
     {
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-        // 與目錄那一條同一道守門，連判斷都同一支：這一筆來自別台伺服器時，那份步驟命令會
-        // 落在一個連著另一台伺服器的視窗裡，而使用者在那裡按 F5 就是對錯的伺服器執行——
-        // 一段作業步驟通常正是會改資料的那種 SQL。
-        if (!catalogs.SharesActiveEditorServer())
-        {
-            return $"這一筆在 {job.ServerName} 上。新查詢視窗只沿用得到目前查詢視窗那條連線，" +
-                "請先把查詢視窗連到那一台，或直接看右邊的命令片段。";
-        }
-
-        var view = ActiveSqlEditor.Current;
-
-        if (view is null)
-        {
-            return "請先開啟一個已連線的 SQL 查詢視窗，新視窗才有連線可以沿用。";
-        }
 
         // 連線一律向 SqlSearchCatalogs 要，而且只借不留：所有權在
         // SqlMetadataCatalogRegistry，留一份的症狀是換過連線之後每一次啟動都以
         // ObjectDisposedException 收場，而那不是 DbException，降級接不住。
-        if (catalogs.Resolve() is not { } catalog)
+        // 要的是<b>這一筆那一台</b>的連線：範圍換過之後拿現在那一台去 msdb 查同一個 job_id，
+        // 查不到只是一句「取不到」，把另一台的命令開出來才是真的錯。
+        var catalog = catalogs.ResolveOn(job.Origin, out var elsewhere);
+
+        if (elsewhere) return (SqlSearchCatalogs.ElsewhereNotice(job.Origin), false);
+
+        if (catalog is null)
         {
-            return "取不到目前查詢視窗的連線，請先連上伺服器。";
+            return ($"取不到 {job.Origin} 的連線，請確認它還連著之後重新搜尋。", false);
         }
 
-        var documentName = ActiveSqlEditor.GetDocumentName(view);
+        // 與目錄那一條同一個選擇，連判斷都同一支：這一筆來自別台伺服器時，沿用查詢視窗那條
+        // 連線就是在錯的伺服器上按 F5——而一段作業步驟通常正是會改資料的那種 SQL。
+        var (unconnected, documentName) = ChooseWindow(catalogs, job.Origin);
         var subject = job.StepId is { } step
             ? job.JobName + " 第 " + step.ToString(CultureInfo.InvariantCulture) + " 步"
             : job.JobName;
 
-        using var notification = NotificationCenter.Default.Begin(
-            NotificationCatalog.GoingToDefinition,
-            NotificationKind.Navigation,
-            NotificationOrigin.User,
-            NotificationLevel.Info,
-            subject,
-            documentName);
+        using var notification = BeginGoingToDefinition(subject, documentName, job.Origin, unconnected);
 
         var script = await Task
             .Run(() => SqlAgentJobScript.TryBuild(
@@ -354,19 +381,20 @@ internal static partial class SqlSearchActivation
 
             // 三個原因都要寫出來：它們的下一步完全不同（去看作業還在不在、去要 msdb 權限、
             // 去看連線），而只說「取不到」的話使用者查不出該去看哪一個。
-            return $"在 {job.ServerName} 取不到 {subject} 的步驟命令：作業可能已經刪除、" +
-                "這個登入對 msdb 沒有權限，或連線已中斷。";
+            return ($"在 {job.ServerName} 取不到 {subject} 的步驟命令：作業可能已經刪除、" +
+                "這個登入對 msdb 沒有權限，或連線已中斷。", false);
         }
 
         var failure = SqlDefinitionScript.WriteToNewWindow(
             services,
-            new SqlObjectScriptText(script, 0),
+            WithHeader(new SqlObjectScriptText(script, 0), hit, unconnected),
             subject,
             $"已在新查詢視窗開啟 {subject} 的命令",
-            documentName);
+            documentName,
+            unconnected);
 
         if (failure is not null) notification.Fail();
 
-        return failure;
+        return (failure, unconnected);
     }
 }

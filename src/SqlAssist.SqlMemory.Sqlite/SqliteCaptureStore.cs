@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using Microsoft.Data.Sqlite;
+using SqlAssist.Core.Connections;
 using SqlAssist.Core.SqlMemory;
 using static SqlAssist.SqlMemory.Sqlite.SqliteContentRows;
 using static SqlAssist.SqlMemory.Sqlite.SqliteDatabase;
@@ -187,11 +188,12 @@ ON CONFLICT(SessionId) DO UPDATE SET ContentId=excluded.ContentId, CapturedAt=ex
         if (request == null) throw new ArgumentNullException(nameof(request));
         cancellationToken.ThrowIfCancellationRequested();
         var binding = SqliteTimeCursor.Fingerprint(((int)request.Kind).ToString(CultureInfo.InvariantCulture), request.Search,
+            ((int)request.MatchOptions).ToString(CultureInfo.InvariantCulture),
             SqlConnectionNames.Fingerprint(request.Servers), SqlConnectionNames.Fingerprint(request.Databases),
             request.Since?.UtcDateTime.Ticks.ToString(CultureInfo.InvariantCulture),
             request.Until?.UtcDateTime.Ticks.ToString(CultureInfo.InvariantCulture));
         var cursor = SqliteTimeCursor.Decode(request.Cursor, HistoryCursor, _database.StoreId, binding, SqliteHistoryRows.IsKey);
-        var search = SqliteSearchScan.Create(request.Search, _searchBudget, cancellationToken);
+        var search = SqliteSearchScan.Create(request.Search, request.MatchOptions, _searchBudget, cancellationToken);
         var conditions = new List<string>();
         var parameters = new List<(string Name, object? Value)> { ("$limit", search?.CandidateLimit ?? request.PageSize + 1) };
         if (request.Kind == SqlHistoryFilter.Executions || request.Kind == SqlHistoryFilter.Drafts)

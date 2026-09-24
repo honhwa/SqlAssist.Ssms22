@@ -37,13 +37,17 @@
 | 結果格線右鍵選單的命令、產出的 SQL 不對 | `Metadata/ResultGrid/`、`Ssms22/ResultGrid/` |
 | 新增選單項目或鍵繫結後沒生效 | `Menus.vsct` ＋ `ProvideMenuResource` 版號，且必須重新安裝 |
 | F12 開出來的指令碼內容不對 | `Metadata/Formatting/SqlObjectScript.cs` |
-| 新查詢視窗沒有沿用連線 | `Ssms22/Connections/SsmsScriptWindow.cs` |
+| 新查詢視窗沒有沿用連線 | `Ssms22/Connections/SsmsScriptWindow.cs`；SQL Search 別台的結果刻意不連，判斷在 `Search/SqlSearchActivation.cs` |
 | 換了資料庫，清單還是舊資料庫的物件 | `Ssms22/Connections/SqlMetadataService.cs`、`SqlEditorConnectionWatcher.cs` |
 | 新增一個設定 | 註冊 JSON、POCO、moniker、reader 四處 |
 | 查詢的 SQL 或載入分層 | `Metadata/Querying/SqlMetadataQueries.cs` |
 | 連不上資料庫時的行為 | `Metadata/Caching/SqlMetadataCatalog.cs` |
 | SQL Memory 開不起來、停用後還在擷取、心跳或維護沒跑 | `Core/SqlMemory/SqlMemoryRuntime.cs`（`Ssms22/SqlMemory/SqlMemoryHost.cs` 只接線） |
 | SQL Memory 清單篩選、分頁、晚到回應或選取還原 | `Core/SqlMemory/SqlMemoryBrowserModel.cs` |
+| 伺服器／資料庫篩選或套用查詢視窗的連線不對（兩個工具窗） | `Core/Connections/SqlConnectionScope.cs`；Search 的連線在 `Search/SqlSearchCatalogs.cs` |
+| 大小寫、整個字沒作用，或同一個字在兩個工具窗命中不同 | `Core/Matching/TextMatcher.cs`；開關在 `Ssms22/UI/SqlMatchToggles.cs` |
+| 多選勾不起來、勾錯列、選取工具列不出現 | `Ssms22/UI/SqlCardSelection.cs`、`SqlCardList.cs`、`SqlSelectionBar.cs` |
+| 批次複製的欄位、順序或「全部符合」讀不完 | `Core/SqlMemory/SqlMemoryCopy.cs`、`Core/Tabular/SqlTabularText.cs`、`Ssms22/SqlMemory/SqlMemoryBrowser.cs`；Search 的欄位在 `Search/SqlSearchRow.cs` |
 | 存檔後歷程掛錯文件、選取執行記錄的文字不對 | `SqlDocumentIdentity.cs`、`SqlSelectionText.cs`、`Ssms22/SqlMemory/SqlCaptureTracker.cs` |
 | SQL Memory 的 SQL、交易或索引 | `SqlMemory.Sqlite/Sqlite*Store.cs`（連線與 schema 在 `SqliteDatabase.cs`） |
 | 指令碼整段變成註解（缺定義、缺欄位） | `Metadata/Model/SqlObjectStructure.cs` 的 `CanBuildExecutableScript` |

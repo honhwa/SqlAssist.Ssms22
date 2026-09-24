@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using SqlAssist.Core.Matching;
 using SqlAssist.Core.SqlMemory;
 using Xunit;
 
@@ -37,8 +38,8 @@ public sealed class SqlMemoryBrowserModelTests
         var model = Ready();
         model.Kind = SqlHistoryFilter.Drafts;
         model.Search = "Loan";
-        model.SetServerSelected("LibraryServer", true);
-        model.SetDatabaseSelected("Library", true);
+        model.Scope.SetServerSelected("LibraryServer", true);
+        model.Scope.SetDatabaseSelected("Library", true);
         model.Period = SqlHistoryPeriod.ThirtyDays;
         model.Invalidate(Now);
 
@@ -87,18 +88,20 @@ public sealed class SqlMemoryBrowserModelTests
         model.Tab = SqlMemoryBrowserTab.Favorites;
         model.Kind = SqlHistoryFilter.Executions;
         model.Search = "Loan";
+        model.MatchOptions = TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord;
 
         // 沒選任何名稱就是全部收藏，不需要先指定範圍。
         var all = model.BeginLoad()!;
         Assert.Null(all.History);
         Assert.Equal("Loan", all.Favorites!.Search);
+        Assert.Equal(TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord, all.Favorites.MatchOptions);
         Assert.Empty(all.Favorites.Servers);
         Assert.Empty(all.Favorites.Databases);
         model.End(all);
 
         // 只選資料庫也能查，而且可以一次勾好幾個：同名資料庫散在多台伺服器時一次列出。
-        model.SetDatabaseSelected("Library", true);
-        model.SetDatabaseSelected("Archive", true);
+        model.Scope.SetDatabaseSelected("Library", true);
+        model.Scope.SetDatabaseSelected("Archive", true);
         model.Invalidate(Now);
         var database = model.BeginLoad()!.Favorites!;
         Assert.Empty(database.Servers);
@@ -202,7 +205,7 @@ public sealed class SqlMemoryBrowserModelTests
     {
         var model = Ready();
         model.Tab = SqlMemoryBrowserTab.Favorites;
-        model.SetDatabaseSelected("Library", true);
+        model.Scope.SetDatabaseSelected("Library", true);
         var favorite = new SqlFavorite(Guid.NewGuid(), "借閱查詢", null, Guid.NewGuid(), "LibraryServer", "Library");
 
         // 未指定伺服器篩選時不看伺服器標註。
@@ -212,16 +215,16 @@ public sealed class SqlMemoryBrowserModelTests
         Assert.False(model.MatchesFavoriteFilter(favorite with { Database = null }));
 
         // 勾兩個資料庫時兩邊都算數；勾選的是聯集，不是最後勾的那一個。
-        model.SetDatabaseSelected("Archive", true);
+        model.Scope.SetDatabaseSelected("Archive", true);
         Assert.True(model.MatchesFavoriteFilter(favorite));
         Assert.True(model.MatchesFavoriteFilter(favorite with { Database = "Archive" }));
 
         // 換伺服器會把資料庫一起清掉，所以這裡重新指名。
-        model.SetServerSelected("ArchiveServer", true);
-        model.SetDatabaseSelected("Library", true);
+        model.Scope.SetServerSelected("ArchiveServer", true);
+        model.Scope.SetDatabaseSelected("Library", true);
         Assert.False(model.MatchesFavoriteFilter(favorite));
         model.Tab = SqlMemoryBrowserTab.History;
-        model.ClearServers();
+        model.Scope.ClearServers();
         Assert.False(model.MatchesFavoriteFilter(favorite));
     }
 
@@ -242,71 +245,10 @@ public sealed class SqlMemoryBrowserModelTests
     }
 
     [Fact]
-    public void UsingTheCurrentConnectionSetsBothFilters()
-    {
-        var model = Ready();
-        model.Tab = SqlMemoryBrowserTab.Favorites;
-        model.SetServerSelected("ArchiveServer", true);
-
-        Assert.NotNull(model.UseConnection(null));
-        Assert.NotNull(model.UseConnection(new SqlConnectionLabel("LibraryServer", "")));
-        Assert.Equal(new[] { "ArchiveServer" }, model.Servers);
-
-        // 取代而不是加進去：這顆按鈕說的是「只看我現在連的那一個」。
-        Assert.Null(model.UseConnection(new SqlConnectionLabel("LibraryServer", "Library")));
-        Assert.Equal(new[] { "LibraryServer" }, model.Servers);
-        Assert.Equal(new[] { "Library" }, model.Databases);
-    }
-
-    /// <summary>
-    /// 伺服器與資料庫都是多選；換過伺服器就把資料庫一起清掉。
-    /// </summary>
-    /// <remarks>
-    /// 資料庫名稱是每台伺服器自己的：留著上一輪的名單會篩成一列都沒有，
-    /// 而畫面上只看得到「沒有符合條件」，看不出是上一台的條件還掛著。
-    /// </remarks>
-    [Fact]
-    public void ConnectionFiltersAreMultiSelectAndDatabasesFollowTheServers()
-    {
-        var model = Ready();
-
-        Assert.True(model.SetServerSelected("LibraryServer", true));
-        Assert.True(model.SetServerSelected("ArchiveServer", true));
-        // 勾第二次不是一次變更；呼叫端據此決定要不要重跑一輪。
-        Assert.False(model.SetServerSelected("ArchiveServer", true));
-        Assert.Equal(new[] { "LibraryServer", "ArchiveServer" }, model.Servers);
-        Assert.True(model.IsServerSelected("ArchiveServer"));
-        Assert.False(model.IsServerSelected("archiveserver"));
-
-        Assert.True(model.SetDatabaseSelected("Library", true));
-        Assert.True(model.SetDatabaseSelected("Archive", true));
-        Assert.Equal(new[] { "Library", "Archive" }, model.Databases);
-
-        // 動到伺服器就把資料庫清掉，取消勾也一樣。
-        Assert.True(model.SetServerSelected("ArchiveServer", false));
-        Assert.Equal(new[] { "LibraryServer" }, model.Servers);
-        Assert.Empty(model.Databases);
-
-        Assert.True(model.SetDatabaseSelected("Library", true));
-        Assert.True(model.ClearDatabases());
-        Assert.False(model.ClearDatabases());
-        Assert.Equal(new[] { "LibraryServer" }, model.Servers);
-
-        Assert.True(model.SetDatabaseSelected("Library", true));
-        Assert.True(model.ClearServers());
-        Assert.Empty(model.Servers);
-        Assert.Empty(model.Databases);
-        Assert.False(model.ClearServers());
-
-        Assert.Throws<ArgumentException>(() => model.SetServerSelected("", true));
-        Assert.Throws<ArgumentException>(() => model.SetDatabaseSelected("", true));
-    }
-
-    [Fact]
     public void OnlyTheLatestFacetRequestOfEachKindIsAccepted()
     {
         var model = Ready();
-        model.SetServerSelected("LibraryServer", true);
+        model.Scope.SetServerSelected("LibraryServer", true);
         var servers = model.BeginFacet(false);
         var oldDatabases = model.BeginFacet(true);
         var databases = model.BeginFacet(true);
@@ -333,5 +275,82 @@ public sealed class SqlMemoryBrowserModelTests
         Assert.Equal("複製未完成：已停用", SqlMemoryTimeText.Failure("複製",
             new SqlMemoryStorageException(SqlMemoryStorageErrorKind.Unavailable, "已停用")));
         Assert.Equal("開啟失敗：內容已不存在", SqlMemoryTimeText.Failure("開啟", new InvalidOperationException("內容已不存在")));
+    }
+
+    [Fact]
+    public void QuerySnapshotKeepsTheRoundsConditionsAndGoesStaleWhenTheyChange()
+    {
+        var model = Ready();
+        model.Kind = SqlHistoryFilter.Executions;
+        model.Search = "Loan";
+        model.MatchOptions = TextMatchOptions.WholeWord;
+        model.Scope.SetServerSelected("LibraryServer", true);
+        model.Invalidate(Now);
+        var query = model.Query();
+
+        // 背景逐頁讀的期間換了條件：快照照舊組請求，游標指紋才對得上；但模型說它已經不算數。
+        model.Search = "Branch";
+        model.MatchOptions = TextMatchOptions.MatchCasing;
+        model.Scope.SetServerSelected("Other", true);
+        var request = query.HistoryRequest(SqlMemoryCopy.PageSize, "cursor");
+        Assert.Equal((SqlMemoryCopy.PageSize, SqlHistoryFilter.Executions, "Loan", "cursor", TextMatchOptions.WholeWord),
+            (request.PageSize, request.Kind, request.Search, request.Cursor, request.MatchOptions));
+        Assert.Equal(new[] { "LibraryServer" }, request.Servers);
+        Assert.Equal(Now.AddDays(-7), request.Since);
+        Assert.True(model.IsCurrent(query));
+        model.Invalidate(Now);
+        Assert.False(model.IsCurrent(query));
+
+        var fresh = model.Query();
+        Assert.True(model.IsCurrent(fresh));
+        Assert.True(model.ObserveHost(true, 2));
+        Assert.False(model.IsCurrent(fresh));
+    }
+
+    [Fact]
+    public void FavoriteQueryAndHasMoreFollowTheCursor()
+    {
+        var model = Ready();
+        model.Tab = SqlMemoryBrowserTab.Favorites;
+        model.Search = "Reader";
+        model.Invalidate(Now);
+        var query = model.Query();
+        Assert.True(query.IsFavorites);
+        var request = query.FavoriteRequest(SqlMemoryCopy.PageSize, null);
+        Assert.Equal(("Reader", SqlMemoryCopy.PageSize), (request.Search, request.PageSize));
+
+        Assert.False(model.HasMore);
+        var load = model.BeginLoad()!;
+        Assert.True(model.Accept(load, new SqlMemoryPage<SqlFavoriteItem>(Array.Empty<SqlFavoriteItem>(), "next")));
+        model.End(load);
+        Assert.True(model.HasMore);
+        var last = model.BeginLoad()!;
+        Assert.True(model.Accept(last, new SqlMemoryPage<SqlFavoriteItem>(Array.Empty<SqlFavoriteItem>(), null)));
+        Assert.False(model.HasMore);
+    }
+
+    /// <remarks>
+    /// 預覽標命中用的比對器與清單的請求出自同一份快照：換了搜尋字或選項就是新的一個，
+    /// 沒有搜尋字時不標。空白與儲存層一樣算內容。
+    /// </remarks>
+    [Fact]
+    public void QueryMatcherFollowsTheSameSearchAndOptionsAsTheRequest()
+    {
+        var model = Ready();
+        Assert.Null(model.Query().Matcher);
+
+        model.Search = "CopyNo";
+        model.MatchOptions = TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord;
+        var matcher = model.Query().Matcher!;
+        Assert.Equal(("CopyNo", TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord), (matcher.Pattern, matcher.Options));
+
+        model.MatchOptions = TextMatchOptions.None;
+        Assert.Equal(TextMatchOptions.None, model.Query().Matcher!.Options);
+
+        model.Search = " ";
+        Assert.Equal(" ", model.Query().Matcher!.Pattern);
+
+        model.Search = "";
+        Assert.Null(model.Query().Matcher);
     }
 }

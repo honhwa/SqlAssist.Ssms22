@@ -27,13 +27,16 @@
 | 型別格式化 | `Metadata/Formatting/SqlTypeFormatter.cs` |
 | 中繼資料快取與失敗降級 | `Metadata/Caching/SqlMetadataCatalog.cs` |
 | 篩選名單的去空白、去重、排序與游標指紋（伺服器／資料庫三份請求共用） | `Core/SqlMemory/SqlConnectionNames.cs` |
+| 範圍列的伺服器與資料庫篩選（單選／多選、換伺服器清資料庫、套用查詢視窗的連線；Memory 與 Search 共用） | `Core/Connections/SqlConnectionScope.cs` |
 | 一個物件掛在誰身上（父物件、子物件的型別代碼、DEFAULT 的資料行） | `Metadata/Caching/SqlMetadataCatalog.cs` 的 `GetParentAsync` |
 | 物件總管節點的 URN（節點路徑、候選順序與跳脫） | `Metadata/Model/SqlObjectExplorerUrn.cs` |
 | 一輪搜尋的排名、去重、合併與預算世代作廢 | `Core/Search/SearchAggregator.cs`（被併掉的那幾筆在 `SearchHit.Merged`） |
 | 一份文字上「有幾處命中、現在停在第幾處、上下一處與環繞」 | `Core/Matching/MatchCursor.cs` |
-| 片段在整份文字裡的每一次出現（詞界、大小寫、重疊與上限；名稱與定義本文都走它） | `Core/Matching/MatchProjection.cs` 的 `FindAll` |
+| 命中的併段、標記上限與狀態列那一句（Search 與 Memory 預覽共用；各功能只決定拿什麼找） | `Core/Matching/MatchHighlights.cs` |
+| 字面比對（大小寫、全字、重疊與上限；字串與 UTF-16LE 位元組同一套規則；Search 與 Memory 都走它） | `Core/Matching/TextMatcher.cs`，選項是 `TextMatchOptions` |
+| 比對選項的驗證與記住的字串格式 | `Core/Matching/TextMatchState.cs` |
+| 片段上的高亮區段平移到整份文字 | `Core/Matching/MatchProjection.cs` 的 `Shift` |
 | 名稱與資料行的命中怎麼比（沒開修飾走模糊，開了大小寫或全字走字面） | `Core/Search/SearchIdentifierMatch.cs` |
-| 大小寫與全字換算成比對規則 | `Core/Search/SearchOptions.cs` 的 `ToProjectionMode`（名稱與本文共用一份） |
 | 搜尋索引的位元組預算、版本戳與失效 | `Metadata/Search/SqlCatalogSearchIndexCache.cs`（與 `SqlMetadataCatalog` 分開，不合併） |
 | Hover、結構面板與 F12 的物件／欄位定位 | `Metadata/Model/SqlObjectLookup.cs`（先問指令碼再問快照；語法可重用，資料每次重新比對） |
 | 結果格線的值轉成 T-SQL 字面值 | `Metadata/ResultGrid/SqlValueLiteral.cs` |
@@ -57,4 +60,5 @@
 | 通知可見度規則（三軸、詳細度門檻、獨立通道） | `Core/Notifications/NotificationVisibility.cs` |
 | 通知種類的 moniker、預設值與標題 | `Core/Notifications/NotificationKindToggle.cs` |
 | Snippet 展開／欄位／縮排 | `Core/Snippets/SqlSnippetExpansion.cs`、`SqlSnippetIndentation.cs` |
+| 表格文字：TSV（Excel 引號規則）與 CF_HTML 表格，同一趟寫完 | `Core/Tabular/SqlTabularText.cs`（欄位定義留在各功能） |
 | 區塊色彩 | [唯一實作](block-colors.md) |

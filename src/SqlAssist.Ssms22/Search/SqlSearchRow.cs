@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Text;
 using SqlAssist.Core.Matching;
 using SqlAssist.Core.Search;
+using SqlAssist.Core.Tabular;
 using SqlAssist.Ssms22.UI;
 
 namespace SqlAssist.Ssms22.Search;
@@ -45,16 +46,22 @@ internal sealed class SqlSearchBadge
 /// 清單就只畫得出目錄物件，而加一個 provider 的代價從「多一支啟動器」變成「改整份樣板」。
 /// 辨識酬載型別只允許發生在啟動那一步，見 <see cref="SqlSearchActivation"/>。
 /// </remarks>
-internal sealed class SqlSearchRow : INotifyPropertyChanged
+internal sealed class SqlSearchRow : INotifyPropertyChanged, ISqlCheckableRow
 {
     private bool _isNew;
+    private bool _isChecked;
+    private bool _opensUnconnected;
 
-    public SqlSearchRow(SearchHit hit, string categoryLabel)
+    /// <param name="activeEditorServer">
+    /// 作用中查詢視窗連著的伺服器；沒有視窗或沒有連線時為 null，見 <see cref="ObserveActiveEditor"/>。
+    /// </param>
+    public SqlSearchRow(SearchHit hit, string categoryLabel, string? activeEditorServer = null)
     {
         Hit = hit ?? throw new ArgumentNullException(nameof(hit));
         CategoryLabel = categoryLabel ?? throw new ArgumentNullException(nameof(categoryLabel));
         CanActivate = SqlSearchActivation.CanActivate(hit);
         CanSelectInExplorer = SqlSearchActivation.CanSelectInExplorer(hit);
+        _opensUnconnected = SqlSearchActivation.OpensUnconnected(hit, activeEditorServer);
 
         var matches = hit.Matches;
         var body = FirstOf(matches, SearchMatchTarget.Text);
@@ -89,6 +96,42 @@ internal sealed class SqlSearchRow : INotifyPropertyChanged
     /// <summary>這一列在物件總管上指得到節點嗎；與 <see cref="CanActivate"/> 是兩個問題。</summary>
     public bool CanSelectInExplorer { get; }
 
+    /// <summary>移至定義會開出<b>沒有連線</b>的查詢視窗：這一筆不在作用中查詢視窗那一台。</summary>
+    /// <remarks>
+    /// 與 <see cref="CanActivate"/> 不同，它不是這一筆自己的性質：答案跟著查詢視窗走，
+    /// 換一個分頁或換一台就變。所以不在建構時算死，而是由工具窗在範圍或查詢視窗換過的那一刻
+    /// 重算整份清單（<see cref="ObserveActiveEditor"/>）——每畫一次就問一次宿主的話，
+    /// 捲動整份清單就是幾百次跨執行緒的連線查詢。
+    ///
+    /// 仍然是<b>一個</b>值：右鍵選單與停駐時那一顆都讀它，說法才不會一邊說未連線、
+    /// 另一邊說沿用連線。做得到就不變灰——它只是換一種視窗，變灰是留給真的做不到的。
+    /// </remarks>
+    public bool OpensUnconnected => _opensUnconnected;
+
+    /// <summary>移至定義的名稱；未連線時名稱上就說，不等使用者去讀提示。</summary>
+    public string ActivateLabel => SqlSearchActivation.ActivateLabel(_opensUnconnected);
+
+    /// <summary>移至定義會做什麼；右鍵選單的提示框用，未連線時說得出來自哪一台。</summary>
+    public string ActivateDescription => SqlSearchActivation.Describe(Hit, _opensUnconnected);
+
+    /// <summary>停駐時那一顆的提示：平常只有名稱，未連線時連同來自哪一台一起說。</summary>
+    public string ActivateToolTip => _opensUnconnected ? ActivateDescription : ActivateLabel;
+
+    /// <summary>作用中查詢視窗或範圍換過之後重算「會不會開未連線的視窗」。</summary>
+    /// <param name="activeEditorServer">作用中查詢視窗連著的伺服器；沒有時為 null。</param>
+    public void ObserveActiveEditor(string? activeEditorServer)
+    {
+        var unconnected = SqlSearchActivation.OpensUnconnected(Hit, activeEditorServer);
+
+        if (unconnected == _opensUnconnected) return;
+
+        _opensUnconnected = unconnected;
+        Notify(nameof(OpensUnconnected));
+        Notify(nameof(ActivateLabel));
+        Notify(nameof(ActivateDescription));
+        Notify(nameof(ActivateToolTip));
+    }
+
     /// <summary>與聚合器去重時同一把鍵；重新整理後靠它選回原來那一列。</summary>
     /// <remarks>
     /// 直接就是 <see cref="SearchHit.DedupeKey"/>：聚合器已經把同一個東西的幾種命中併成一列，
@@ -100,6 +143,9 @@ internal sealed class SqlSearchRow : INotifyPropertyChanged
 
     /// <summary>限定名稱；沒有路徑概念的來源是空字串，樣板收起那一段。</summary>
     public string Path => Hit.Path?.ToString() ?? "";
+
+    /// <summary>複製用的名稱：有限定名稱就用它，沒有路徑概念的來源退回標題。</summary>
+    public string QualifiedName => Path.Length == 0 ? Title : Path;
 
     /// <summary>攤平成單行、去掉縮排的片段；高亮區段的索引已經跟著換算。</summary>
     public string Snippet { get; }
@@ -181,11 +227,53 @@ internal sealed class SqlSearchRow : INotifyPropertyChanged
         {
             if (_isNew == value) return;
             _isNew = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsNew)));
+            Notify(nameof(IsNew));
         }
     }
 
+    /// <summary>多選勾起來了；由清單的選取控制器依 <see cref="Key"/> 設定，容器重用時樣板只讀這一份。</summary>
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set
+        {
+            if (_isChecked == value) return;
+            _isChecked = value;
+            Notify(nameof(IsChecked));
+        }
+    }
+
+    /// <summary>
+    /// 批次複製的欄位：名稱、種類、伺服器、資料庫、命中部位與命中的資料行。
+    /// </summary>
+    /// <remarks>
+    /// 只讀列上已經算好的值，不讀定義本文，也不觸發預覽讀取。伺服器與資料庫取 provider 掛的
+    /// 脈絡膠囊（照圖示代號認，不向下轉型酬載），沒有的來源留空格——貼到試算表裡，
+    /// 空格比一句「無」更不會被當成一個名字。
+    /// </remarks>
+    public static IReadOnlyList<SqlTabularColumn<SqlSearchRow>> CopyColumns { get; } = Array.AsReadOnly(new[]
+    {
+        new SqlTabularColumn<SqlSearchRow>("名稱", row => row.QualifiedName),
+        new SqlTabularColumn<SqlSearchRow>("種類", row => row.CategoryLabel),
+        new SqlTabularColumn<SqlSearchRow>("伺服器", row => row.BadgeText(SearchBadge.ServerIcon)),
+        new SqlTabularColumn<SqlSearchRow>("資料庫", row => row.BadgeText(SearchBadge.DatabaseIcon)),
+        new SqlTabularColumn<SqlSearchRow>("命中部位", row => string.Join("、", row.TargetLabels)),
+        new SqlTabularColumn<SqlSearchRow>("命中資料行", row => row.Columns),
+    });
+
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    private string? BadgeText(string iconToken)
+    {
+        foreach (var badge in Hit.Badges)
+        {
+            if (badge.IconToken == iconToken) return badge.Text;
+        }
+
+        return null;
+    }
+
+    private void Notify(string property) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
 
     /// <summary>第一筆打在這個部位上的命中；沒有就是 null。</summary>
     private static SearchHit? FirstOf(IReadOnlyList<SearchHit> matches, SearchMatchTarget target)
@@ -291,7 +379,7 @@ internal sealed class SqlSearchRow : INotifyPropertyChanged
             return Array.Empty<MatchSpan>();
         }
 
-        var offset = MatchProjection.Find(hit.Title, hit.Snippet, 0, MatchProjectionMode.FromEnd);
+        var offset = new TextMatcher(hit.Snippet, TextMatchOptions.MatchCasing).LastIndexOf(hit.Title);
         return offset < 0
             ? Array.Empty<MatchSpan>()
             : MatchProjection.Shift(hit.SnippetSpans, offset, hit.Snippet.Length, hit.Title.Length);

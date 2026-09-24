@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using SqlAssist.Metadata.Caching;
-using SqlAssist.Metadata.Querying;
 using SqlAssist.Metadata.Search;
 using SqlAssist.Ssms22.Search;
 using Xunit;
@@ -103,30 +101,11 @@ public sealed class SqlSearchScopeDatabasesTests
         scope.SyncTo(Catalog("LibReporting", server: "LIBSQL02"));
         Assert.False(scope.IsLoaded);
         Assert.Empty(scope.Items);
-        Assert.Equal("", scope.CurrentName);
 
         // 沒有連線不算換一台：切到沒有連線的查詢視窗時清掉清單，回來還要再付一條查詢。
         await scope.EnsureAsync(Catalog("LibReporting", server: "LIBSQL02"));
         scope.SyncTo(null);
         Assert.True(scope.IsLoaded);
-    }
-
-    /// <remarks>
-    /// 名稱由開啟後的連線說了算：物件總管那條連線的連線物件上沒有初始目錄，
-    /// 而範圍摘要一定要說得出目標。
-    /// </remarks>
-    [Fact]
-    public async Task 清單回來時記下沒有指名時搜的是哪一個()
-    {
-        using var scope = new SqlSearchScopeDatabases((_, _) => new[]
-        {
-            new SqlCatalogSearchDatabase("Library", isSystem: false),
-            new SqlCatalogSearchDatabase("master", isSystem: true, isCurrent: true)
-        });
-
-        Assert.Equal("", scope.CurrentName);
-        await scope.EnsureAsync(Catalog("Library"));
-        Assert.Equal("master", scope.CurrentName);
     }
 
     [Fact]
@@ -194,7 +173,7 @@ public sealed class SqlSearchScopeDatabasesTests
     }
 
     private static SqlMetadataCatalog Catalog(string database, string server = "LIBSQL01") =>
-        new(new StubSource(server, database), TimeSpan.FromMinutes(5));
+        SqlSearchTestCatalogs.Create(database, server);
 
     private static IReadOnlyList<SqlCatalogSearchDatabase> List(params string[] names)
     {
@@ -208,26 +187,5 @@ public sealed class SqlSearchScopeDatabasesTests
         var names = new string[databases.Count];
         for (var index = 0; index < databases.Count; index++) names[index] = databases[index].Name;
         return names;
-    }
-
-    /// <summary>只要 <see cref="ISqlConnectionSource.CacheKey"/> 分得開；清單走注入的那一條。</summary>
-    private sealed class StubSource : ISqlConnectionSource
-    {
-        private readonly string _server;
-
-        internal StubSource(string server, string database)
-        {
-            _server = server;
-            DatabaseName = database;
-        }
-
-        public string CacheKey => _server + "/" + DatabaseName;
-
-        public string ServerCacheKey => _server;
-
-        public string DatabaseName { get; }
-
-        public IDbConnection OpenConnection() =>
-            throw new InvalidOperationException("這一份測試不開連線。");
     }
 }

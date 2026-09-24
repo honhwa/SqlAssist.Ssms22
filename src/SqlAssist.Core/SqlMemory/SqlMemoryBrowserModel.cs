@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using SqlAssist.Core.Connections;
+using SqlAssist.Core.Matching;
 
 namespace SqlAssist.Core.SqlMemory;
 
@@ -38,6 +40,58 @@ public sealed class SqlMemoryPageLoad
     public long HostGeneration { get; }
     public SqlHistoryRequest? History { get; }
     public SqlFavoriteRequest? Favorites { get; }
+}
+
+/// <summary>
+/// 某一輪清單的條件快照：可以換頁大小與游標，條件本身固定。
+/// </summary>
+/// <remarks>
+/// 「全部符合」的複製在背景逐頁讀，期間使用者可能已經改了篩選；請求若每頁都從模型現讀，
+/// 後面幾頁的條件就與游標的指紋對不上。快照也帶著世代，讀完之後拿它問模型還算不算數。
+/// </remarks>
+public sealed class SqlMemoryQuery
+{
+    private readonly SqlHistoryFilter _kind;
+    private readonly string _search;
+    private readonly TextMatchOptions _matchOptions;
+    private readonly string[] _servers;
+    private readonly string[] _databases;
+    private readonly DateTimeOffset? _since;
+
+    internal SqlMemoryQuery(long generation, long hostGeneration, bool favorites, SqlHistoryFilter kind, string search,
+        TextMatchOptions matchOptions, IEnumerable<string> servers, IEnumerable<string> databases, DateTimeOffset? since)
+    {
+        Generation = generation;
+        HostGeneration = hostGeneration;
+        IsFavorites = favorites;
+        _kind = kind;
+        _search = search;
+        _matchOptions = matchOptions;
+        _servers = new List<string>(servers).ToArray();
+        _databases = new List<string>(databases).ToArray();
+        _since = since;
+        // 與儲存層同一條規則：空字串停用搜尋，空白仍是內容（見 SqliteSearchScan.Create）。
+        Matcher = search.Length == 0 ? null : new TextMatcher(search, matchOptions);
+    }
+
+    public long Generation { get; }
+    public long HostGeneration { get; }
+    public bool IsFavorites { get; }
+
+    /// <summary>
+    /// 這一輪清單的比對器；沒有搜尋字時 null。
+    /// </summary>
+    /// <remarks>
+    /// 預覽拿它標命中位置：清單與預覽從同一份快照取搜尋字與選項，換了其中一個就是新的一輪，
+    /// 不會出現清單照舊條件、預覽照框裡剛打的字標的那種錯位。
+    /// </remarks>
+    public TextMatcher? Matcher { get; }
+
+    public SqlHistoryRequest HistoryRequest(int pageSize, string? cursor) =>
+        new(pageSize, _kind, _search, _servers, _databases, _since, cursor: cursor, matchOptions: _matchOptions);
+
+    public SqlFavoriteRequest FavoriteRequest(int pageSize, string? cursor) =>
+        new(pageSize, _servers, _databases, _search, cursor, _matchOptions);
 }
 
 public enum SqlMemoryFooterKind
@@ -132,26 +186,24 @@ public sealed class SqlMemoryBrowserModel
 
     public SqlMemoryBrowserTab Tab { get; set; }
     public string Search { get; set; } = "";
+
+    /// <summary>搜尋框裡開著的比對修飾；與 SQL Search 同一份選項與規則。</summary>
+    public TextMatchOptions MatchOptions { get; set; }
+
     public SqlHistoryFilter Kind { get; set; } = SqlHistoryFilter.All;
 
-    private readonly List<string> _servers = new();
-    private readonly List<string> _databases = new();
-
     /// <summary>
-    /// 指名的伺服器；空名單表示不限。
+    /// 伺服器與資料庫兩個篩選；空名單表示全部，資料庫不必先指定伺服器。
     /// </summary>
     /// <remarks>
-    /// 多選而不是單選：History 與 Favorites 的列早就存在，篩選只是縮小已存的那一份，
+    /// 伺服器多選而不是單選：History 與 Favorites 的列早就存在，篩選只是縮小已存的那一份，
     /// 而使用者要比的往往就是「這兩台上同一段 SQL」。單選的那一版逼他看完一台再換一台，
     /// 而中間那一次換掉會把清單、捲動位置與預覽一起重來。
     ///
     /// 名稱一律 ordinal 比對：名單本來就是儲存層自己回的那幾個字，
     /// 放寬成不分大小寫會讓勾起來的條件配不到任何一列，而畫面上只看得到「沒有符合條件」。
     /// </remarks>
-    public IReadOnlyList<string> Servers => _servers;
-
-    /// <summary>指名的資料庫；空名單表示不限，不必先指定伺服器。</summary>
-    public IReadOnlyList<string> Databases => _databases;
+    public SqlConnectionScope Scope { get; } = new(multipleServers: true, StringComparer.Ordinal);
 
     /// <summary>History 預設七天：足夠找回這週的工作，又不讓第一頁掃過整個資料庫。</summary>
     public SqlHistoryPeriod Period { get; set; } = SqlHistoryPeriod.SevenDays;
@@ -211,72 +263,26 @@ public sealed class SqlMemoryBrowserModel
         if (!IsAvailable || _page.Loading) return null;
         var generation = _page.Generation;
         if (!_page.Begin(generation)) return null;
+        var query = Query();
         return IsFavorites
-            ? new SqlMemoryPageLoad(generation, HostGeneration, null,
-                new SqlFavoriteRequest(PageSize, _servers, _databases, Search, _page.Cursor))
-            : new SqlMemoryPageLoad(generation, HostGeneration,
-                new SqlHistoryRequest(PageSize, Kind, Search, _servers, _databases, Since, cursor: _page.Cursor), null);
+            ? new SqlMemoryPageLoad(generation, HostGeneration, null, query.FavoriteRequest(PageSize, _page.Cursor))
+            : new SqlMemoryPageLoad(generation, HostGeneration, query.HistoryRequest(PageSize, _page.Cursor), null);
     }
 
-    /// <summary>這台伺服器勾起來了沒。</summary>
-    public bool IsServerSelected(string server) => Contains(_servers, server);
+    /// <summary>目前這一輪清單的條件；清單的每一頁與「全部符合」的複製都從它組請求，兩邊不會各組一份。</summary>
+    public SqlMemoryQuery Query() =>
+        new(_page.Generation, HostGeneration, IsFavorites, Kind, Search, MatchOptions, Scope.Servers, Scope.Databases, Since);
 
-    /// <summary>這個資料庫勾起來了沒。</summary>
-    public bool IsDatabaseSelected(string database) => Contains(_databases, database);
-
-    /// <summary>
-    /// 勾或取消勾一台伺服器。
-    /// </summary>
-    /// <returns>true 表示條件真的變了。</returns>
-    /// <remarks>
-    /// 換過伺服器就把資料庫清掉：資料庫名稱是每台自己的，留著上一輪的名單會篩成一列都沒有，
-    /// 而畫面上只看得到「沒有符合條件」，看不出是上一台的條件還掛著。
-    /// </remarks>
-    public bool SetServerSelected(string server, bool selected)
+    /// <summary>快照是否仍屬於目前的篩選與宿主世代；背景讀完之後才寫剪貼簿，換過條件就不算數。</summary>
+    public bool IsCurrent(SqlMemoryQuery query)
     {
-        if (!Toggle(_servers, server, selected, nameof(server))) return false;
-        _databases.Clear();
-        return true;
+        if (query == null) throw new ArgumentNullException(nameof(query));
+        return query.Generation == _page.Generation && query.HostGeneration == HostGeneration && IsAvailable;
     }
 
-    public bool SetDatabaseSelected(string database, bool selected) =>
-        Toggle(_databases, database, selected, nameof(database));
+    /// <summary>還有沒載入的下一頁（含搜尋預算用盡、等使用者續搜的那一種）。</summary>
+    public bool HasMore => IsAvailable && _page.Cursor != null;
 
-    /// <summary>回到「全部伺服器」；資料庫跟著清掉，理由同 <see cref="SetServerSelected"/>。</summary>
-    public bool ClearServers()
-    {
-        if (_servers.Count == 0) return false;
-        _servers.Clear();
-        _databases.Clear();
-        return true;
-    }
-
-    public bool ClearDatabases()
-    {
-        if (_databases.Count == 0) return false;
-        _databases.Clear();
-        return true;
-    }
-
-    /// <summary><see cref="List{T}"/> 的預設比較子對字串就是 ordinal，與儲存層的 <c>=</c> 同語意。</summary>
-    private static bool Contains(List<string> names, string name) =>
-        names.IndexOf(name ?? throw new ArgumentNullException(nameof(name))) >= 0;
-
-    private static bool Toggle(List<string> names, string name, bool selected, string parameter)
-    {
-        if (string.IsNullOrEmpty(name)) throw new ArgumentException("名稱不可為空。", parameter);
-        var index = names.IndexOf(name);
-        if (selected)
-        {
-            if (index >= 0) return false;
-            names.Add(name);
-            return true;
-        }
-
-        if (index < 0) return false;
-        names.RemoveAt(index);
-        return true;
-    }
 
     /// <summary>回應是否仍屬於目前的篩選與宿主世代；是的話推進游標與搜尋進度。</summary>
     public bool Accept<T>(SqlMemoryPageLoad load, SqlMemoryPage<T> page)
@@ -345,8 +351,8 @@ public sealed class SqlMemoryBrowserModel
     {
         if (favorite == null) throw new ArgumentNullException(nameof(favorite));
         return IsFavorites &&
-            (_servers.Count == 0 || (favorite.Server is { } server && Contains(_servers, server))) &&
-            (_databases.Count == 0 || (favorite.Database is { } database && Contains(_databases, database)));
+            (Scope.Servers.Count == 0 || (favorite.Server is { } server && Scope.IsServerSelected(server))) &&
+            (Scope.Databases.Count == 0 || (favorite.Database is { } database && Scope.IsDatabaseSelected(database)));
     }
 
     /// <summary>採用一頁之後要選取哪一列。</summary>
@@ -366,26 +372,11 @@ public sealed class SqlMemoryBrowserModel
         return !hasSelection && loadedIds.Count > 0 ? 0 : null;
     }
 
-    /// <summary>套用目前查詢視窗的連線：一次更新兩個條件。</summary>
-    /// <returns>無法套用時的訊息；原篩選不變。</returns>
-    /// <remarks>
-    /// 取代而不是加進去：這顆按鈕說的是「只看我現在連的那一個」，
-    /// 加上去的那一版按幾次之後名單愈來愈長，而使用者以為自己每次都縮小了範圍。
-    /// </remarks>
-    public string? UseConnection(SqlConnectionLabel? connection)
-    {
-        if (connection is null || string.IsNullOrEmpty(connection.Server) || string.IsNullOrEmpty(connection.Database))
-            return "目前沒有已連線的 SQL 查詢視窗；請先選取查詢視窗。原篩選未變更。";
-        _servers.Clear(); _servers.Add(connection.Server!);
-        _databases.Clear(); _databases.Add(connection.Database!);
-        return null;
-    }
-
     /// <summary>開始一次連線名稱載入；同一種名稱只有最後一次請求的回應會被採用。</summary>
     public long BeginFacet(bool databases) => databases ? ++_databaseFacetRequest : ++_serverFacetRequest;
 
     public SqlConnectionFacetRequest FacetRequest(bool databases, SqlConnectionFacetSort sort, int offset) =>
-        new(IsFavorites, databases, databases ? _servers : null, sort, offset);
+        new(IsFavorites, databases, databases ? Scope.Servers : null, sort, offset);
 
     public bool IsCurrentFacet(bool databases, long request, long hostGeneration) =>
         IsAvailable && hostGeneration == HostGeneration &&
