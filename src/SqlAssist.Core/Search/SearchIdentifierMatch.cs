@@ -41,11 +41,13 @@ public static class SearchIdentifierMatch
         if (candidate is null) throw new ArgumentNullException(nameof(candidate));
 
         // 沒有輸入的那一輪是「列出全部」，不是「每一個都字面命中空字串」。
+        if (query.Options == TextMatchOptions.None || query.IsEmpty)
         {
             return FuzzyMatcher.MatchNormalized(query.NormalizedPattern, candidate);
         }
 
-
+        var offsets = query.Matcher.FindAll(candidate);
+        
         if (offsets.Count == 0) return FuzzyMatchResult.NoMatch;
 
         return FuzzyMatchResult.Matched(ScoreOf(query, candidate), SpansFor(offsets, query.Text.Length));

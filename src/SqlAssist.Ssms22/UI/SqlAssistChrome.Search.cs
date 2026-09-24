@@ -332,7 +332,65 @@ internal static partial class SqlAssistChrome
         style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.DimForeground));
         return style;
     }
+    /// <summary>
+    /// 已選條件列上的一顆 chip：中性膠囊加一個清除鈕，本體可選地是一顆按鈕。
+    /// </summary>
+    /// <remarks>
+    /// 用中性色而不是強調色：chip 說的是「現在有這個條件」，不是警示，也不是一種分類。
+    /// 清除鈕是幽靈按鈕，停駐才顯色——它與 chip 本身是同一顆可按的東西，畫兩個邊框只會多一圈線。
+    ///
+    /// 本體要能按時做成真的 <see cref="Button"/>，不是在 <see cref="Border"/> 上掛滑鼠事件：
+    /// 後者沒有停駐回饋、進不了 Tab 順序，也唸不出自動化名稱，而這一列在條件很多時正是
+    /// 使用者唯一的入口。
+    /// </remarks>
+    /// <param name="openHint">本體按下去會做什麼（接在 chip 的字後面唸）。</param>
+    public static Border CreateFilterChip(string text, string openHint, out Button remove, out Button open)
+    {
+        var content = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
 
+        remove = CreateButton("", DefaultMetrics);
+        remove.Content = CreateIcon(SqlIcon.Clear);
+        remove.Template = CreateGhostButtonTemplate();
+        remove.Padding = new Thickness(1);
+        remove.Margin = new Thickness(4, 0, 0, 0);
+        remove.MinWidth = 18;
+        remove.MinHeight = 18;
+        remove.ToolTip = "清除條件：" + text;
+        AutomationProperties.SetName(remove, "清除條件：" + text);
+        DockPanel.SetDock(remove, Dock.Right);
+        content.Children.Add(remove);
+
+        var label = new TextBlock
+        {
+            Text = text,
+            FontFamily = InterfaceFont,
+            FontSize = DefaultMetrics.Caption,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            ToolTip = text
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
+
+        open = CreateButton("", DefaultMetrics);
+        open.Content = label;
+        open.Template = CreateGhostButtonTemplate();
+        open.Padding = new Thickness(2, 0, 2, 0);
+        open.MinHeight = 18;
+        open.ToolTip = text + openHint;
+        AutomationProperties.SetName(open, text + openHint);
+        content.Children.Add(open);
+
+        return new Border
+        {
+            Child = content,
+            CornerRadius = new CornerRadius(9),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(6, 1, 4, 1),
+            Margin = new Thickness(0, 0, 4, 0),
+            MaxWidth = 220,
+            VerticalAlignment = VerticalAlignment.Center
+        }.WithTheme(Border.BackgroundProperty, ThemeBrush.BadgeBackground)
+            .WithTheme(Border.BorderBrushProperty, ThemeBrush.Hairline);
+    }
     /// <summary>
     /// 搜尋框裡的選項開關（大小寫、全字）。
     /// </summary>
