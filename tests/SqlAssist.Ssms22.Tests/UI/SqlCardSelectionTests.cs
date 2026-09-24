@@ -11,7 +11,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using SqlAssist.Core.Connections;
 using SqlAssist.Core.Search;
 using SqlAssist.Core.SqlMemory;
 using SqlAssist.Core.Tabular;

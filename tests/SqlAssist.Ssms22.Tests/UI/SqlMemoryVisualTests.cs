@@ -7,7 +7,6 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
-using SqlAssist.Core.Connections;
 using SqlAssist.Ssms22.Preview;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;

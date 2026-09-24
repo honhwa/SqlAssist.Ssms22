@@ -4,7 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using Microsoft.Data.Sqlite;
-using SqlAssist.Core.Connections;
 using SqlAssist.Core.SqlMemory;
 using static SqlAssist.SqlMemory.Sqlite.SqliteContentRows;
 using static SqlAssist.SqlMemory.Sqlite.SqliteDatabase;

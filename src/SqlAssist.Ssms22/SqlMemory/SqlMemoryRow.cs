@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
-using SqlAssist.Core.Connections;
 using SqlAssist.Core.SqlMemory;
 using SqlAssist.Core.Tabular;
 using SqlAssist.Ssms22.UI;
