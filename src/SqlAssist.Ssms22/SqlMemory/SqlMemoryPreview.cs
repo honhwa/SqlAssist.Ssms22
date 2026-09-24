@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using SqlAssist.Core.Matching;
 using SqlAssist.Core.SqlMemory;
 using SqlAssist.Ssms22.UI;
 
@@ -21,10 +22,12 @@ internal sealed class SqlMemoryPreview : UserControl, IDisposable
     private readonly TextBlock _status = SqlAssistChrome.CreateStatusText(SqlAssistChrome.DefaultMetrics);
     private readonly WrapPanel _actions = new();
     private readonly WrapPanel _tools = new();
+    private readonly SqlMatchNavigation _matches;
     private readonly List<(Button Button, SqlMemoryRowCommand Command)> _rowActions = new();
     private readonly SqlSelectionLoader<SqlMemoryRow> _loader;
     private bool _disposed;
     private bool _loaded;
+    private TextMatcher? _matcher;
     public FrameworkElement Summary => _detail;
 
     /// <param name="reportCommand">列操作的結果寫到工具窗的狀態列：刪除後選取會移到下一筆，寫在 Preview 會立刻被清掉。</param>
@@ -33,6 +36,9 @@ internal sealed class SqlMemoryPreview : UserControl, IDisposable
         _commands = commands;
         _reportCommand = reportCommand;
         // 左側只放全文專用工具；右側列操作與清單卡片、快捷選單同一份清單、同一個順序與實作。
+        // 命中導覽與界線排在最前面，與 SQL Search 預覽同一份（SqlMatchNavigation）。
+        _matches = new SqlMatchNavigation(_viewer);
+        foreach (var item in _matches.ToolbarItems) _tools.Children.Add(item);
         _tools.Children.Add(Button(SqlIcon.Copy, "複製全文", () => _viewer.CopyAll()));
         // 換行是一個維持著的狀態，不是一次動作，所以與 SQL Search 預覽同一顆開關：
         // 按完之後工具列上看得出現在是開著的，理由見 SqlAssistChrome.CreateIconToggle。
@@ -62,15 +68,20 @@ internal sealed class SqlMemoryPreview : UserControl, IDisposable
         _disposed = true; _surface.State = SqlSurfaceState.None; _loader.Dispose(); _viewer.Dispose();
     }
 
-    public void Select(SqlMemoryRow? row, bool previewEnabled = true)
+    /// <param name="matcher">
+    /// 清單這一輪的比對器（<see cref="SqlMemoryQuery.Matcher"/>）；沒有搜尋字時 null，就不標也不顯示導覽。
+    /// 換搜尋字或比對選項會作廢清單並重選一次，所以這裡不必自己觀察搜尋框。
+    /// </param>
+    public void Select(SqlMemoryRow? row, bool previewEnabled = true, TextMatcher? matcher = null)
     {
         if (_disposed) return;
         _loader.Select(row); _loaded = false;
+        _matcher = row is null ? null : matcher;
         _actions.IsEnabled = _tools.IsEnabled = _viewer.IsEnabled = false;
         _detail.Content = row;
         _detail.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
         _detail.ToolTip = row is null ? "請在清單選取 SQL。" : row.Name + " · " + row.Detail;
-        _viewer.SetSql("");
+        _matches.Clear();
         foreach (var (button, command) in _rowActions)
         {
             button.Visibility = row is not null && command.AppliesTo(row.IsFavorite) ? Visibility.Visible : Visibility.Collapsed;
@@ -101,7 +112,7 @@ internal sealed class SqlMemoryPreview : UserControl, IDisposable
                 _surface.State = SqlSurfaceState.Unreadable("內容已被清理或不存在；請重新整理清單。");
                 return;
             }
-            _viewer.SetSql(content.SqlText);
+            Show(content.SqlText, row.IsFavorite);
             _loaded = true; _actions.IsEnabled = _tools.IsEnabled = _viewer.IsEnabled = true;
             // 空白內容也是一種「沒有東西可讀」，跟其他三種走同一塊表面；寫在狀態列的話，
             // 使用者看到的是一塊空的唯讀檢視配一行小字。
@@ -126,6 +137,21 @@ internal sealed class SqlMemoryPreview : UserControl, IDisposable
             // 舊請求的結束不能關掉新選取的載入效果，也不能蓋掉這一輪剛寫上去的讀不到。
             if (_loader.IsCurrent(row, token) && _surface.IsLoading) _surface.State = SqlSurfaceState.None;
         }
+    }
+
+    /// <summary>收藏只靠名稱或說明命中時的那一句；少標了的那一句在 <see cref="MatchHighlightSet.Notice"/>，兩個預覽共用。</summary>
+    /// <remarks>
+    /// 收藏比對的是名稱、說明與 SQL 的聯集，這一筆的 SQL 上一處都沒有；不說的話，一份沒有任何標記的
+    /// 全文看起來像是高亮壞了。History 只比對 SQL，不會用到這一句。
+    /// </remarks>
+    private const string OutsideSql = "SQL 內文沒有命中；這一筆是名稱或說明符合。";
+
+    /// <summary>把讀回來的全文放上檢視，用清單那一輪的比對器標出每一處。</summary>
+    private void Show(string sql, bool favorite)
+    {
+        var highlights = MatchHighlights.Locate(_matcher, sql);
+        _matches.Show(sql, highlights);
+        Report(highlights.Notice(favorite && _matcher is not null ? OutsideSql : null));
     }
 
     /// <summary>Preview 已讀好全文，編輯與開啟直接沿用，不再讀一次；取消跟著目前選取的讀取生命週期。</summary>

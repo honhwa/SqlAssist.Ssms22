@@ -9,7 +9,7 @@ namespace SqlAssist.Core.Statements;
 /// </summary>
 /// <remarks>
 /// 續行對齊到第一個參數所在的欄，而不是固定縮排幾格。代價是名稱長的模組會把整段推向
-/// 右邊——<c>EXEC dbo.usp_Announcement_ReadByDepartment </c> 一開始就吃掉四十幾欄，
+/// 右邊——<c>EXEC dbo.usp_LoanDetail_ReadOverdueByBranch </c> 一開始就吃掉四十幾欄，
 /// 再加上參數與註解很容易越過一般的行寬。換來的是每一列的 <c>@</c> 對齊在同一欄，
 /// 掃過去就知道有幾個參數、少填了哪一個。
 /// </remarks>

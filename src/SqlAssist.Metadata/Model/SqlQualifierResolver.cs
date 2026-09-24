@@ -8,7 +8,7 @@ namespace SqlAssist.Metadata.Model;
 /// 認出限定字最左邊那一段是結構描述、資料庫還是連結伺服器。
 /// </summary>
 /// <remarks>
-/// 只看文字時 <c>dbo.</c>、<c>LibArchive.</c> 與 <c>SQL209.</c> 是同一個形狀，
+/// 只看文字時 <c>dbo.</c>、<c>LibArchive.</c> 與 <c>LIBSQL02.</c> 是同一個形狀，
 /// 右對齊只能一律先當成結構描述。猜錯沒有徵兆：清單一筆都比不中，
 /// 而使用者看到的只是「沒有建議」，分不出是打錯字還是這個功能不支援。
 ///

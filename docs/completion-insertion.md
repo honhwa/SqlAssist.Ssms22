@@ -20,7 +20,7 @@ Ssms22 那一側只在建立項目與提交時各呼叫一次。
 重算過，而症狀只在跨資料庫時看得出來：「`LibArchive.` 其實是資料庫而不是結構
 描述」是中繼資料認出來的，[只認一次](qualified-names.md#右對齊猜錯時整條往左挪)；
 提交那一端的上下文是從文字重新分析的，認不出這件事。於是同一筆建議交還給平台
-時寫出 `LibArchive.dbo.SetPassWd`，自己接手時卻寫出 `LibArchive.SetPassWd`
+時寫出 `LibArchive.dbo.fn_LoanCount`，自己接手時卻寫出 `LibArchive.fn_LoanCount`
 ——後者會被讀成「結構描述 `LibArchive`」，執行起來是「找不到資料行」。
 
 ### 有一半的建議根本不套這些規則

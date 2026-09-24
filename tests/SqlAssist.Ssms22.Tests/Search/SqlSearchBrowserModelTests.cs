@@ -504,8 +504,7 @@ public sealed class SqlSearchBrowserModelTests
         {
             HasConnection = true,
             Text = "PUBL_CODE",
-            MatchCasing = true,
-            WholeWord = true,
+            MatchOptions = TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord,
             Targets = SearchTargets.Name | SearchTargets.Column,
         };
         model.UseCategories(Categories());
@@ -514,7 +513,7 @@ public sealed class SqlSearchBrowserModelTests
 
         var round = model.Begin(indexed: true)!;
 
-        Assert.Equal(SearchOptions.MatchCasing | SearchOptions.WholeWord, round.Query.Options);
+        Assert.Equal(TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord, round.Query.Options);
         Assert.Equal(new[] { "LibArchive" }, round.Query.Scope.Databases.ToArray());
         Assert.Empty(round.Query.Scope.Servers);
         Assert.Equal(new[] { "catalog.table" }, round.Query.Categories.ToArray());
@@ -536,13 +535,20 @@ public sealed class SqlSearchBrowserModelTests
         Assert.Equal("未連線", model.DatabaseSummary());
 
         model.HasConnection = true;
-        Assert.Equal(SqlSearchBrowserModel.ConnectionDefaultLabel, model.DatabaseSummary());
+        // 跟著查詢視窗時，沒指名資料庫搜的就是查詢視窗連著的那一個；與伺服器那一顆同一句話。
+        Assert.Equal("查詢視窗", model.DatabaseSummary());
+        model.CurrentDatabase = "LibArchive";
+        Assert.Equal("查詢視窗（LibArchive）", model.DatabaseSummary());
 
-        // 「連線預設」單獨出現時說不出範圍有多大：物件總管那條連線常常只是 master，
+        // 指名了物件總管上一台才說「連線預設」，而且一定帶名字：那條連線常常只是 master，
         // 而使用者以為自己在搜整台。面板第一列與按鈕摘要共用這一份字。
+        model.Server = "LIBSQL01";
+        model.CurrentDatabase = null;
+        Assert.Equal(SqlSearchBrowserModel.ConnectionDefaultLabel, model.DatabaseSummary());
         model.CurrentDatabase = "master";
         Assert.Equal("連線預設（master）", model.DatabaseSummary());
         Assert.Equal("連線預設（master）", model.ConnectionDefaultSummary());
+        model.Server = null;
 
         model.SetCategorySelected("catalog.table", selected: true);
         Assert.Equal("Table", model.CategorySummary());
@@ -558,8 +564,7 @@ public sealed class SqlSearchBrowserModelTests
         model.SetDatabaseSelected("LibReporting", selected: true);
         Assert.Equal("2 個", model.DatabaseSummary());
 
-        // 伺服器單選，所以摘要永遠是一個名字；沒指名時說的是「跟著查詢視窗」而不是
-        // 資料庫那一顆的「目前連線」——兩句話講的是不同的東西。括號裡是跟著的那一台，
+        // 伺服器單選，所以摘要永遠是一個名字；沒指名時說的是「跟著查詢視窗」。括號裡是跟著的那一台，
         // 沒有連線時直接說「未連線」，否則畫面上分不出是範圍選錯了還是真的沒連。
         Assert.Equal("查詢視窗（未連線）", model.ServerSummary());
         model.ActiveEditorServer = "LIBSQL02";
@@ -567,24 +572,6 @@ public sealed class SqlSearchBrowserModelTests
 
         model.Server = "LIBSQL01";
         Assert.Equal("LIBSQL01", model.ServerSummary());
-    }
-
-    [Fact]
-    public void 指名伺服器會多一顆排在最前面的chip且清掉它就回到查詢視窗()
-    {
-        var model = new SqlSearchBrowserModel { Server = "LIBSQL01" };
-        model.UseCategories(Categories());
-        model.SetCategorySelected("catalog.table", selected: true);
-        model.SetDatabaseSelected("LibArchive", selected: true);
-
-        // 順序由外而內：伺服器換的是整份目錄，資料庫縮的是那一台裡的範圍，種類縮的是結果的形狀。
-        Assert.Equal(
-            new[] { "伺服器: LIBSQL01", "資料庫: LibArchive", "種類: Table" },
-            model.Chips().Select(chip => chip.Label).ToArray());
-
-        Assert.True(model.Remove(model.Chips().Single(chip => chip.Label == "伺服器: LIBSQL01")));
-        Assert.Null(model.Server);
-        Assert.Equal("查詢視窗（未連線）", model.ServerSummary());
     }
 
     [Fact]
@@ -600,36 +587,31 @@ public sealed class SqlSearchBrowserModelTests
         Assert.Empty(round!.Query.Scope.Servers);
     }
 
+    /// <summary>
+    /// 資料庫名稱是每台伺服器自己的：跟著查詢視窗換台時帶著上一台的勾選，
+    /// 下一輪每個資料庫都回「不存在」。
+    /// </summary>
     [Fact]
-    public void 預設狀態沒有任何chip而一個維度只有一顆且清掉它就清掉整個維度()
+    public void 範圍換到另一台時清掉勾選的資料庫()
     {
-        var model = new SqlSearchBrowserModel { MatchCasing = true, WholeWord = true, HasConnection = true };
-        model.UseCategories(Categories());
-        model.SetCategorySelected("catalog.view", selected: true);
-        model.SetCategorySelected("catalog.table", selected: true);
+        var model = new SqlSearchBrowserModel();
+        Assert.False(model.ObserveServer("LIBSQL01"));
         model.SetDatabaseSelected("LibArchive", selected: true);
+
+        // 同一台（寫法只差大小寫）與斷線都不算換台：斷線後連回同一台，勾選還在。
+        Assert.False(model.ObserveServer("libsql01"));
+        Assert.False(model.ObserveServer(null));
+        Assert.False(model.ObserveServer("LIBSQL01"));
+        Assert.Equal(new[] { "LibArchive" }, model.Databases);
+
+        Assert.True(model.ObserveServer("LIBSQL02"));
+        Assert.Empty(model.Databases);
+
+        // 斷線不會讓下一次連上的那一台被當成第一台。
         model.SetDatabaseSelected("LibReporting", selected: true);
-
-        // 一維度一顆：勾了八個資料庫就畫八顆的那一版會長到三列，而那三列換算成少看六筆結果。
-        // 數量與按鈕摘要是同一份字，兩處不會說得不一樣。
-        // 大小寫與全字開著也不上這一列：它們是搜尋框裡常駐可見的開關，不是清得掉的條件。
-        Assert.Equal(
-            new[] { "資料庫: 2 個", "種類: 2 種" },
-            model.Chips().Select(chip => chip.Label).ToArray());
-
-        // 十字清掉的是整個維度；「是哪幾個」要調整的話，chip 本體開的是那個維度自己的面板。
-        Assert.True(model.Remove(model.Chips().Single(chip => chip.Label == "種類: 2 種")));
-        Assert.Empty(model.CategoryIds);
-        Assert.True(model.MatchCasing);
-        Assert.True(model.WholeWord);
-
-        // 一個的時候寫名字，數量沒有意義。
-        model.SetDatabaseSelected("LibReporting", selected: false);
-        Assert.Equal("資料庫: LibArchive", model.Chips().Single().Label);
-
-        Assert.True(model.Remove(model.Chips().Single()));
-        // 沒篩選就不佔那一列：空的 chip 列整列收起。
-        Assert.Empty(model.Chips());
+        Assert.False(model.ObserveServer(null));
+        Assert.True(model.ObserveServer("LIBSQL01"));
+        Assert.Empty(model.Databases);
     }
 
     [Fact]
@@ -729,14 +711,13 @@ public sealed class SqlSearchBrowserModelTests
         var saved = new SqlSearchBrowserModel
         {
             Targets = SearchTargets.Name | SearchTargets.Column,
-            MatchCasing = true,
+            MatchOptions = TextMatchOptions.MatchCasing,
         };
 
         var restored = new SqlSearchBrowserModel();
         Assert.True(restored.RestoreMatchState(saved.MatchStateToken));
         Assert.Equal(SearchTargets.Name | SearchTargets.Column, restored.Targets);
-        Assert.True(restored.MatchCasing);
-        Assert.False(restored.WholeWord);
+        Assert.Equal(TextMatchOptions.MatchCasing, restored.MatchOptions);
     }
 
     [Theory]
@@ -750,16 +731,16 @@ public sealed class SqlSearchBrowserModelTests
     [InlineData("0|1|0")]
     [InlineData("7|2|0")]
     [InlineData("7|1|")]
+    [InlineData("7")]
     public void 認不得的比對方式整組維持預設(string token)
     {
-        var model = new SqlSearchBrowserModel { MatchCasing = false, WholeWord = false };
+        var model = new SqlSearchBrowserModel();
 
         Assert.False(model.RestoreMatchState(token));
 
         // 半套還原與「使用者上次真的這樣設」在畫面上一模一樣，所以一項都不能動。
         Assert.Equal(SearchTargets.All, model.Targets);
-        Assert.False(model.MatchCasing);
-        Assert.False(model.WholeWord);
+        Assert.Equal(TextMatchOptions.None, model.MatchOptions);
     }
 
     /// <summary>跑完一輪。走 Task.Run 離開測試執行器的同步內容，不在其上同步等待。</summary>

@@ -226,8 +226,8 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
         // 「LibArchive. 其實是資料庫而不是結構描述」是中繼資料認出來的，整條路上
         // 只認一次，記在建立清單時的那個上下文裡（SqlMetadataService
         // .ResolveQualifierAsync）。這裡的上下文重新分析自文字，不可能知道那件事，
-        // 於是同一筆建議交還給平台時寫出 LibArchive.dbo.SetPassWd，換成這裡接手
-        // （函式引數、EXEC 骨架、補右括號、接續建議）卻寫出 LibArchive.SetPassWd
+        // 於是同一筆建議交還給平台時寫出 LibArchive.dbo.fn_LoanCount，換成這裡接手
+        // （函式引數、EXEC 骨架、補右括號、接續建議）卻寫出 LibArchive.fn_LoanCount
         // ——那會被讀成「結構描述 LibArchive」，執行起來是「找不到資料行」。
         var insertionText = snippetText ?? item.InsertText;
         var insertionStart = span.Start.Position;

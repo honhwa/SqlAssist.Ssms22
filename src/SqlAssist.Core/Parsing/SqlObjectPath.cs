@@ -90,6 +90,8 @@ public sealed class SqlObjectPath
     /// <summary>限定字最左邊那一段；沒有限定字或那一段是空的時為 null。</summary>
     /// <remarks>
     /// 這是唯一需要被中繼資料認一次的字：往右的每一段都由它決定要怎麼讀。
+    /// 拿最右邊那一段去認的話，<c>LIBSQL02.LibHistory.</c> 會問「有沒有一個資料庫
+    /// 叫 LibHistory」——答案在那台伺服器上，而不在目前這條連線上。
     /// 拿最右邊那一段去認的話，<c>SQL209.GD_HOTAI.</c> 會問「有沒有一個資料庫
     /// 叫 GD_HOTAI」——答案在那台伺服器上，而不在目前這條連線上。
     /// </remarks>
@@ -197,7 +199,6 @@ public sealed class SqlObjectPath
     /// 把整條限定字往左挪，讓最左邊那一段落在 <paramref name="leftmost"/> 這一格。
     /// </summary>
     /// <remarks>
-    /// 右對齊是唯一只看文字就做得出的假設，但它對 <c>LibArchive.</c> 與 <c>SQL209.</c>
     /// 都會猜成結構描述。要分辨得知道這台伺服器上有哪些資料庫、掛了哪些連結伺服器，
     /// 那是中繼資料的事；中繼資料只回答最左邊那一段是什麼，段位怎麼挪算在這裡。
     /// 兩邊各算一份的話，症狀是清單列得出來、插入文字卻少了一段。
@@ -297,7 +298,6 @@ public sealed class SqlObjectPath
 
         // 中間段省略時點號不能跟著省：伺服器加名稱要寫成 srv...Loan，
         // 少一個點就變成另一個名稱。反過來，限定字停在哪一格就只寫到哪一格
-        // ——挪到伺服器那一格的 SQL209. 補滿點號會變成 SQL209...，
         // 那是「伺服器加預設資料庫加預設結構描述」，不是使用者打的東西。
         var outermost = ServerName is not null
             ? SqlQualifierSlot.Server

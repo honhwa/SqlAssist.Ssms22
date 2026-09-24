@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using SqlAssist.Core.Matching;
 using SqlAssist.Core.SqlMemory;
 using Xunit;
 
@@ -87,11 +88,13 @@ public sealed class SqlMemoryBrowserModelTests
         model.Tab = SqlMemoryBrowserTab.Favorites;
         model.Kind = SqlHistoryFilter.Executions;
         model.Search = "Loan";
+        model.MatchOptions = TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord;
 
         // 沒選任何名稱就是全部收藏，不需要先指定範圍。
         var all = model.BeginLoad()!;
         Assert.Null(all.History);
         Assert.Equal("Loan", all.Favorites!.Search);
+        Assert.Equal(TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord, all.Favorites.MatchOptions);
         Assert.Empty(all.Favorites.Servers);
         Assert.Empty(all.Favorites.Databases);
         model.End(all);
@@ -242,18 +245,18 @@ public sealed class SqlMemoryBrowserModelTests
     }
 
     [Fact]
-    public void UsingTheCurrentConnectionSetsBothFilters()
+    public void UsingTheEditorConnectionSetsBothFilters()
     {
         var model = Ready();
         model.Tab = SqlMemoryBrowserTab.Favorites;
         model.SetServerSelected("ArchiveServer", true);
 
-        Assert.NotNull(model.UseConnection(null));
-        Assert.NotNull(model.UseConnection(new SqlConnectionLabel("LibraryServer", "")));
+        Assert.False(model.UseEditorConnection(null));
+        Assert.False(model.UseEditorConnection(new SqlConnectionLabel("LibraryServer", "")));
         Assert.Equal(new[] { "ArchiveServer" }, model.Servers);
 
         // 取代而不是加進去：這顆按鈕說的是「只看我現在連的那一個」。
-        Assert.Null(model.UseConnection(new SqlConnectionLabel("LibraryServer", "Library")));
+        Assert.True(model.UseEditorConnection(new SqlConnectionLabel("LibraryServer", "Library")));
         Assert.Equal(new[] { "LibraryServer" }, model.Servers);
         Assert.Equal(new[] { "Library" }, model.Databases);
     }
@@ -333,5 +336,82 @@ public sealed class SqlMemoryBrowserModelTests
         Assert.Equal("複製未完成：已停用", SqlMemoryTimeText.Failure("複製",
             new SqlMemoryStorageException(SqlMemoryStorageErrorKind.Unavailable, "已停用")));
         Assert.Equal("開啟失敗：內容已不存在", SqlMemoryTimeText.Failure("開啟", new InvalidOperationException("內容已不存在")));
+    }
+
+    [Fact]
+    public void QuerySnapshotKeepsTheRoundsConditionsAndGoesStaleWhenTheyChange()
+    {
+        var model = Ready();
+        model.Kind = SqlHistoryFilter.Executions;
+        model.Search = "Loan";
+        model.MatchOptions = TextMatchOptions.WholeWord;
+        model.SetServerSelected("LibraryServer", true);
+        model.Invalidate(Now);
+        var query = model.Query();
+
+        // 背景逐頁讀的期間換了條件：快照照舊組請求，游標指紋才對得上；但模型說它已經不算數。
+        model.Search = "Branch";
+        model.MatchOptions = TextMatchOptions.MatchCasing;
+        model.SetServerSelected("Other", true);
+        var request = query.HistoryRequest(SqlMemoryCopy.PageSize, "cursor");
+        Assert.Equal((SqlMemoryCopy.PageSize, SqlHistoryFilter.Executions, "Loan", "cursor", TextMatchOptions.WholeWord),
+            (request.PageSize, request.Kind, request.Search, request.Cursor, request.MatchOptions));
+        Assert.Equal(new[] { "LibraryServer" }, request.Servers);
+        Assert.Equal(Now.AddDays(-7), request.Since);
+        Assert.True(model.IsCurrent(query));
+        model.Invalidate(Now);
+        Assert.False(model.IsCurrent(query));
+
+        var fresh = model.Query();
+        Assert.True(model.IsCurrent(fresh));
+        Assert.True(model.ObserveHost(true, 2));
+        Assert.False(model.IsCurrent(fresh));
+    }
+
+    [Fact]
+    public void FavoriteQueryAndHasMoreFollowTheCursor()
+    {
+        var model = Ready();
+        model.Tab = SqlMemoryBrowserTab.Favorites;
+        model.Search = "Reader";
+        model.Invalidate(Now);
+        var query = model.Query();
+        Assert.True(query.IsFavorites);
+        var request = query.FavoriteRequest(SqlMemoryCopy.PageSize, null);
+        Assert.Equal(("Reader", SqlMemoryCopy.PageSize), (request.Search, request.PageSize));
+
+        Assert.False(model.HasMore);
+        var load = model.BeginLoad()!;
+        Assert.True(model.Accept(load, new SqlMemoryPage<SqlFavoriteItem>(Array.Empty<SqlFavoriteItem>(), "next")));
+        model.End(load);
+        Assert.True(model.HasMore);
+        var last = model.BeginLoad()!;
+        Assert.True(model.Accept(last, new SqlMemoryPage<SqlFavoriteItem>(Array.Empty<SqlFavoriteItem>(), null)));
+        Assert.False(model.HasMore);
+    }
+
+    /// <remarks>
+    /// 預覽標命中用的比對器與清單的請求出自同一份快照：換了搜尋字或選項就是新的一個，
+    /// 沒有搜尋字時不標。空白與儲存層一樣算內容。
+    /// </remarks>
+    [Fact]
+    public void QueryMatcherFollowsTheSameSearchAndOptionsAsTheRequest()
+    {
+        var model = Ready();
+        Assert.Null(model.Query().Matcher);
+
+        model.Search = "CopyNo";
+        model.MatchOptions = TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord;
+        var matcher = model.Query().Matcher!;
+        Assert.Equal(("CopyNo", TextMatchOptions.MatchCasing | TextMatchOptions.WholeWord), (matcher.Pattern, matcher.Options));
+
+        model.MatchOptions = TextMatchOptions.None;
+        Assert.Equal(TextMatchOptions.None, model.Query().Matcher!.Options);
+
+        model.Search = " ";
+        Assert.Equal(" ", model.Query().Matcher!.Pattern);
+
+        model.Search = "";
+        Assert.Null(model.Query().Matcher);
     }
 }

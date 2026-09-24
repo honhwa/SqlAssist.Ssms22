@@ -50,7 +50,8 @@
   不是專案參考。新增、改名或刪除那條清單上的產品檔時要**同步改 `SqlAssist.Ssms22.Tests.csproj`**；
   漏改的症狀是建置失敗說找不到檔案，而產品專案自己編得過。
 - 註解只寫理由、失敗方案或不照做的症狀，不逐行翻譯程式碼。
-- 公開 repo 禁止出現真實系統的 schema、資料表、欄位或程序名。測試與文件只用既有的
+- 公開 repo 的程式、註解、測試、文件、commit 訊息與 PR 內文禁止出現真實系統的伺服器、
+  資料庫、schema、資料表、欄位或程序名；使用者回報裡的名稱先換掉再寫下來。只用既有的
   圖書館領域：`Lib_Reader`／`Lib_Tag`、`PUBLISHER`／`PUBL_CODE`、
   `Cat_BookCopy`／`CopyNo`、`Loan`／`LoanDetail`／`Copy`／`Branch`；例外只有 T-SQL
   保留字案例與產品內建捷徑。
