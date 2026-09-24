@@ -1,66 +1,120 @@
 # 通知呈現與驗證
 
-卡片、動畫、設定頁版面與測試覆蓋。資料模型、合併與統計見[通知提示](notifications.md)；
-三軸與可見度見[可見度](notifications-visibility.md)；文案見[通知訊息](notifications-messages.md)。
+本頁包含通知島的錨點、浮層、形態、設定頁與實機驗收；資料模型與合併見[通知提示](notifications.md)，
+三軸與可見度見[可見度](notifications-visibility.md)。
 
-## 呈現與設定
+## 分工
 
-`Notifications/NotificationPresenter` 決定該顯示什麼——可見度、合併、措辭與關閉狀態。卡片本身在
-`Notifications/NotificationSurface`，全程只有一張。`NotificationSurfaceController` 整個處理程序
-一份，持有唯一的計時器與通知、設定、主題、作用中編輯區的訂閱，依 `NotificationHostPriority`
-挑宿主，期限判斷在 `NotificationLifecycle`。宿主實作 `INotificationSurfaceHost`，只回報可見度、
-焦點與座標：`Editor/NotificationEditorHost` 用 adornment 層，`Notifications/NotificationWindowHost`
-用 WPF `AdornerLayer`。對話框由 `SqlAssistDialogs.Configure` 自動註冊，SQL Memory 工具窗自己包
-`AdornerDecorator` 後呼叫 `Register`。捲動與改變大小只走定位，不重算內容；沒有宿主可掛或
-宿主非作用中時，在事件處理常式就早退。只有提示範圍接收輸入，不搶焦點。
+| 這件事 | 在哪 |
+|---|---|
+| 該顯示什麼：可見度、合併、措辭、活動的關閉 | `Notifications/NotificationPresenter.Island` |
+| 形態：膠囊、展開、提醒、附條、疊層 | `Notifications/NotificationIslandState`（純邏輯） |
+| 活動的延遲、最短可見、收場與到期 | `Notifications/NotificationLifecycle` |
+| 何時顯示、唯一的計時器與訂閱 | `Notifications/NotificationIslandController` |
+| 錨在哪個視窗 | `Notifications/NotificationAnchor`；框架與焦點移動在 `UI/SsmsWindows` |
+| 透明附屬視窗、定位、點擊穿透、鍵盤模式 | `Notifications/NotificationOverlay` |
+| 浮層在擁有者上的位置（裝置像素） | `Notifications/NotificationPlacement` |
+| 提醒按鈕的派送 | `Notifications/NotificationActionRouter` |
+| 畫面、對齊基準、時長與緩動 | `UI/NotificationIsland` 與同資料夾的 `Notification*`；時長只在 `NotificationMotion` |
 
-換宿主只是換掛到另一層，列的身分、展開狀態與可見期限都留著，不重播入場動畫；
-交接寬限 1200 ms 在 `Notifications/NotificationHandover`，到期與關閉走 `retire` 不吃寬限。
+島嶼只認得 `UI/NotificationActivityItem` 與 `UI/NotificationPromptItem`，不認得 `Core/Notifications`：
+表面認得來源型別的話，第二種回饋來源得先變成一則通知才畫得出來。
 
-版面在 `UI/NotificationCard.xaml` 與 Code-Behind，列由 `UI/NotificationRow` 建立，
-按鈕與字型仍由 `SqlAssistChrome.Notifications` 建立。卡片只認得
-`UI/NotificationCardItem`，不認得 `Core/Notifications`；接第二個來源只要產生同一個記錄。視覺規格見
-[UI 準則的通知表面](ui-guidelines.md#通知表面)。
+## 錨點與控制器
 
-關閉是全域的：叉號的意思是「這一批我看完了」。它是呈現端的具名狀態，不是編輯區上的
-靜態欄位；只隱藏目前批次，不取消工作。明細的展開狀態同樣在呈現端。
+- 島嶼錨在使用者正在操作的框架（主視窗或拆出去的框架）右下角、狀態列上方。焦點在別的程式、
+  對話框或 WinForms 視窗上時沿用目前的錨點；錨點最小化、隱藏或關閉時改用主視窗。
+- 不跟最後取得焦點的 SQL 編輯區：查詢視窗拆出去後回主視窗操作 SQL Search 或物件總管，通知會
+  出現在被蓋住、在另一台螢幕或已最小化的框架上。對話框不當錨點，右下角是它們的「確定／取消」。
+- 同一框架裡切換分頁、工具視窗與 F12 開新查詢視窗不換擁有者，島嶼不重播；換框架時先隱藏、
+  換 `Owner`、重新定位，再從圓點重新長出來。
+- 控制器整個處理程序一份，套件初始化時接上主視窗：通知、設定、主題、焦點移動各訂閱一次，
+  計時器一個。沒有看得到的錨點時立刻隱藏，不問通知來源——一問就會跑到期清理。平台邊界一律走
+  `SqlAssistPlatformGuard`。
+- 早退：沒有東西要顯示、或只剩提醒且沒有等著發生的停駐轉換時計時器停著；內容與形態都沒變時不重畫。
+  浮層不在畫面上時只有通知與設定排程刷新。
+- 活動的叉號是全域的「這一批我看完了」，只隱藏目前批次，不取消工作，也不影響提醒。滑鼠停留或
+  鍵盤焦點在島嶼上時暫停活動的期限，移開後續跑剩餘時間。提醒不等顯示延遲。
 
-主題色動態更新；執行中光環、成功勾號、失敗警告、取消叉號各有完整狀態 Tooltip 與輔助
-技術名稱。循環動畫只有抬頭那一個，各列的執行中是靜態光環。等待中時鐘已預留於視覺列舉，
-通知來源尚無排隊狀態，不虛構等待工作。降級還沒有專屬視覺與抬頭計數，暫時落在取消叉號上。
+## 浮層
 
-抬頭下方那一行只回答文件，且只看有文件的列：全部同一份時顯示一次，兩份以上才收掉並
-補回各列。資料庫一律留在列上，與文件以 `·` 相接。
+不掛在各視窗的 adornment 或 `AdornerLayer` 上：那樣沒有宿主時（還沒開查詢視窗、焦點在物件總管）
+通知會被吃掉，每個新視窗也都要記得註冊。改用一個透明附屬視窗，下列設定各自回答一個獨立視窗的顧慮：
 
-漸層條顯示與計數相同的比例，不另占文字列。Chevron 以 200 ms 旋轉，明細以 260 ms
-展開／收合，可中途反向。任務名稱獨占文字欄，最多兩行，完成不重新排序；重複次數是同一列
-的 `×N` 徽章。工作可透過 `NotificationScope.Report` 回報最多 512 字的安全訊息，完成後保留；畫面最多
-兩行，其餘在 Tooltip。沒有訊息不預留空白列；失敗與取消顯示簡短說明，不展示例外內容。
+- `WindowStyle=None`、`AllowsTransparency`、`ShowInTaskbar=false`、`ResizeMode=NoResize`。
+  `Topmost=false` 而設 `Owner`：永遠在擁有者上方、跟著擁有者被別的程式蓋住與最小化，Alt+Tab 只有擁有者；
+  另外聽 `StateChanged` 明確隱藏與重新長出。獨立頂層視窗也不會被結果格線的 HWND 蓋住。
+- 不搶焦點：`ShowActivated=false` 加 `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`；不在鍵盤模式時於
+  `PreviewGotKeyboardFocus` 擋下焦點，點擊照常送達，查詢視窗的游標不被搶走。
+- 點擊穿透：透明像素本來就不收滑鼠；`WM_NCHITTEST` 以島嶼的命中測試判斷，形狀以外（含柔影、
+  圓角外）回 `HTTRANSPARENT`。
+- 大小固定為 `NotificationIsland.MaxExtent` 加柔影邊距，變形只在視窗裡面發生；收場播完才 `Hide()`，
+  閒置時分層視窗不參與合成。
+- 位置以裝置像素交給 `SetWindowPos`，邊距依擁有者 DPI 換算；擁有者移動、改大小、換 DPI 時只重新
+  定位。狀態列高度從主視窗的視覺樹找（型別名含 `StatusBar`、貼著底邊），找不到或是拆出去的框架時用預設值。
+- 「聚焦通知」命令暫時啟用浮層、焦點放到第一個控制項，Tab 在島嶼裡繞圈；Esc 把焦點還給原本的
+  元素。擁有者關閉前（`Closing`）先放手，附屬視窗才不會跟著被關掉。
 
-「通知與背景工作」設定頁分三段：呈現（啟用、材質、預設展開明細、延遲、保留時間、
-詳細度）、十二個種類開關、結果通道（失敗、部分成功）。moniker 一律
-`sqlAssist.notifications.*`，子項都以單一同分類 `enableWhen` 掛「顯示通知提示」並隨它停用。
-動畫由「一般」頁的全域動畫設定管，不在這一頁。
+## 通知島
 
-- 預設立即顯示、成功保留 2500 ms；失敗與降級至少保留 6000 ms。
-- 最短可見 800 ms；滑入與淡入 300 ms、淡出並縮小 220 ms，淡出時新工作會從目前狀態接續。
-- 每列保持身分；執行中新增列高度展開，已完成的新列只淡入，避免高度歸零遮掉勾號彈跳。
-  每項與整體成功均微彈出、失敗短震動，不因別列更新重播。
-- 進度條與 Spinner 由 SSMS 強調色推導同色系漸層，邊框、微光及捲軸也跟隨主題。
-  成功比例增減以 320 ms 從當前值接續；週期刷新不重啟相同目標。
-- 預設展開明細；已儲存的使用者選項不覆寫，新預設只套用未設定的值。
-- 滑鼠停留或鍵盤焦點在提示內時暫停期限，移出後續跑剩餘時間；不修改完成時間，記憶體上限仍有效。
-- 空閒時不跑計時器，N 個宿主仍只有一個計時器；通知合併回 UI 執行緒。關閉宿主與套件卸載都
-  解除訂閱，卡片交給下一個宿主或收掉。
-- 計時器每 100 ms 問一次；內容沒變又沒有項目到期時回上一份快照，不重跑到期清理與投影。
+| 形態 | 何時 |
+|---|---|
+| Hidden／Compact／Done | 沒有內容／有工作在跑／都結束了 |
+| Expanded | 停駐、鍵盤焦點進來，或按附條暫看；移開後收回 |
+| Prompt／PromptWithActivity | 一則提醒；有活動時卡片底部多一條附條 |
+| PromptStack | 兩則以上提醒，有活動時最上面那一張帶附條 |
 
-## 驗證與限制
+- 預設就是膠囊，沒有「預設展開明細」。失敗不自動展開：圖示換警告，每多一個失敗短震一次。
+  有提醒時停駐不展開活動。
+- `UI/SpringMotion` 同時驅動寬、高與圓角，逐幀積分、保留速度、靜止即取消 `CompositionTarget.Rendering`；
+  動畫關著直接到位。內容依目標尺寸排版、由圓角裁切露出，變形中不重排。出現從圓點長出，消失縮回圓點。
+- 展開清單：抬頭與多項膠囊同一句，有失敗時右側加「N 項失敗」；下方是文件列、進度條與明細。
+  全部結束後進度條收成髮絲線，有新工作時長回來。各區共用 `NotificationLayout` 的對齊基準。
+- 附條（`NotificationActivityStrip`）整條可按：提醒卡上是活動摘要與「查看」，暫看時清單底部是
+  「N 則提醒待處理」與「回到提醒」；活動結束時先淡出、收起後卡片才縮回。疊起來的提醒露出後兩層，
+  右上角「1/3」；處理掉一則時下一則滑上來。
+- 循環動畫同一時間只有一個：膠囊、清單抬頭或附條上的進度圈，各列的執行中是靜態光環。
+  列動畫只在那一列狀態改變時播，不因別列更新重播；進度從目前值接續。
+- `UI/NotificationPromptView`：`SqlIcon` 語意圖示、訊息最多 3 行（全文在 ToolTip）、按鈕次要在左
+  主要在最右。提醒 `LiveSetting=Assertive`，活動 `Polite`；Tab 順序是叉號、按鈕列、附條。
+- 材質走 `SqlAssistChrome.ApplyNotificationMaterial`：柔影只掛在底色層並點陣快取，高對比退回實色。
 
-自動測試涵蓋範圍看測試專案；這裡只記它們**不能**代替的事：渲染輸出在
-`artifacts/theme-qa/notification-qa/`，不是 SSMS 宿主畫面，不能拿來宣稱實機通過。
-降級與診斷紀錄見[可見度](notifications-visibility.md#降級等級與診斷)。
+## 設定頁
 
-實機需測：SQL 分頁／分割焦點切換、F12 開新查詢視窗的交接、SQL 分頁與 SQL Memory 工具窗互切、
-對話框開啟中完成工作、關閉工具窗與對話框、切到非 SQL 文件、關閉工作來源、淡出途中加入工作、
-高對比、減少動態效果、鍵盤展開、長名稱、小編輯區及 100%／150%／200% DPI。
-目前不顯示假百分比，不提供取消工作按鈕或持久化歷史。
+「通知與背景工作」分三段：呈現（啟用、材質、延遲、保留時間、詳細度）、十一個種類開關、結果通道
+（失敗、部分成功）。moniker 一律 `sqlAssist.notifications.*`，子項都以單一同分類 `enableWhen` 掛
+「顯示通知提示」。動畫由「一般」頁的全域動畫設定管。預設立即顯示、成功保留 2500 ms，失敗與降級
+至少 6000 ms，最短可見 800 ms。
+
+## 測試通知
+
+「關於與診斷 → 通知失敗」上方一排按鈕，讓使用者自己確認通知看不看得到、長什麼樣子：成功、失敗、
+連續成功（×N）、一則提醒、疊層、提醒加活動。情境、標籤與時長只在 `Core/Notifications/NotificationRehearsal`。
+
+- 走正式的 `NotificationCenter`，可見度、合併、統計與最近失敗都是真的；種類是「通知測試」
+  （`NotificationKind.Diagnostics`，沒有開關）。
+- 來源一律 `User`，詳細度擋不住；總開關或失敗通道擋下時狀態列說出是哪一格，不是按了沒反應。
+- 活動用 `BeginDetached`，不成為環境父工作。提醒只有「知道了」，派送端登記空的處理常式。
+
+## 驗證
+
+渲染輸出在 `artifacts/theme-qa/notification-qa/`（`island-*`），不是 SSMS 宿主畫面，不能拿來宣稱實機通過。
+
+### 尚未確認
+
+以下都要在 SSMS 實機確認：
+
+- 沒有連線、也沒開查詢視窗就按「檢查更新」：島嶼錨在主視窗右下。
+- 啟動時自動檢查到新版：提醒出現；當天重開 SSMS 從快取再提醒一次；略過的版本不再出現。
+- F12 開新查詢視窗：同一個擁有者，島嶼不重播。
+- 文件拆到第二台螢幕：島嶼跟著點進的框架走（含只剩提醒時），回主視窗操作 SQL Search 就換回；
+  那個框架最小化或關掉時回主視窗；焦點在對話框（含連線）或別的程式時留在原處。
+- 最小化與還原：跟著擁有者隱藏與出現。
+- 100%／150%／200% DPI，以及拖著擁有者跨螢幕：位置、大小與柔影清晰度。
+- 高對比：實色、無柔影。減少動態效果：所有變形直接到位。
+- 與結果格線（WinForms／HWND）重疊時島嶼在上面。
+- 島嶼以外的區域（含柔影那一圈）點擊落到底下的編輯器與格線。
+- 按提醒按鈕不會把查詢視窗的游標搶走；Alt+Tab 清單裡沒有浮層，切到別的程式時浮層被蓋住。
+- 「聚焦通知」：Tab 繞圈、Enter 按鈕、Esc 把焦點還給查詢視窗。
+- 多則提醒堆疊、提醒與活動並存時的附條、暫看與附條收起。
+- 透明浮層跑彈簧動畫時的 CPU；狀態列高度偵測是否抓得到 SSMS 22 的狀態列。

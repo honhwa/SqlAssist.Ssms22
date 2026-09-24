@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace SqlAssist.Core.Notifications;
@@ -100,11 +101,8 @@ public static class NotificationCatalog
     /// <summary>版本不相容或損毀時，封存舊檔並建立空資料庫。</summary>
     public const string RebuildingSqlMemory = "重建 SQL Memory 資料庫";
 
-    /// <summary>用量分頁的診斷動作；報告檔的位置寫在分頁狀態列，成敗寫在卡片上。</summary>
+    /// <summary>用量分頁的診斷動作；報告檔的位置寫在分頁狀態列，成敗寫在通知上。</summary>
     public const string TestingSqlMemoryStorage = "測試 SQL Memory 儲存";
-
-    /// <summary>第一次真正開始擷取；不能安靜地開始記錄使用者的 SQL。</summary>
-    public const string StartingSqlMemoryCapture = "開始擷取 SQL Memory";
 
     /// <summary>
     /// 首次擷取那一則的說明。
@@ -120,12 +118,106 @@ public static class NotificationCatalog
     /// <summary>擷取佇列滿了而沒有寫進紀錄的那一筆；事件，以 <see cref="NotificationCenter.Post"/> 送出。</summary>
     public const string DroppingSqlCapture = "丟棄 SQL 擷取";
 
-    /// <summary>容量剛越過警戒；事件，成功時讀作「已超過 SQL Memory 容量警戒」。</summary>
-    public const string ExceedingSqlMemoryCapacity = "超過 SQL Memory 容量警戒";
-
     // ── 更新 ──────────────────────────────────────────────────────────────
     /// <summary>手動與啟動時的自動檢查共用；結論與版本號由 <c>SqlAssistUpdateCheck</c> 寫進敘述。</summary>
     public const string CheckingForUpdates = "檢查更新";
+
+    // ── 通知測試 ──────────────────────────────────────────────────────────
+    /// <summary>「關於與診斷」的測試工作；成功、失敗與搭配提醒的那幾則共用。</summary>
+    public const string SimulatingWork = "模擬背景工作";
+
+    /// <summary>用來看合併 ×N 的那一組；與 <see cref="SimulatingWork"/> 分開，才不會跟別的測試併成一列。</summary>
+    public const string SimulatingRepeatedWork = "模擬重複工作";
+
+    // ── 提醒 ──────────────────────────────────────────────────────────────
+    // 提醒的標題不受動詞開頭的契約限制：它不會轉過去式，回答的是「要決定什麼」。
+    // 按鈕識別字在 NotificationActionIds；這裡的常數欄位只放標題，其餘措辭是屬性。
+
+    /// <summary>提醒右上角叉號的 ToolTip；不是拒絕，只是這次工作階段先收起來。</summary>
+    public static string PromptLater => "稍後提醒";
+
+    /// <summary>有新版可以下載；同鍵只留最新那一版。叉號就是「稍後」，不另設按鈕。</summary>
+    public static NotificationPrompt UpdateAvailablePrompt(string version, string releaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(version)) throw new ArgumentException("需要版本號。", nameof(version));
+        return new NotificationPrompt("update", "SqlAssist 有新版",
+            version + " 已經發行；安裝前要先關掉所有 SSMS。", NotificationSeverity.Info,
+            new NotificationAction(NotificationActionIds.UpdateSkip, "略過此版本", NotificationActionRole.Secondary, version),
+            new NotificationAction(NotificationActionIds.UpdateDownload, "前往下載", NotificationActionRole.Primary, releaseUrl ?? ""));
+    }
+
+    /// <summary>容量越過警戒；<paramref name="reason"/> 是 Core 給的用量說明。</summary>
+    public static NotificationPrompt SqlMemoryCapacityPrompt(string reason) =>
+        new("sqlmemory.capacity", "SQL Memory 超過容量警戒",
+            string.IsNullOrWhiteSpace(reason) ? "紀錄都還在；清理舊紀錄或調整保留規則可以解除警戒。" : reason,
+            NotificationSeverity.Warning,
+            new NotificationAction(NotificationActionIds.SqlMemoryOpenMaintenance, "開啟維護", NotificationActionRole.Primary));
+
+    /// <summary>第一次真正開始擷取；不能安靜地開始記錄使用者的 SQL。</summary>
+    public static NotificationPrompt SqlMemoryFirstCapturePrompt() =>
+        new("sqlmemory.first-capture", "SQL Memory 已開始擷取", SqlMemoryFirstCaptureNotice, NotificationSeverity.Info,
+            new NotificationAction(NotificationActionIds.SqlMemoryOpen, "開啟 SQL Memory", NotificationActionRole.Primary));
+
+    /// <summary>「關於與診斷」的測試提醒；鍵依嚴重度分開，三種一起送就是疊層。</summary>
+    public static NotificationPrompt RehearsalPrompt(NotificationSeverity severity) =>
+        new("rehearsal." + severity.ToString().ToLowerInvariant(),
+            severity switch
+            {
+                NotificationSeverity.Error => "測試提醒：錯誤",
+                NotificationSeverity.Warning => "測試提醒：警告",
+                _ => "測試提醒：一般",
+            },
+            "這是一則測試；按「知道了」或叉號都只會收起它。", severity,
+            new NotificationAction(NotificationActionIds.RehearsalAcknowledge, "知道了", NotificationActionRole.Primary));
+
+    /// <summary>活動清單抬頭與多項膠囊共用的那一行：「N 項工作 · 成功數/總數」；分子只算成功。</summary>
+    /// <remarks>兩處說法不同時，膠囊變形成清單的那一刻文字會整句換掉，讀起來像換了一件事。</remarks>
+    public static string ProgressSummary(int succeeded, int total) =>
+        total.ToString(CultureInfo.CurrentCulture) + " 項工作" + Separator +
+        succeeded.ToString(CultureInfo.CurrentCulture) + "/" + total.ToString(CultureInfo.CurrentCulture);
+
+    /// <summary>清單抬頭右側的失敗標記：「2 項失敗」；沒有失敗時不顯示。</summary>
+    public static string FailureSummary(int failed) => failed.ToString(CultureInfo.CurrentCulture) + " 項失敗";
+
+    /// <summary>暫看活動時清單底部那一條：還有幾則提醒等著決定。</summary>
+    public static string PendingPrompts(int count) => count.ToString(CultureInfo.CurrentCulture) + " 則提醒待處理";
+
+    /// <summary>提醒卡底部附條的動作：切去看活動清單。</summary>
+    public static string ViewActivities => "查看";
+
+    /// <summary>暫看活動時清單底部附條的動作：回到提醒。</summary>
+    public static string BackToPrompts => "回到提醒";
+
+    /// <summary>活動清單的叉號：只是這一批看完了，工作照常跑完。</summary>
+    public static string DismissActivities => "關閉通知（不取消工作）";
+
+    /// <summary>多則提醒疊在一起時右上角那一格：「1/3」。</summary>
+    public static string PromptPosition(int position, int count) =>
+        position.ToString(CultureInfo.CurrentCulture) + "/" + count.ToString(CultureInfo.CurrentCulture);
+
+    /// <summary>
+    /// 通知島收成膠囊時的那一行。
+    /// </summary>
+    /// <remarks>
+    /// 只有一項時說是哪一件事（「標題 · 主體」）；兩項以上改說規模與進度，因為膠囊寬度
+    /// 放不下兩個標題，挑其中一個又會讓使用者以為只有那一件。多項時就是清單抬頭那一句
+    /// （<see cref="ProgressSummary"/>）。傳入的是合併且篩選過的列。
+    /// </remarks>
+    public static string CapsuleSummary(IReadOnlyList<NotificationItem> activities)
+    {
+        if (activities is null) throw new ArgumentNullException(nameof(activities));
+        if (activities.Count == 0) return "";
+        if (activities.Count == 1)
+        {
+            var item = activities[0];
+            return item.Subject.Length > 0 ? Headline(item) + Separator + item.Subject : Headline(item);
+        }
+
+        var succeeded = 0;
+        foreach (var item in activities)
+            if (item.Status == NotificationStatus.Succeeded) succeeded++;
+        return ProgressSummary(succeeded, activities.Count);
+    }
 
     /// <summary>
     /// 畫面上那一列的主要文字：完成後轉過去式並視情況附上耗時。
@@ -136,7 +228,7 @@ public static class NotificationCatalog
     ///
     /// 這裡只回答措辭。物件名稱（<see cref="NotificationItem.Subject"/>）與重複次數
     /// （<see cref="NotificationItem.Repeat"/>）怎麼擺是版面：前者接在同一行、後者是徽章，
-    /// 都由通知卡片決定，換一種排法不必回頭改文案。
+    /// 都由通知島決定，換一種排法不必回頭改文案。
     /// </remarks>
     public static string Headline(NotificationItem item)
     {
@@ -150,7 +242,7 @@ public static class NotificationCatalog
     /// 一列的出處：「哪一份文件 · 哪一個資料庫」。
     /// </summary>
     /// <remarks>
-    /// 分隔符號與缺一半時的寫法集中在這裡：通知卡片與「關於與診斷」的失敗列都要寫這一句，
+    /// 分隔符號與缺一半時的寫法集中在這裡：通知島與「關於與診斷」的失敗列都要寫這一句，
     /// 兩邊各拼一次就會在同一份資料上出現兩種讀法。
     /// </remarks>
     public static string Provenance(string document, string source)

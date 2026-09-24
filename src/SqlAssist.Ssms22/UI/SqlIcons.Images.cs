@@ -71,14 +71,17 @@ internal static partial class SqlIcons
         SqlIcon.Maintain => KnownMonikers.Run,
         SqlIcon.Backup => KnownMonikers.SaveAs,
         SqlIcon.Folder => KnownMonikers.FolderOpened,
+        // 提醒左側的語意圖示：與 SSMS 錯誤清單同一組狀態形狀，不另畫向量。
+        SqlIcon.Information => KnownMonikers.StatusInformation,
         SqlIcon.Warning => KnownMonikers.StatusWarning,
+        SqlIcon.Error => KnownMonikers.StatusError,
         // 窄版收起來的那幾個操作；用省略符號，不借任何一個操作自己的形狀。
         SqlIcon.Overflow => KnownMonikers.Ellipsis,
         // 與尋找列的「找上一個／下一個」同一對形狀：使用者已經知道它們往哪裡走。
         SqlIcon.PreviousMatch => KnownMonikers.FindPrevious,
         SqlIcon.NextMatch => KnownMonikers.FindNext,
         SqlIcon.SelfTest => KnownMonikers.Test,
-        // 與通知卡片的成功同一種語意；只換一下子，形狀要一眼讀得出「好了」。
+        // 與通知的成功同一種語意；只換一下子，形狀要一眼讀得出「好了」。
         SqlIcon.Done => KnownMonikers.StatusOK
     };
 #pragma warning restore CS8524

@@ -1,12 +1,12 @@
 # 設定
 
-變更 schema 先讀[設定結構](settings-schema.md)。
+本頁包含設定頁的分類、預設值與刻意不做成設定的東西；變更 schema 先讀[設定結構](settings-schema.md)。
 
 設定全部由 **SSMS 22 的 Unified Settings** 提供，沒有自訂設定檔。
 按 `Ctrl+,`，或從 **工具 → SqlAssist → 設定…** 直接跳到 SqlAssist 分類。
 改完立即生效，不必重開查詢視窗，並跟著 SSMS 的設定漫遊同步。
 
-區塊選項見[區塊配對](block-matching.md)，「通知與背景工作」一整頁見[通知呈現與驗證](notifications-ui.md#呈現與設定)，
+區塊選項見[區塊配對](block-matching.md)，「通知與背景工作」一整頁見[通知呈現與驗證](notifications-ui.md#設定頁)，
 其餘如下：
 
 | 分類 | 設定 | 預設 |
@@ -21,7 +21,7 @@
 | | 只使用 SqlAssist 的建議清單 | `true` |
 | | 輸入幾個字元後才彈出清單 | `1` |
 | | 在建議清單上方顯示分類篩選列 | `true` |
-| | 列出程式碼片段（內建 49 筆與自訂項目） | `true` |
+| | 列出程式碼片段（內建與自訂項目） | `true` |
 | | 列出資料庫物件與欄位 | `true` |
 | 插入與展開 | 插入物件時補上結構描述名稱 | `true` |
 | | 插入物件時加上方括號 | `false` |
@@ -63,7 +63,7 @@
 
 moniker 一律是 `sqlAssist.<分類>.<設定>`，例如
 `sqlAssist.suggestions.triggerAfterCharacters`。「通知與背景工作」那一頁是
-`sqlAssist.notifications.*`，其中十二個種類開關不寫成 moniker 常數與屬性，改由
+`sqlAssist.notifications.*`，其中十一個種類開關不寫成 moniker 常數與屬性，改由
 `NotificationKindToggle.All` 那張表驅動，新增一個種類只動註冊檔與那張表。
 註冊檔在 [`src/SqlAssist.Ssms22/SqlAssist.registration.json`](../src/SqlAssist.Ssms22/SqlAssist.registration.json)，
 它是設定清單的唯一權威來源；四處對應與守門測試見[設定結構](settings-schema.md#新增一個設定)。
