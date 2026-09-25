@@ -368,7 +368,7 @@ internal static class InlineRenameCommand
             // 等於把他剛才打的整段丟掉，而且那個視窗出現在按鍵路徑上。
             if (!SqlVariableRename.IsValidName(name))
             {
-                Report($"{name} 不是合法的變數名稱；名稱要用 @ 開頭，後面接字母、數字或底線。");
+                Report(CommandText.InvalidVariableName(name));
                 return;
             }
 
@@ -378,7 +378,7 @@ internal static class InlineRenameCommand
                     name,
                     CurrentOffsets(snapshot)))
             {
-                Report($"{name} 在這個批次裡已經有別的變數在用；先改掉那一個再回來。");
+                Report(CommandText.VariableNameTaken(name));
                 return;
             }
 

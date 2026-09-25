@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Diagnostics;
+using SqlAssist.Core.Localization;
 using SqlAssist.Core.Snippets;
 using SqlAssist.Metadata.ResultGrid;
 using SqlAssist.Ssms22.Settings;
@@ -55,20 +56,20 @@ internal static class SqlPasteValuesAction
     {
         if (view is null || view.IsClosed)
         {
-            message = "查詢視窗已關閉。";
+            message = CommonText.QueryWindowClosed;
             return false;
         }
 
         if (view.Caret.InVirtualSpace)
         {
-            message = "游標在虛擬空白上，請把游標移到文字之間再試一次。";
+            message = EditorText.CaretInVirtualSpace;
             return false;
         }
 
         if (!view.Selection.IsEmpty && view.Selection.Mode == TextSelectionMode.Box)
         {
             // 框選是好幾段不連續的範圍，取代掉會一起蓋掉每一段。
-            message = "框選範圍無法取代，請改用一般選取。";
+            message = EditorText.BoxSelectionCannotReplace;
             return false;
         }
 
@@ -94,7 +95,7 @@ internal static class SqlPasteValuesAction
 
         if (buffer.IsReadOnly(target.Span))
         {
-            message = "插入位置為唯讀，未貼上。";
+            message = EditorText.InsertionReadOnlyNoPaste;
             return false;
         }
 
@@ -137,7 +138,7 @@ internal static class SqlPasteValuesAction
         return new TextReplacement(
             text,
             SqlAssistActivityKind.PastedValues,
-            $"已貼上 {literals.Count} 筆值",
+            EditorText.PastedValues(literals.Count),
             affectedItemCount: literals.Count);
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
@@ -90,7 +91,7 @@ public static class SqlVariableRename
 
         if (caretPosition < 0 || caretPosition > sql.Length)
         {
-            message = "游標位置超出文字範圍。";
+            message = RewritingText.VariableCaretOutOfRange;
             return false;
         }
 
@@ -99,13 +100,13 @@ public static class SqlVariableRename
 
         if (cursor is null || cursor.TokenType != TSqlTokenType.Variable)
         {
-            message = "游標不在區域變數上；請把游標移到 @變數 上再試一次。";
+            message = RewritingText.VariableCaretNotOnVariable;
             return false;
         }
 
         if (cursor.Text.StartsWith("@@", StringComparison.Ordinal))
         {
-            message = $"{cursor.Text} 是系統函式，不是可以改名的區域變數。";
+            message = RewritingText.VariableIsSystemFunction(cursor.Text);
             return false;
         }
 
@@ -114,7 +115,7 @@ public static class SqlVariableRename
 
         if (arguments.Contains(cursor.Offset))
         {
-            message = $"{cursor.Text} 是被呼叫程序的參數名，屬於它的簽章；改這裡的名字不會改到程序本身。";
+            message = RewritingText.VariableIsProcedureArgument(cursor.Text);
             return false;
         }
 
@@ -145,7 +146,7 @@ public static class SqlVariableRename
 
         if (cursorIndex < 0)
         {
-            message = $"{cursor.Text} 只出現在被呼叫程序的參數位置上，沒有可以一起改的區域變數。";
+            message = RewritingText.VariableOnlyAsProcedureArgument(cursor.Text);
             return false;
         }
 
@@ -161,6 +162,9 @@ public static class SqlVariableRename
     /// <returns>換完的文字與動到的處數。</returns>
     /// <exception cref="ArgumentNullException">參數為 <c>null</c>。</exception>
     /// <exception cref="ArgumentException"><paramref name="newName"/> 不是合法的區域變數名稱。</exception>
+    // 這兩句是程式錯誤的例外訊息（呼叫端自己算錯座標、自己傳了不合法的名稱），
+    // 只進診斷紀錄、不給使用者看，所以固定繁中不進 resjson。
+    [Localizable(false)]
     public static SqlTextRewriteResult Rename(string sql, SqlVariableRenameTarget target, string newName)
     {
         if (sql is null)

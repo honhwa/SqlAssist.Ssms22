@@ -1,0 +1,10 @@
+{
+  // 就地改名區域變數時，游標處不能改名的各種原因。整句顯示在狀態列，
+  // 所以每一句都要說出「為什麼不能改」而不是只說「不行」——使用者按的是
+  // 選單或 F2，什麼都沒發生與壞掉沒有兩樣。
+  "VariableCaretOutOfRange": "游標位置超出文字範圍。",
+  "VariableCaretNotOnVariable": "游標不在區域變數上；請把游標移到 @變數 上再試一次。",
+  "VariableIsSystemFunction": "{name} 是系統函式，不是可以改名的區域變數。",
+  "VariableIsProcedureArgument": "{name} 是被呼叫程序的參數名，屬於它的簽章；改這裡的名字不會改到程序本身。",
+  "VariableOnlyAsProcedureArgument": "{name} 只出現在被呼叫程序的參數位置上，沒有可以一起改的區域變數。"
+}

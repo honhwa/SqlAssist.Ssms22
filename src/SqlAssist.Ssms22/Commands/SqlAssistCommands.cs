@@ -363,7 +363,7 @@ internal sealed class SqlAssistCommands
         {
             // 同上：這條路徑綁著按鍵，例外也走狀態列。
             SqlAssistDiagnostics.WriteAlways($"開啟物件定義失敗：{exception}");
-            SqlAssistStatusBar.Show(_package, CommandText.OpenDefinitionFailed);
+            SqlAssistStatusBar.Show(_package, EditorText.DefinitionFailed);
         }
     }
 
@@ -456,13 +456,13 @@ internal sealed class SqlAssistCommands
             // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
             if (!SqlAssistSettingsStore.Current.Enabled)
             {
-                SqlAssistStatusBar.Show(_package, "SqlAssist 目前已停用。");
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
                 return;
             }
 
             if (ActiveSqlEditor.Current is not { } textView)
             {
-                SqlAssistStatusBar.Show(_package, "請先把游標放進 SQL 查詢視窗。");
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
                 return;
             }
 
@@ -474,7 +474,7 @@ internal sealed class SqlAssistCommands
         catch (Exception exception)
         {
             SqlAssistDiagnostics.WriteAlways($"貼上值清單失敗：{exception}");
-            SqlAssistStatusBar.Show(_package, "貼上值清單失敗；原因已寫入診斷紀錄檔。");
+            SqlAssistStatusBar.Show(_package, CommandText.PasteValuesFailed);
         }
     }
 
@@ -495,13 +495,13 @@ internal sealed class SqlAssistCommands
             // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
             if (!SqlAssistSettingsStore.Current.Enabled)
             {
-                SqlAssistStatusBar.Show(_package, "SqlAssist 目前已停用。");
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
                 return;
             }
 
             if (ActiveSqlEditor.Current is not { } textView)
             {
-                SqlAssistStatusBar.Show(_package, "請先把游標放進 SQL 查詢視窗。");
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
                 return;
             }
 
@@ -511,7 +511,7 @@ internal sealed class SqlAssistCommands
         catch (Exception exception)
         {
             SqlAssistDiagnostics.WriteAlways($"就地改寫失敗：{exception}");
-            SqlAssistStatusBar.Show(_package, "就地改寫失敗；原因已寫入診斷紀錄檔。");
+            SqlAssistStatusBar.Show(_package, CommandText.RewriteFailed);
         }
     }
 
@@ -535,13 +535,13 @@ internal sealed class SqlAssistCommands
             // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
             if (!SqlAssistSettingsStore.Current.Enabled)
             {
-                SqlAssistStatusBar.Show(_package, "SqlAssist 目前已停用。");
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
                 return;
             }
 
             if (ActiveSqlEditor.Current is not { } textView)
             {
-                SqlAssistStatusBar.Show(_package, "請先把游標放進 SQL 查詢視窗。");
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
                 return;
             }
 
@@ -553,7 +553,7 @@ internal sealed class SqlAssistCommands
         catch (Exception exception)
         {
             SqlAssistDiagnostics.WriteAlways($"就地改名失敗：{exception}");
-            SqlAssistStatusBar.Show(_package, "就地改名失敗；原因已寫入診斷紀錄檔。");
+            SqlAssistStatusBar.Show(_package, CommandText.RenameFailed);
         }
     }
 
@@ -747,7 +747,7 @@ internal sealed class SqlAssistCommands
         }
         catch (Exception exception)
         {
-            Report(CommandText.OperationOpenLog, exception);
+            Report(CommandText.OpenDiagnosticsLog, exception);
         }
     }
 

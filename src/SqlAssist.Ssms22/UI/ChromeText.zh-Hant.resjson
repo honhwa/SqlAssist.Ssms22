@@ -32,8 +32,6 @@
   "TabHitCount": "{label}，{count} 個符合",
   "TabItemCount": "{label}，{count} 項",
   "TextSummary": "{lines:N0} 行 · {characters:N0} 字元",
-  // 狀態畫面朗讀時把抬頭與說明接成一句。
-  "StateTitleAndDetail": "{title}。{detail}",
   "UnreadableTitle": "這一輪讀不到",
   "DeniedTitle": "權限不足",
   // ── 複製 ──
@@ -41,6 +39,9 @@
   "CopyAll": "複製全文",
   "CopySqlFailed": "複製 SQL 失敗：{message}",
   "ClipboardBusy": "剪貼簿正被其他程式使用，未複製；請稍後再試。",
+  // 讀取方向的兩句：讀不到時「未複製」不成立，所以另寫一句。
+  "ClipboardBusyRead": "剪貼簿正被其他程式使用，讀不到內容；請稍後再試。",
+  "ClipboardNoText": "剪貼簿裡沒有純文字內容。",
   "NothingToCopy": "沒有可複製的項目。",
   // 通知標題已經是「已複製清單」，這一句是說明。
   "CopiedRows": "{rows:N0} 筆（含標頭列，可直接貼到 Excel）。",
@@ -67,32 +68,6 @@
   "SelectedAllCount": "已選全部 {count:N0} 筆",
   "SelectedAllMatching": "已選全部符合的項目",
   "SelectionLoadedNote": "已載入 {count:N0} 筆，其餘在執行動作時讀取",
-  // ── 圖示的朗讀名稱 ──
-  "IconUnknown": "未知物件",
-  "IconKeyword": "關鍵字",
-  "IconSnippet": "程式碼片段",
-  "IconSchema": "結構描述",
-  "IconTable": "資料表",
-  "IconView": "檢視",
-  "IconProcedure": "預存程序",
-  "IconScalarFunction": "純量函式",
-  "IconBuiltInFunction": "內建函式",
-  "IconTableFunction": "資料表值函式",
-  "IconInlineTableFunction": "內嵌資料表值函式",
-  // 指令碼自己宣告的暫存資料表、資料表變數與 CTE。
-  "IconScriptDataSource": "指令碼資料來源",
-  "IconGlobalVariable": "全域變數",
-  "IconVariable": "區域變數",
-  "IconDataType": "資料型別",
-  "IconParameter": "參數",
-  "IconSynonym": "同義字",
-  "IconTrigger": "觸發程序",
-  "IconSequence": "序列",
-  "IconTableType": "使用者自訂資料表型別",
-  // DATEADD、DATEDIFF 等函式的第一個引數（year、month…）。
-  "IconDatePart": "日期部分",
-  "IconTableHint": "資料表提示",
-  "IconQueryHint": "查詢提示",
-  "IconLinkedServer": "連結伺服器",
-  "IconCollation": "定序"
+  // 篩選按鈕只剩數量時的摘要（SQL Search 與 SQL Memory 的資料庫篩選共用）；數量一定大於 1。
+  "DatabaseCount": "{count} 個"
 }

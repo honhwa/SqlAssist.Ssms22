@@ -22,10 +22,10 @@ internal static class SqlClipboard
     internal static string BusyMessage => ChromeText.ClipboardBusy;
 
     /// <summary>讀不到時的同義訊息；「未複製」在這裡不成立，所以另寫一句。</summary>
-    internal const string BusyReadMessage = "剪貼簿正被其他程式使用，讀不到內容；請稍後再試。";
+    internal static string BusyReadMessage => ChromeText.ClipboardBusyRead;
 
     /// <summary>剪貼簿裡沒有純文字（複製的是圖片、檔案，或根本是空的）。</summary>
-    internal const string NoTextMessage = "剪貼簿裡沒有純文字內容。";
+    internal static string NoTextMessage => ChromeText.ClipboardNoText;
 
     /// <summary>勾起來的列都已不在（例如剛被刪除）時的訊息。</summary>
     internal static string EmptyMessage => ChromeText.NothingToCopy;

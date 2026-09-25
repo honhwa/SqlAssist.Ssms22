@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Text;
 
 namespace SqlAssist.Core.Rewriting;
@@ -23,6 +24,9 @@ public static class SqlTextRewrite
     /// ——分析器把同一處報了兩次，或某個編輯用了錯的座標系。兩種都會讓補出來的 SQL
     /// 少一段，而畫面上看不出來。
     /// </remarks>
+    // 例外訊息是程式錯誤的診斷，呼叫端算錯座標時才看得到，不給使用者看，
+    // 所以固定繁中不進 resjson。
+    [Localizable(false)]
     public static SqlTextRewriteResult Apply(
         IReadOnlyList<SqlTextEdit> edits,
         string text,

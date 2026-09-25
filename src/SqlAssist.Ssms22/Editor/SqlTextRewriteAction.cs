@@ -1,6 +1,8 @@
+using System.ComponentModel;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Diagnostics;
+using SqlAssist.Core.Localization;
 using SqlAssist.Core.Rewriting;
 using SqlAssist.Ssms22.Settings;
 
@@ -50,20 +52,20 @@ internal static class SqlTextRewriteAction
     {
         if (view is null || view.IsClosed)
         {
-            message = "查詢視窗已關閉。";
+            message = CommonText.QueryWindowClosed;
             return false;
         }
 
         if (view.Caret.InVirtualSpace)
         {
-            message = "游標在虛擬空白上，請把游標移到文字之間再試一次。";
+            message = EditorText.CaretInVirtualSpace;
             return false;
         }
 
         if (!view.Selection.IsEmpty && view.Selection.Mode == TextSelectionMode.Box)
         {
             // 框選是好幾段不連續的範圍，整段換掉會一起蓋掉每一段。
-            message = "框選範圍無法改寫，請改用一般選取。";
+            message = EditorText.BoxSelectionCannotRewrite;
             return false;
         }
 
@@ -77,7 +79,7 @@ internal static class SqlTextRewriteAction
 
         if (buffer.IsReadOnly(target.Span))
         {
-            message = "選取範圍為唯讀，未修改。";
+            message = EditorText.SelectionReadOnlyNoChange;
             return false;
         }
 
@@ -127,6 +129,9 @@ internal static class SqlTextRewriteAction
             ? SqlSchemaQualification.Qualify(text, caretPosition)
             : SqlTopClauseParenthesis.Parenthesize(text, caretPosition);
 
+    // 操作名稱只進平台防護的診斷紀錄（ReplaceTracked 的 operationName 也標了同一個屬性），
+    // 給維護者比對，不隨介面語言切換，所以固定繁中不進 resjson。
+    [Localizable(false)]
     private static string OperationName(SqlTextRewriteKind kind) =>
         kind == SqlTextRewriteKind.SchemaQualification ? "補齊結構描述" : "TOP 括號";
 
@@ -137,11 +142,11 @@ internal static class SqlTextRewriteAction
 
     private static string ResultMessage(SqlTextRewriteKind kind, int affected) =>
         kind == SqlTextRewriteKind.SchemaQualification
-            ? $"已補齊 {affected} 處物件的結構描述（dbo.）。"
-            : $"已補上 {affected} 處 TOP 的括號。";
+            ? EditorText.SchemaQualified(affected)
+            : EditorText.TopParenthesized(affected);
 
     private static string EmptyMessage(SqlTextRewriteKind kind) =>
         kind == SqlTextRewriteKind.SchemaQualification
-            ? "沒有找到需要補結構描述的名稱。"
-            : "沒有找到需要補括號的 TOP。";
+            ? EditorText.NoSchemaQualificationNeeded
+            : EditorText.NoTopParenthesisNeeded;
 }

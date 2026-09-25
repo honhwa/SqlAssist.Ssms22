@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Text;
 
 namespace SqlAssist.Metadata.ResultGrid;
@@ -57,13 +58,6 @@ public enum SqlPasteShape
 /// </remarks>
 public static class SqlPastedValueList
 {
-    /// <summary>整份內容都是空白時要說的那一句。</summary>
-    private const string EmptyFailure = "剪貼簿裡沒有可用的值。";
-
-    /// <summary>偵測到多欄時要說的那一句。</summary>
-    private const string MulticolumnFailure =
-        "剪貼簿內容是多欄（Tab 分隔）的表格；請只複製單一欄再試一次。";
-
     /// <summary>
     /// 把剪貼簿的文字拆成一行一個字面值。
     /// </summary>
@@ -87,7 +81,7 @@ public static class SqlPastedValueList
         if (text is null || text.Length == 0)
         {
             literals = result;
-            failure = EmptyFailure;
+            failure = ResultGridText.PasteEmptyClipboard;
             return false;
         }
 
@@ -120,7 +114,7 @@ public static class SqlPastedValueList
         if (result.Count == 0)
         {
             literals = result;
-            failure = EmptyFailure;
+            failure = ResultGridText.PasteEmptyClipboard;
             return false;
         }
 
@@ -137,6 +131,8 @@ public static class SqlPastedValueList
     /// <param name="indent">游標那一行的前導空白；端點對齊它。</param>
     /// <param name="unit">一層縮排；值比端點再深一層。</param>
     /// <param name="newLine">要用的換行（依檔案現況，不依設定）。</param>
+    // 例外訊息是程式錯誤的診斷（呼叫端傳了空的清單），不給使用者看，固定繁中不進 resjson。
+    [Localizable(false)]
     public static string Build(
         IReadOnlyList<string> literals,
         SqlPasteShape shape,
@@ -211,7 +207,7 @@ public static class SqlPastedValueList
         {
             if (Trim(cells[index]).Length > 0)
             {
-                failure = MulticolumnFailure;
+                failure = ResultGridText.PasteMulticolumnClipboard;
                 return false;
             }
         }

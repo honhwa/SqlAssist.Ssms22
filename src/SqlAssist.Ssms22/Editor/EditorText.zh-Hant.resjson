@@ -15,5 +15,18 @@
   "QueryWindowClosed": "查詢視窗已關閉，無法顯示物件結構。",
   "StructureFailed": "開啟物件結構失敗；原因已寫入診斷紀錄檔。",
   "NotDatabaseObject": "{name} 不是可辨識的資料庫物件。",
-  "NoObjectHere": "這個位置沒有可辨識的資料庫物件。"
+  "NoObjectHere": "這個位置沒有可辨識的資料庫物件。",
+  // ── 就地編輯命令（補齊結構描述、TOP 括號、貼上值清單）──
+  // 前三條是兩個命令共用的前置檢查，所以措辭不帶「改寫」或「取代」。
+  "CaretInVirtualSpace": "游標在虛擬空白上，請把游標移到文字之間再試一次。",
+  "BoxSelectionCannotRewrite": "框選範圍無法改寫，請改用一般選取。",
+  "BoxSelectionCannotReplace": "框選範圍無法取代，請改用一般選取。",
+  "SelectionReadOnlyNoChange": "選取範圍為唯讀，未修改。",
+  "InsertionReadOnlyNoPaste": "插入位置為唯讀，未貼上。",
+  // {count} 是動到的處數或筆數。
+  "SchemaQualified": "已補齊 {count:N0} 處物件的結構描述（dbo.）。",
+  "TopParenthesized": "已補上 {count:N0} 處 TOP 的括號。",
+  "NoSchemaQualificationNeeded": "沒有找到需要補結構描述的名稱。",
+  "NoTopParenthesisNeeded": "沒有找到需要補括號的 TOP。",
+  "PastedValues": "已貼上 {count:N0} 筆值"
 }
