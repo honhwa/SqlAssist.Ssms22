@@ -39,6 +39,8 @@ public sealed class SqlProcedureCallTextTests
     ///
     /// 值擺在 DECLARE 而不是呼叫上：呼叫那一行只留變數名稱，要改的值集中在一處，
     /// 而且 <c>@Days</c> 拿到的是模組的預設值 <c>7</c> 而不是型別的預留值 <c>0</c>。
+    ///
+    /// <c>OUTPUT</c> 只寫在呼叫那一行——寫在宣告上是語法錯誤。
     /// </remarks>
     [Fact]
     public void 先宣告所有參數再具名呼叫()
@@ -46,15 +48,30 @@ public sealed class SqlProcedureCallTextTests
         var text = Build(Renew, out _);
 
         Assert.Equal(
-            "DECLARE @LoanId AS int                     0;\r\n" +
-            "DECLARE @Days AS int                       7;\r\n" +
-            "DECLARE @NewDueDate AS datetime2(7) OUTPUT NULL;\r\n" +
-            "EXEC dbo.usp_Loan_Renew @LoanId = @LoanId,        -- int\r\n" +
-            "                        @Days = @Days,            -- int，選擇性\r\n" +
-            "                        @NewDueDate = @NewDueDate -- datetime2(7)\r\n" +
+            "DECLARE @LoanId AS int              = 0;\r\n" +
+            "DECLARE @Days AS int                = 7;\r\n" +
+            "DECLARE @NewDueDate AS datetime2(7) = NULL;\r\n" +
+            "EXEC dbo.usp_Loan_Renew @LoanId = @LoanId,               -- int\r\n" +
+            "                        @Days = @Days,                   -- int，選擇性\r\n" +
+            "                        @NewDueDate = @NewDueDate OUTPUT -- datetime2(7)\r\n" +
             "\r\n" +
             "SELECT @NewDueDate AS NewDueDate;",
             text);
+    }
+
+    /// <remarks>
+    /// <c>OUTPUT</c> 是呼叫端的語意，不是變數宣告的一部分：
+    /// <c>DECLARE @x INT OUTPUT</c> 根本是語法錯誤。它只寫在 <c>EXEC</c> 那一行的引數上。
+    /// </remarks>
+    [Fact]
+    public void 宣告不寫OUTPUT()
+    {
+        var text = Build(
+            new[] { new SqlStatementParameter("@rc", "int", isOutput: true, isOptional: false) },
+            out _);
+
+        Assert.StartsWith("DECLARE @rc AS int = 0;", text);
+        Assert.DoesNotContain("OUTPUT;", text, System.StringComparison.Ordinal);
     }
 
     /// <remarks>
@@ -69,7 +86,7 @@ public sealed class SqlProcedureCallTextTests
             out _);
 
         Assert.Equal(
-            "DECLARE @ReaderId AS int 0;\r\n" +
+            "DECLARE @ReaderId AS int = 0;\r\n" +
             "EXEC dbo.usp_Loan_Renew @ReaderId = @ReaderId -- int",
             text);
     }
@@ -112,7 +129,8 @@ public sealed class SqlProcedureCallTextTests
     }
 
     /// <remarks>
-    /// 純量函式的傳回參數在宣告上要寫成 <c>@rc AS INT</c>，少了 <c>AS</c> 是語法錯誤。
+    /// <c>DECLARE @x AS INT</c> 與 <c>DECLARE @x INT</c> 都合法，寫 <c>AS</c> 是為了
+    /// 讓型別的位置在長度不一的參數名稱之間對齊起來。
     /// </remarks>
     [Fact]
     public void 宣告的型別前一律寫AS()
@@ -121,7 +139,7 @@ public sealed class SqlProcedureCallTextTests
             new[] { new SqlStatementParameter("@rc", "int", isOutput: true, isOptional: false) },
             out _);
 
-        Assert.StartsWith("DECLARE @rc AS int OUTPUT ", text);
+        Assert.StartsWith("DECLARE @rc AS int = ", text);
     }
 
     /// <remarks>
@@ -139,11 +157,11 @@ public sealed class SqlProcedureCallTextTests
             },
             out _);
 
-        // 最寬的前綴是 @Note AS nvarchar(200)（28 字元），因此它後面只有一個空格。
+        // 最寬的前綴是 @Note AS nvarchar(200)（30 字元），因此它後面只有一個空格。
         // @Note 沒有預設值，走的是型別的預留值——nvarchar 是 N'' 而不是 NULL。
-        Assert.Contains("DECLARE @Name AS nvarchar(50)  N'';", text, System.StringComparison.Ordinal);
-        Assert.Contains("DECLARE @Days AS int           7;", text, System.StringComparison.Ordinal);
-        Assert.Contains("DECLARE @Note AS nvarchar(200) N'';", text, System.StringComparison.Ordinal);
+        Assert.Contains("DECLARE @Name AS nvarchar(50)  = N'';", text, System.StringComparison.Ordinal);
+        Assert.Contains("DECLARE @Days AS int           = 7;", text, System.StringComparison.Ordinal);
+        Assert.Contains("DECLARE @Note AS nvarchar(200) = N'';", text, System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -151,8 +169,8 @@ public sealed class SqlProcedureCallTextTests
     {
         var text = Build(Renew, out var caretOffset);
 
-        // DECLARE @LoanId AS int                       0;
-        //                                             ^ 游標在這裡
+        // DECLARE @LoanId AS int              = 0;
+        //                                       ^ 游標在這裡
         Assert.Equal("0;", text.Substring(caretOffset, 2));
     }
 
@@ -175,6 +193,25 @@ public sealed class SqlProcedureCallTextTests
     }
 
     /// <remarks>
+    /// OUTPUT 參數在呼叫那一行要寫 <c>OUTPUT</c>——少了它就只是一般的傳值，
+    /// 模組算出來的結果接不回來，而那一句執行得動。
+    /// </remarks>
+    [Fact]
+    public void 呼叫時OUTPUT參數帶OUTPUT()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter("@ReaderId", "int", isOutput: false, isOptional: false),
+                new SqlStatementParameter("@Total", "decimal(18,2)", isOutput: true, isOptional: false)
+            },
+            out _);
+
+        Assert.Contains("@Total = @Total OUTPUT", text, System.StringComparison.Ordinal);
+        Assert.Contains("@ReaderId = @ReaderId,", text, System.StringComparison.Ordinal);
+    }
+
+    /// <remarks>
     /// 縮排裡有定位字元時，續行只補「EXEC 名稱 」那一段的寬度：
     /// 一個定位字元只算一個字元，把它算進續行的空白數就會歪掉。
     /// 縮排從第二行起才出現——第一行是使用者原本那一行，前面沒有任何前導文字。
@@ -192,8 +229,8 @@ public sealed class SqlProcedureCallTextTests
             indent: "\t");
 
         Assert.Equal(
-            "DECLARE @ReaderId AS int 0;\r\n" +
-            "\tDECLARE @TagId AS int    0;\r\n" +
+            "DECLARE @ReaderId AS int = 0;\r\n" +
+            "\tDECLARE @TagId AS int    = 0;\r\n" +
             "\tEXEC dbo.usp_Loan_Renew @ReaderId = @ReaderId, -- int\r\n" +
             "\t                        @TagId = @TagId        -- int",
             text);

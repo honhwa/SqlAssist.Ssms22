@@ -398,7 +398,7 @@
       "default": true,
       "order": 330,
       "title": "在 EXEC 之後展開完整的參數清單",
-      "description": "選取預存程序後展開成三段：先宣告所有參數（有預設值的用模組的預設值），再具名傳值呼叫，最後把 OUTPUT 參數用 SELECT 列出來。每個參數一列並註明型別，有預設值的標示為選擇性。關閉後只插入名稱。",
+      "description": "選取預存程序後展開成三段：先宣告所有參數（有預設值的用模組的預設值），再具名傳值呼叫，最後把 OUTPUT 參數用 SELECT 列出來。每個參數一列並註明型別，有預設值的標示為選擇性。宣告一律寫成 DECLARE @x AS 型別 = 初始值，不寫 OUTPUT——那是呼叫端的語意，只寫在呼叫那一行的引數上。關閉後只插入名稱。",
       "additionalKeywords": [ "預存程序", "stored procedure", "呼叫", "OUTPUT", "DECLARE", "產生 SQL" ]
     },
     "sqlAssist.insertion.includeOptionalParameters": {

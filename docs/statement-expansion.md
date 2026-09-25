@@ -50,12 +50,12 @@ WHEN NOT MATCHED BY TARGET AND 1 = 0 THEN
 ```
 
 ```text
-DECLARE @LoanId AS int                     0;
-DECLARE @Days AS int                       7;
-DECLARE @NewDueDate AS datetime2(7) OUTPUT NULL;
-EXEC dbo.usp_Loan_Renew @LoanId = @LoanId,        -- int
-                        @Days = @Days,            -- int，選擇性
-                        @NewDueDate = @NewDueDate -- datetime2(7)
+DECLARE @LoanId AS int              = 0;
+DECLARE @Days AS int                = 7;
+DECLARE @NewDueDate AS datetime2(7) = NULL;
+EXEC dbo.usp_Loan_Renew @LoanId = @LoanId,               -- int
+                        @Days = @Days,                   -- int，選擇性
+                        @NewDueDate = @NewDueDate OUTPUT -- datetime2(7)
 
 SELECT @NewDueDate AS NewDueDate;
 ```
@@ -67,6 +67,11 @@ SELECT @NewDueDate AS NewDueDate;
 呼叫，是因為呼叫那一行留著變數名稱才看得出「這個值要改」。
 預設值讀不出來（或本身是運算式）時才退回型別的預留值，
 見[展開內容](statement-values.md)。
+
+`OUTPUT` 只寫在呼叫那一行，宣告上一律不寫。那是**呼叫端**的語意——「這個變數要
+接回傳值」——不是變數宣告的一部分，`DECLARE @x INT OUTPUT` 本身是語法錯誤。
+反過來說，每一個參數在呼叫端都是變數，所以 `OUTPUT` 參數也一樣要先宣告，
+否則那一句連編譯都過不了。
 
 五種展開只有「換成什麼」與「換掉哪一段」不一樣，「怎麼安全地換」是同一份：
 先把名稱插進去，用 `ITrackingSpan` 記住範圍，到背景取物件細節，回來確認原文
