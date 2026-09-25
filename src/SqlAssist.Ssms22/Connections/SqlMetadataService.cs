@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Data;
 using System.Diagnostics;
 using System.Threading;
@@ -427,7 +428,7 @@ internal sealed class SqlMetadataService : IDisposable
 
     private static SqlSuggestion CreateCollation(string name, bool isDatabaseDefault)
     {
-        var description = isDatabaseDefault ? "目前資料庫的定序" : "定序";
+        var description = isDatabaseDefault ? ConnectionText.CurrentDatabaseCollation : ConnectionText.Collation;
 
         return new SqlSuggestion(
             name,
@@ -616,7 +617,7 @@ internal sealed class SqlMetadataService : IDisposable
                 parameter.Name,
                 parameter.Name + " = ",
                 parameter.IsOutput ? parameter.DataType + " OUTPUT" : parameter.DataType,
-                $"{matches[0].QualifiedName} 的參數：{parameter.ToScriptLine()}",
+                ConnectionText.ParameterOf(matches[0].QualifiedName, parameter.ToScriptLine()),
                 SuggestionKind.Parameter));
         }
 
@@ -1173,7 +1174,7 @@ internal sealed class SqlMetadataService : IDisposable
     /// 建議清單的延遲只有在使用者遇到時才觀察得到，事後要求對方重現並開啟追蹤
     /// 才拿得到數字，等於白白浪費一次。慢的操作本來就少，直接記下來成本可以忽略。
     /// </remarks>
-    private static void ReportIfSlow(string operation, Stopwatch timer, int thresholdMilliseconds = 200)
+    private static void ReportIfSlow([Localizable(false)] string operation, Stopwatch timer, int thresholdMilliseconds = 200)
     {
         timer.Stop();
 
@@ -1637,7 +1638,7 @@ internal sealed class SqlMetadataService : IDisposable
                     server,
                     server,
                     "Linked server",
-                    $"連結伺服器 {SqlIdentifier.QuoteIfNeeded(server)}",
+                    ConnectionText.LinkedServer(SqlIdentifier.QuoteIfNeeded(server)),
                     SuggestionKind.LinkedServer));
             }
         }
@@ -1665,7 +1666,7 @@ internal sealed class SqlMetadataService : IDisposable
         string? sourceName,
         SqlJoinKey? joinKey)
     {
-        var origin = sourceName ?? "查詢結果";
+        var origin = sourceName ?? ConnectionText.QueryResult;
         var source = qualifier is null ? string.Empty : $" · {qualifier}";
 
         // 配對鍵插入的是整條條件，顯示文字仍是欄位本身：使用者選的是那個欄位，
