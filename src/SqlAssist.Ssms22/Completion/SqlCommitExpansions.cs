@@ -229,10 +229,10 @@ internal sealed class SqlMergeStatementExpansion : ISqlCommitExpansion
 }
 
 /// <summary>
-/// 把已插入的模組名稱換成一整句具名傳值的 <c>EXEC</c>。
+/// 把已插入的模組名稱換成一整段「先宣告、再呼叫、最後取回輸出」的 <c>EXEC</c>。
 /// </summary>
 /// <remarks>
-/// 「哪些參數可以省略」只能從模組定義讀出來（見
+/// 「哪些參數可以省略」與「省略時值是多少」都只能從模組定義讀出來（見
 /// <see cref="SqlModuleParameterDefaults"/>），而定義與參數在同一次
 /// <c>GetDetailAsync</c> 就一起回來了，因此不多付一次往返。
 /// </remarks>
@@ -259,7 +259,7 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
 
     public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
     {
-        var optional = SqlModuleParameterDefaults.Find(detail.Definition);
+        var defaults = SqlModuleParameterDefaults.Resolve(detail.Definition);
         var parameters = new List<SqlStatementParameter>(detail.Parameters.Count);
 
         foreach (var parameter in detail.Parameters)
@@ -270,11 +270,11 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 continue;
             }
 
-            var isOptional = optional.Contains(parameter.Name);
+            // 讀不到定義時 defaults 是空的，於是每個參數都算必填——寧可展開得多，
+            // 也不要因為讀不到定義就把該填的參數吞掉，那一句貼上去才是真的執行不了。
+            var isOptional = defaults.TryGetValue(parameter.Name, out var defaultValue);
 
-            // 省略選擇性參數是合法的呼叫方式，不是少展開一半。定義讀不到時
-            // optional 是空的，於是每個參數都算必填——寧可展開得多，也不要因為
-            // 讀不到定義就把該填的參數吞掉，那一句貼上去才是真的執行不了。
+            // 省略選擇性參數是合法的呼叫方式，不是少展開一半。
             if (isOptional && !_settings.IncludeOptionalParameters)
             {
                 continue;
@@ -284,7 +284,8 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 parameter.Name,
                 parameter.DataType,
                 parameter.IsOutput,
-                isOptional));
+                isOptional,
+                defaultValue));
         }
 
         // 沒有參數的程序展開起來與只插入名稱完全一樣，那就不必動它——

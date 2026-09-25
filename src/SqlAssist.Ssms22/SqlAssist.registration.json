@@ -398,15 +398,15 @@
       "default": true,
       "order": 330,
       "title": "在 EXEC 之後展開完整的參數清單",
-      "description": "選取預存程序後展開成具名傳值的呼叫，每個參數一列並註明型別；有預設值的參數標示為選擇性，OUTPUT 參數會一併補上 DECLARE。關閉後只插入名稱。",
-      "additionalKeywords": [ "預存程序", "stored procedure", "呼叫", "OUTPUT", "產生 SQL" ]
+      "description": "選取預存程序後展開成三段：先宣告所有參數（有預設值的用模組的預設值），再具名傳值呼叫，最後把 OUTPUT 參數用 SELECT 列出來。每個參數一列並註明型別，有預設值的標示為選擇性。關閉後只插入名稱。",
+      "additionalKeywords": [ "預存程序", "stored procedure", "呼叫", "OUTPUT", "DECLARE", "產生 SQL" ]
     },
     "sqlAssist.insertion.includeOptionalParameters": {
       "type": "boolean",
       "default": true,
       "order": 340,
       "title": "EXEC 展開時包含選擇性參數",
-      "description": "關閉後只展開必填參數，在定義裡已經給了預設值的那些一律省略——省略選擇性參數本來就是合法的呼叫方式，參數很多的程序因此短得多。整支程序的參數都有預設值時就不展開了，維持只插入名稱。",
+      "description": "關閉後只展開必填參數，在定義裡已經給了預設值的那些一律省略，也不寫進 DECLARE——省略選擇性參數本來就是合法的呼叫方式，參數很多的程序因此短得多。整支程序的參數都有預設值時就不展開了，維持只插入名稱。",
       "additionalKeywords": [ "預設值", "必填", "選填", "optional", "default", "太長" ],
       "enableWhen": "${config:sqlAssist.insertion.expandProcedureCall} == 'true'"
     },

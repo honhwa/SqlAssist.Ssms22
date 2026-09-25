@@ -111,4 +111,67 @@ END");
 
         Assert.Contains("@TAGID", defaults);
     }
+
+    /// <remarks>
+    /// <see cref="SqlModuleParameterDefaults.Resolve"/> 多帶回預設值本身，
+    /// 展開成 <c>DECLARE</c> 時要拿它當初始值。
+    /// </remarks>
+    [Fact]
+    public void 取回預設值的字面值()
+    {
+        var values = SqlModuleParameterDefaults.Resolve(@"
+CREATE PROCEDURE dbo.usp_Loan_Renew
+    @Days INT = 7,
+    @Note NVARCHAR(200) = NULL,
+    @Fee DECIMAL(18,2) = 0.05,
+    @Tag NVARCHAR(50) = N'逾期',
+    @Created DATETIME = GETDATE()
+AS
+SELECT 1");
+
+        Assert.Equal("7", values["@Days"]);
+        Assert.Equal("NULL", values["@Note"]);
+        Assert.Equal("0.05", values["@Fee"]);
+        Assert.Equal("N'逾期'", values["@Tag"]);
+        Assert.Equal("GETDATE()", values["@Created"]);
+    }
+
+    /// <remarks>
+    /// 運算式的預設值整組放棄。收成運算式的前半段（<c>1</c>、<c>'x'</c>）會組出
+    /// 一個語法正確卻算錯的值，比留給使用者自己填糟糕得多。
+    /// </remarks>
+    [Theory]
+    [InlineData("@A INT = 1 + 2")]
+    [InlineData("@C NVARCHAR(10) = 'x' + 'y'")]
+    [InlineData("@E DATETIME = GETDATE() + 1")]
+    [InlineData("@F INT = -1")]
+    public void 運算式的預設值不取(string declaration)
+    {
+        var values = SqlModuleParameterDefaults.Resolve(
+            $"CREATE PROCEDURE dbo.usp_Calc {declaration} AS SELECT 1");
+
+        Assert.Empty(values);
+    }
+
+    /// <remarks>
+    /// <c>Token.Text</c> 只有名稱本身，少了那一對括號，
+    /// <c>DECLARE @d DATETIME = GETDATE</c> 是語法錯誤。
+    /// </remarks>
+    [Fact]
+    public void 函式呼叫的預設值連括號一起帶回()
+    {
+        var values = SqlModuleParameterDefaults.Resolve(
+            "CREATE PROCEDURE dbo.usp_Touch @At DATETIME = GETDATE() AS SELECT 1");
+
+        Assert.Equal("GETDATE()", values["@At"]);
+    }
+
+    [Fact]
+    public void 識別字開頭但不完整的預設值不取()
+    {
+        var values = SqlModuleParameterDefaults.Resolve(
+            "CREATE PROCEDURE dbo.usp_Flag @On BIT = ON OFF AS SELECT 1");
+
+        Assert.Empty(values);
+    }
 }

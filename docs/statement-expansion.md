@@ -50,11 +50,23 @@ WHEN NOT MATCHED BY TARGET AND 1 = 0 THEN
 ```
 
 ```text
-DECLARE @NewDueDate datetime2(7);
-EXEC dbo.usp_Loan_Renew @LoanId = 0,                     -- int
-                        @Days = 0,                       -- int，選擇性
-                        @NewDueDate = @NewDueDate OUTPUT -- datetime2(7)
+DECLARE @LoanId AS int                     0;
+DECLARE @Days AS int                       7;
+DECLARE @NewDueDate AS datetime2(7) OUTPUT NULL;
+EXEC dbo.usp_Loan_Renew @LoanId = @LoanId,        -- int
+                        @Days = @Days,            -- int，選擇性
+                        @NewDueDate = @NewDueDate -- datetime2(7)
+
+SELECT @NewDueDate AS NewDueDate;
 ```
+
+`EXEC` 展開成三段，因為「參數要先有變數」在 T-SQL 裡是硬性的：所有參數一律先
+`DECLARE`，呼叫那一行只傳變數名稱，最後把 `OUTPUT` 參數 `SELECT` 出來
+（輸出參數的值只在變數裡，SSMS 的「訊息」頁看不到）。有預設值的用**模組的預設值**
+當初始值——省略它就是這個值，換成型別的預留值等於把它改掉。值擺在宣告而不是擺在
+呼叫，是因為呼叫那一行留著變數名稱才看得出「這個值要改」。
+預設值讀不出來（或本身是運算式）時才退回型別的預留值，
+見[展開內容](statement-values.md)。
 
 五種展開只有「換成什麼」與「換掉哪一段」不一樣，「怎麼安全地換」是同一份：
 先把名稱插進去，用 `ITrackingSpan` 記住範圍，到背景取物件細節，回來確認原文
@@ -85,6 +97,7 @@ EXEC dbo.usp_Loan_Renew @LoanId = 0,                     -- int
 使用者得自己捲回去才看得到剛剛選的是什麼。
 
 `INSERT` 與 `EXEC` 停在**第一個要填的值**上——展開之後要做的第一件事就是填它。
+`EXEC` 的第一個值在第一列 `DECLARE` 的初始值上，不在呼叫那一行。
 `MERGE` 停在 `USING` 後面的來源資料表上，理由相同：三個子句都填好了，
 唯一還沒填的就是它。
 `ALTER` 沒有待填的值，停在標頭的**物件名稱之後**：讀一份既有定義是從名稱與參數
