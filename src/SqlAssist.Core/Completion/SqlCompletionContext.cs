@@ -24,7 +24,8 @@ public sealed class SqlCompletionContext
         IReadOnlyList<SqlColumnSource>? scopeSources = null,
         IReadOnlyList<SqlSuggestion>? scriptSources = null,
         SqlExecutedModule? executedModule = null,
-        int qualifierStart = -1)
+        int qualifierStart = -1,
+        bool mayAppendTableAlias = false)
     {
         ScriptSources = scriptSources ?? NoScriptSources;
         IsValid = isValid;
@@ -39,6 +40,7 @@ public sealed class SqlCompletionContext
         ScopeSources = scopeSources ?? NoSources;
         ExecutedModule = executedModule;
         QualifierStart = qualifierStart;
+        MayAppendTableAlias = mayAppendTableAlias;
     }
 
     public bool IsValid { get; }
@@ -185,6 +187,19 @@ public sealed class SqlCompletionContext
     public CompletionIntent Intent { get; }
 
     /// <summary>
+    /// 這個位置接不接受「名稱後面再加一個別名」。
+    /// </summary>
+    /// <remarks>
+    /// 刻意不從 <see cref="Target"/> 推導。有幾個位置的目標同樣是
+    /// <see cref="CompletionTarget.DataSource"/>，文法上卻不接受別名：
+    /// <c>INSERT INTO</c> 的目標表與 <c>DROP TABLE</c> 的名稱一樣是資料來源，
+    /// 兩者後面接一個別名都是語法錯誤。反過來說，<c>FROM </c> 與 <c>JOIN </c>
+    /// 之後的名稱不接別名只是可惜，不是錯——所以這一個判斷與「別名還沒寫」
+    /// 那一個（<c>SqlKeywordPositionAnalyzer</c>）互補，兩邊都問過才動手。
+    /// </remarks>
+    public bool MayAppendTableAlias { get; }
+
+    /// <summary>
     /// 游標落在哪一個關鍵字位置。
     /// </summary>
     /// <remarks>
@@ -211,7 +226,8 @@ public sealed class SqlCompletionContext
             sources,
             ScriptSources,
             ExecutedModule,
-            QualifierStart);
+            QualifierStart,
+            MayAppendTableAlias);
     }
 
     /// <summary>複製這個上下文，補上指令碼自己宣告的資料來源。</summary>
@@ -230,7 +246,8 @@ public sealed class SqlCompletionContext
             ScopeSources,
             sources,
             ExecutedModule,
-            QualifierStart);
+            QualifierStart,
+            MayAppendTableAlias);
     }
 
     /// <summary>複製這個上下文，換上重新對齊過的限定字。</summary>
@@ -256,7 +273,8 @@ public sealed class SqlCompletionContext
             ScopeSources,
             ScriptSources,
             ExecutedModule,
-            QualifierStart);
+            QualifierStart,
+            MayAppendTableAlias);
     }
 
     /// <summary>複製這個上下文，改以欄位為建議目標。</summary>
@@ -275,6 +293,7 @@ public sealed class SqlCompletionContext
             ScopeSources,
             ScriptSources,
             ExecutedModule,
-            QualifierStart);
+            QualifierStart,
+            MayAppendTableAlias);
     }
 }

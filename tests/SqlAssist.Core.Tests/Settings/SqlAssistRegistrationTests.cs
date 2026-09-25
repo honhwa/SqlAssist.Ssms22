@@ -24,6 +24,7 @@ public sealed class SqlAssistRegistrationTests
     [Theory]
     [InlineData("sqlAssist.notifications.verbosity", "quiet", "normal", "verbose", "all")]
     [InlineData("sqlAssist.insertion.wildcardLayout", "oneLineWhenShort", "onePerLine", "fillWidth")]
+    [InlineData("sqlAssist.insertion.tableSourceAliasStyle", "none", "as", "off")]
     [InlineData("sqlAssist.structure.previewMode", "delay", "rightArrow", "off")]
     [InlineData("sqlAssist.structure.previewPlacement", "stacked", "beside")]
     [InlineData("sqlAssist.structure.scriptStyle", "fidelity", "ssmsNative", "minimal")]

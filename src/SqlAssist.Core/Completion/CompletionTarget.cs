@@ -3,6 +3,27 @@ namespace SqlAssist.Core.Completion;
 public enum CompletionTarget
 {
     Any,
+
+    /// <summary>
+    /// 游標停在述詞的起點（<c>ON</c>、<c>WHERE</c>、<c>HAVING</c> 與 <c>AND</c>／<c>OR</c>
+    /// 的正後方），因此除了欄位之外還要提議配對鍵。
+    /// </summary>
+    /// <remarks>
+    /// 它<b>不是新的一類建議目標</b>：要列的東西與欄位相同，只是其中幾筆帶著
+    /// 已經配好的對象。會獨立成一個目標是因為「這裡算不算述詞起點」影響三件事：
+    ///
+    /// <list type="bullet">
+    /// <item><c>SqlCompletionContextAnalyzer</c> 用它決定要不要參與——
+    /// 空前綴時目標本來是 <see cref="Any"/>，而 <see cref="Any"/> 是不參與的，
+    /// 所以少了這一條，<c>ON </c> 之後清單根本不會出現。</item>
+    /// <item><c>SqlAsyncCompletionSource.InitializeCompletionCore</c> 的觸發字元數門檻
+    /// 認的是「目標不是 <see cref="Any"/>」，因此這裡也跟著放行。</item>
+    /// <item><c>SqlCompletionTriggers.ShouldReopen</c> 在目標不是 <see cref="Any"/> 時
+    /// 會重開清單，讓使用者打完 <c>AND </c> 之後不必再打一個字。</item>
+    /// </list>
+    /// </remarks>
+    Predicate,
+
     DataSource,
     Procedure,
 

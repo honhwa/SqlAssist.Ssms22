@@ -375,6 +375,16 @@ internal sealed class SqlFunctionCallExpansion : ISqlCommitExpansion
 
     public SqlObjectInfo Object { get; }
 
+    /// <summary>
+    /// 要接在引數清單右括號之後的自動別名，含前後空白；沒有時為 null。
+    /// </summary>
+    /// <remarks>
+    /// 由提交端從建議項上取回填進來：自動別名是「提交的位置」決定的
+    /// （<see cref="SqlAssist.Core.Completion.SqlAutoAlias.ComposeSuffix"/> 要看上下文），
+    /// 而展開這裡只看得到物件與引數，問不出那個位置。
+    /// </remarks>
+    internal string? TableSourceAliasSuffix { get; set; }
+
     /// <summary>參數只有中繼資料層拿得到，這裡永遠要查。</summary>
     public SqlObjectDetail? KnownDetail => null;
 
@@ -437,6 +447,12 @@ internal sealed class SqlFunctionCallExpansion : ISqlCommitExpansion
         }
 
         var text = SqlFunctionCallText.Build(insertedName, arguments, out var caretOffset);
+
+        // 別名接在右括號之後；caretOffset 是從字串開頭算的，接在尾巴不影響它。
+        if (TableSourceAliasSuffix is not null)
+        {
+            text += TableSourceAliasSuffix;
+        }
 
         return new TextReplacement(
             text,

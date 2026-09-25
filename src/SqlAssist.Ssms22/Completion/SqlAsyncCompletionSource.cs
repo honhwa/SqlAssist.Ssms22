@@ -40,6 +40,13 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     /// <summary>把建議項原始資料掛回 <see cref="CompletionItem"/> 的鍵。</summary>
     internal const string SuggestionKey = "SqlAssist.Suggestion";
 
+    /// <summary>展開函式呼叫時要接在右括號之後的別名，掛在項目上。</summary>
+    /// <remarks>
+    /// 與 <see cref="SuggestionKey"/> 一樣掛在項目而不是 session：同一次清單裡的
+    /// 每一筆建議各帶各的別名，掛在 session 上的話會互相蓋掉。
+    /// </remarks>
+    internal const string TableSourceAliasKey = "SqlAssist.TableSourceAlias";
+
     /// <summary>這一次的適用範圍是原生 Snippet 欄位時，樣板為它填的預設值。</summary>
     /// <remarks>
     /// 排名器要用它把「整格還是樣板的字」判成空前綴。放在 session 上而不是欄位：
@@ -559,7 +566,7 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 敘述裡看得到的欄位放在資料庫物件前面：SELECT | FROM PUBLISHER a 這種位置，
         // 使用者要的幾乎都是欄位，而不是整個資料庫的物件清單。
-        var scopeColumns = _metadataService.GetCachedScopeColumns(context.ScopeSources);
+        var scopeColumns = _metadataService.GetCachedScopeColumns(context);
         var candidates = builtIn.Concat(scopeColumns).Concat(database);
 
         // sys.| 與 EXEC | 才把系統物件拉進來：那一份有一兩千筆，混進一般清單的話，
@@ -600,6 +607,20 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 提交與排名都需要拿回原始建議項；PropertyCollection 是官方提供的掛載點。
         item.Properties.AddProperty(SuggestionKey, suggestion);
+
+        // 展開函式呼叫時，別名要接在右括號之後，而那串引數是提交當下才知道的，
+        // 所以這裡先把字尾算好掛在項目上，交給 SqlAsyncCompletionCommitManager 轉給展開器。
+        // 掛在 item 而不是 session：同一個 session 裡的每一筆建議各帶各的別名。
+        if (suggestion.Kind == SuggestionKind.TableFunction && settings.ExpandFunctionCall)
+        {
+            var tableSourceAliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
+
+            if (tableSourceAliasSuffix is not null)
+            {
+                item.Properties.AddProperty(TableSourceAliasKey, tableSourceAliasSuffix);
+            }
+        }
+
         return item;
     }
 
@@ -670,6 +691,7 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         CompletionTarget.Function => "函式",
         CompletionTarget.TableFunction => "資料表值函式",
         CompletionTarget.Column => "資料行",
+        CompletionTarget.Predicate => "述詞",
         CompletionTarget.Database => "資料庫",
         CompletionTarget.GlobalVariable => "全域變數",
         CompletionTarget.Variable => "變數",

@@ -61,6 +61,11 @@ public sealed class SqlCompletionTriggerTests
     /// 這是與點號同一類的問題：使用者打完 <c>FROM</c> 時清單還開著（裡面是關鍵字），
     /// 空白鍵一按，平台拿 <c>FROM </c> 去比對那份清單，比不中就關掉。
     /// 少了這一條，<c>SELECT * FROM |</c> 要再多打一個字母才列得出資料表。
+    ///
+    /// 述詞的起點也在這裡：<c>ON </c> 與 <c>WHERE </c> 之後要的是那一條聯結或篩選
+    /// 條件，清單要在打完 <c>ON</c> 的當下就出現。它曾經不在這一份名單上，因為
+    /// 目標當時是「判不出上下文」的那一個；現在它判得出來，見
+    /// <see cref="CompletionTarget.Predicate"/>。
     /// </remarks>
     [Fact]
     public void 目標收斂的關鍵字後方要重開()
@@ -71,6 +76,9 @@ public sealed class SqlCompletionTriggerTests
         Assert.True(ShouldReopen("USE |"));
         Assert.True(ShouldReopen("ALTER PROCEDURE |"));
         Assert.True(ShouldReopen("INSERT INTO |"));
+        Assert.True(ShouldReopen("SELECT * FROM A a WHERE |"));
+        Assert.True(ShouldReopen("SELECT * FROM A a INNER JOIN B b ON |"));
+        Assert.True(ShouldReopen("SELECT * FROM A a WHERE a.Id = 1 AND |"));
     }
 
     /// <summary>
@@ -87,7 +95,7 @@ public sealed class SqlCompletionTriggerTests
         Assert.False(ShouldReopen("SELECT |"));
         Assert.False(ShouldReopen("SELECT COUNT(|"));
         Assert.False(ShouldReopen("SELECT a.X, |"));
-        Assert.False(ShouldReopen("SELECT * FROM A a WHERE |"));
+        Assert.False(ShouldReopen("SELECT * FROM A a |"));
     }
 
     /// <summary>游標不在結束詞元的字元後面就與這件事無關，例如剛打完一個字母。</summary>

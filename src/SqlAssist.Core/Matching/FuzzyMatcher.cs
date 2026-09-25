@@ -44,8 +44,16 @@ public static class FuzzyMatcher
     /// <summary>命中候選字串第一個字元時，詞首加成的倍率。</summary>
     public const int BonusFirstCharMultiplier = 2;
 
-    /// <summary>SQL 識別字中常見、應視為詞界的分隔符。</summary>
-    private const string SqlDelimiters = "_.#@$-/\\:,;|";
+    /// <summary>
+    /// SQL 識別字中常見、應視為詞界的分隔符。
+    /// </summary>
+    /// <remarks>
+    /// 配對鍵的正規化也用這一份（<see cref="Completion.SqlJoinKeyMatcher.Normalize"/>）：
+    /// 那裡的問題是「<c>Copy_No</c> 與 <c>CopyNo</c> 是不是同一個名稱」，
+    /// 與這裡「分子序列時哪裡算詞界」是同一把尺。各維護一份的話，
+    /// 兩邊會在新增一個分隔符時慢慢分岔，而分岔的症狀只有在特定欄位名稱上才看得到。
+    /// </remarks>
+    internal const string SqlDelimiters = "_.#@$-/\\:,;|";
 
     private static readonly int[] EmptyPositions = Array.Empty<int>();
 

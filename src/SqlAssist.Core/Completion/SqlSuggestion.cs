@@ -14,7 +14,8 @@ public sealed class SqlSuggestion
         string? schemaName = null,
         object? tag = null,
         SqlKeywordPosition positions = SqlKeywordPosition.Any,
-        bool isDestructive = false)
+        bool isDestructive = false,
+        SqlJoinKey? joinKey = null)
     {
         DisplayText = displayText;
         InsertionText = insertionText;
@@ -26,6 +27,7 @@ public sealed class SqlSuggestion
         Tag = tag;
         Positions = positions;
         IsDestructive = isDestructive;
+        JoinKey = joinKey;
     }
 
     public string DisplayText { get; }
@@ -59,4 +61,14 @@ public sealed class SqlSuggestion
 
     /// <summary>沒有輸入前綴時不主動顯示的危險項目。</summary>
     public bool IsDestructive { get; }
+
+    /// <summary>
+    /// 這一筆欄位在同名配對裡找到的對象；沒有對象時為 null。
+    /// </summary>
+    /// <remarks>
+    /// 帶著它就代表帶著插入文字——提交時要寫的是整條 <c>b.CopyNo = a.CopyNo</c>，
+    /// 而不是只有欄位名稱。排名也問這一個：配對鍵在欄位這一類裡該排在前面，
+    /// 見 <c>SuggestionMatcher.JoinKeyBonus</c>。
+    /// </remarks>
+    public SqlJoinKey? JoinKey { get; }
 }

@@ -495,7 +495,8 @@ internal sealed class SqlMetadataService : IDisposable
                         name,
                         settings,
                         qualifier: null,
-                        source.SourceName));
+                        source.SourceName,
+                        null));
                 }
 
                 continue;
@@ -525,7 +526,7 @@ internal sealed class SqlMetadataService : IDisposable
 
             foreach (var column in detail.Columns)
             {
-                suggestions.Add(BuildColumnSuggestion(resolved.Object, column, settings, qualifier: null));
+                suggestions.Add(BuildColumnSuggestion(resolved.Object, column, settings, qualifier: null, null));
             }
         }
 
@@ -758,10 +759,20 @@ internal sealed class SqlMetadataService : IDisposable
     ///
     /// 有兩個以上相異的限定字時，插入的文字會補上別名，否則
     /// <c>SELECT Name FROM A a JOIN B b</c> 這種寫法會因為欄位名稱模稜兩可而執行失敗。
+    ///
+    /// 吃的是整個上下文而不是來源清單，因為配對鍵要問「游標停在哪一種位置」——
+    /// 那不在來源清單裡。
     /// </remarks>
-    public IReadOnlyList<SqlSuggestion> GetCachedScopeColumns(IReadOnlyList<SqlColumnSource> sources)
+    public IReadOnlyList<SqlSuggestion> GetCachedScopeColumns(SqlCompletionContext context)
     {
-        if (sources is null || sources.Count == 0 || _disposed)
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        var sources = context.ScopeSources;
+
+        if (sources.Count == 0 || _disposed)
         {
             return Array.Empty<SqlSuggestion>();
         }
@@ -769,11 +780,20 @@ internal sealed class SqlMetadataService : IDisposable
         var settings = SqlAssistSettingsStore.Current;
         var qualify = NeedsQualifier(sources);
         var suggestions = new List<SqlSuggestion>();
+
+        // 第一趟只收名稱，先不建建議項：配對要看過所有來源才知道誰跟誰同名，而配對的
+        // 結果會改掉其中幾筆的插入文字。名稱還不知道的來源照樣佔一格（給空集合），
+        // 索引才對得上來源——配對結果指的是索引，少一格就會指到別張表去。
+        var objects = new SqlObjectInfo?[sources.Count];
+        var details = new SqlObjectDetail?[sources.Count];
+        var keySources = new List<SqlJoinKeySource>(sources.Count);
         SqlMetadataCatalog? catalog = null;
         SqlDatabaseSnapshot? snapshot = null;
 
-        foreach (var source in sources)
+        for (var index = 0; index < sources.Count; index++)
         {
+            var source = sources[index];
+
             if (source.Kind == SqlColumnSourceKind.Names)
             {
                 foreach (var name in source.Names)
@@ -782,9 +802,11 @@ internal sealed class SqlMetadataService : IDisposable
                         name,
                         settings,
                         qualify ? source.Qualifier : null,
-                        source.SourceName));
+                        source.SourceName,
+                        null));
                 }
 
+                keySources.Add(new SqlJoinKeySource(source.Qualifier, source.Names));
                 continue;
             }
 
@@ -799,38 +821,133 @@ internal sealed class SqlMetadataService : IDisposable
                 ? snapshot ??= catalog?.CachedSnapshot
                 : sourceCatalog?.CachedSnapshot;
 
-            if (sourceCatalog is null || sourceSnapshot is null || sourceSnapshot.IsEmpty)
+            if (sourceCatalog is null ||
+                sourceSnapshot is null ||
+                sourceSnapshot.IsEmpty ||
+                !TryPeekResolved(sourceCatalog, sourceSnapshot, source.Table!, out var objectInfo, out var detail))
+            {
+                keySources.Add(new SqlJoinKeySource(source.Qualifier, Array.Empty<string>()));
+                continue;
+            }
+
+            objects[index] = objectInfo;
+            details[index] = detail;
+            keySources.Add(new SqlJoinKeySource(
+                source.Qualifier,
+                ToColumnNames(detail) ?? Array.Empty<string>()));
+        }
+
+        // 述詞的起點另外決定「單一來源時索引鍵要不要排到最前面」，所以算一次就好。
+        var predicate = SqlJoinKeyMatcher.WantsJoinKeys(context);
+        var match = predicate ? SqlJoinKeyMatcher.Pair(keySources) : SqlJoinKeyMatch.Empty;
+
+        return BuildScopeColumnSuggestions(sources, objects, details, match, settings, qualify, predicate);
+    }
+
+    /// <summary>
+    /// 第二趟：把兩趟之間收好的來源轉成建議項，配對鍵排在最前面。
+    /// </summary>
+    /// <remarks>
+    /// 配對鍵只出現在<b>當前對象</b>那幾個來源上，由 <see cref="SqlJoinKeyMatch.SourceIndexes"/>
+    /// 指認。同名欄位在別的來源裡也有，靠名稱比對會把前面那張表一起改掉——
+    /// <c>FROM A a JOIN B b ON |</c> 的 <c>a.CopyNo</c> 不該變成整條條件。
+    ///
+    /// 同一筆欄位只出現一次：被配對到的欄位不再留在它原本的位置上，而是移到最前面
+    /// 並換上整條條件的插入文字。兩個位置各放一筆的話，清單看起來一樣，選了卻寫出
+    /// 完全不同的東西。
+    /// </remarks>
+    /// <param name="predicate">
+    /// 只有一個來源時才起作用：那時沒有聯結條件可配，述詞的起點要的是
+    /// 「這張表拿來篩選的欄位」，所以交給
+    /// <see cref="SqlColumnOrdering.IndexKeysFirst"/> 把索引鍵排到前面。多個來源時不排：
+    /// 那會讓每一張表的索引鍵一起浮上來，反而蓋掉配對鍵的順序。
+    /// </param>
+    private static List<SqlSuggestion> BuildScopeColumnSuggestions(
+        IReadOnlyList<SqlColumnSource> sources,
+        SqlObjectInfo?[] objects,
+        SqlObjectDetail?[] details,
+        SqlJoinKeyMatch match,
+        SqlAssistSettings settings,
+        bool qualify,
+        bool predicate)
+    {
+        var keys = new List<SqlSuggestion>();
+        var columns = new List<SqlSuggestion>();
+
+        HashSet<int>? current = match.IsEmpty ? null : new HashSet<int>(match.SourceIndexes);
+        var indexKeysFirst = predicate && sources.Count == 1;
+
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var source = sources[index];
+            var qualifier = qualify ? source.Qualifier : null;
+            var pairs = current is not null && current.Contains(index) ? match.Pairs : null;
+
+            if (source.Kind == SqlColumnSourceKind.Names)
+            {
+                foreach (var name in source.Names)
+                {
+                    var joinKey = PairFor(pairs, name);
+
+                    (joinKey is null ? columns : keys).Add(
+                        BuildScriptColumnSuggestion(name, settings, qualifier, source.SourceName, joinKey));
+                }
+
+                continue;
+            }
+
+            if (objects[index] is not { } objectInfo || details[index] is not { } detail)
             {
                 continue;
             }
 
-            if (!TryPeekResolved(sourceCatalog, sourceSnapshot, source.Table!, out var objectInfo, out var detail))
-            {
-                continue;
-            }
+            var order = indexKeysFirst ? SqlColumnOrdering.IndexKeysFirst(detail.Columns) : detail.Columns;
 
-            foreach (var column in detail.Columns)
+            foreach (var column in order)
             {
-                suggestions.Add(BuildColumnSuggestion(
-                    objectInfo,
-                    column,
-                    settings,
-                    qualify ? source.Qualifier : null));
+                var joinKey = PairFor(pairs, column.Name);
+
+                (joinKey is null ? columns : keys).Add(
+                    BuildColumnSuggestion(objectInfo, column, settings, qualifier, joinKey));
             }
         }
 
-        return suggestions;
+        keys.AddRange(columns);
+        return keys;
+    }
+
+    /// <summary>從配對結果取出這個欄位的配對；不在配對裡就是 null。</summary>
+    /// <remarks><paramref name="pairs"/> 為 null 代表這個來源不是當前對象。</remarks>
+    private static SqlJoinKey? PairFor(IReadOnlyDictionary<string, SqlJoinKey>? pairs, string name)
+    {
+        if (pairs is null)
+        {
+            return null;
+        }
+
+        return pairs.TryGetValue(name, out var found) ? found : null;
     }
 
     /// <summary>
     /// 插入的欄位名稱要不要補限定字。
     /// </summary>
     /// <remarks>
-    /// 依據是<b>相異</b>的限定字數量而不是來源數量：<c>FROM (SELECT Id, * FROM T t) d</c>
-    /// 攤平出兩個來源，但它們都叫 <c>d</c>，欄位名稱不可能因此模稜兩可。
+    /// 多個來源時的依據是<b>相異</b>的限定字數量而不是來源數量：
+    /// <c>FROM (SELECT Id, * FROM T t) d</c> 攤平出兩個來源，但它們都叫 <c>d</c>，
+    /// 欄位名稱不可能因此模稜兩可。
+    ///
+    /// 只有一個來源時本來不必補，但使用者自己取了別名就跟著他的寫法帶出來：
+    /// <c>FROM dbo.Loan l WHERE |</c> 要的是 <c>l.CopyNo</c>，而 <c>FROM dbo.Loan |</c>
+    /// 這種沒寫別名的位置不該無緣無故多一段表名——那會讓最單純的查詢清單變吵，
+    /// 而且表名比欄位名長，插入之後還要自己刪。
     /// </remarks>
     private static bool NeedsQualifier(IReadOnlyList<SqlColumnSource> sources)
     {
+        if (sources.Count == 1)
+        {
+            return IsAlias(sources[0]);
+        }
+
         string? first = null;
 
         foreach (var source in sources)
@@ -854,6 +971,17 @@ internal sealed class SqlMetadataService : IDisposable
 
         return false;
     }
+
+    /// <summary>
+    /// 這個來源的限定字是使用者自己取的別名，而不是資料表名稱本身。
+    /// </summary>
+    /// <remarks>
+    /// 衍生資料表（<see cref="SqlColumnSource.Table"/> 為 null）也算：它的限定字
+    /// 一定是 <c>(SELECT …) d</c> 那個 <c>d</c>，而那是使用者寫的。
+    /// </remarks>
+    private static bool IsAlias(SqlColumnSource source) =>
+        source.Qualifier is not null &&
+        (source.Table is null || !string.IsNullOrEmpty(source.Table.Alias));
 
     /// <summary>
     /// 目前已快取的第一層資料；沒有現成的目錄或還沒載入時回傳 null。
@@ -1534,19 +1662,28 @@ internal sealed class SqlMetadataService : IDisposable
         string name,
         SqlAssistSettings settings,
         string? qualifier,
-        string? sourceName)
+        string? sourceName,
+        SqlJoinKey? joinKey)
     {
-        var quoted = Quote(name, settings);
-        var insertionText = qualifier is null ? quoted : Quote(qualifier, settings) + "." + quoted;
         var origin = sourceName ?? "查詢結果";
         var source = qualifier is null ? string.Empty : $" · {qualifier}";
 
+        // 配對鍵插入的是整條條件，顯示文字仍是欄位本身：使用者選的是那個欄位，
+        // 只是在這個位置上選它就等於把條件寫完。
+        if (joinKey is not null)
+        {
+            source += $" · {joinKey.ComposeSuffix(settings)}";
+        }
+
         return new SqlSuggestion(
             name,
-            insertionText,
+            joinKey is null
+                ? SqlInsertionText.Qualify(name, qualifier, settings)
+                : joinKey.ComposeInsertionText(settings),
             $"{origin}{source}",
             $"{origin}\r\n{name}",
-            SuggestionKind.Column);
+            SuggestionKind.Column,
+            joinKey: joinKey);
     }
 
     /// <summary>
@@ -1563,21 +1700,30 @@ internal sealed class SqlMetadataService : IDisposable
         SqlObjectInfo info,
         SqlColumnInfo column,
         SqlAssistSettings settings,
-        string? qualifier)
+        string? qualifier,
+        SqlJoinKey? joinKey)
     {
         var annotations = column.IsPrimaryKey ? " · PK" : string.Empty;
         var source = qualifier is null ? string.Empty : $" · {qualifier}";
-        var name = Quote(column.Name, settings);
-        var insertionText = qualifier is null ? name : Quote(qualifier, settings) + "." + name;
+
+        // 配對鍵看的是「接得起來」，所以在說明欄把它配到的另一邊寫出來；
+        // 顯示文字不動，使用者選的仍然是那個欄位名稱。
+        if (joinKey is not null)
+        {
+            source += $" · {joinKey.ComposeSuffix(settings)}";
+        }
 
         return new SqlSuggestion(
             column.Name,
-            insertionText,
+            joinKey is null
+                ? SqlInsertionText.Qualify(column.Name, qualifier, settings)
+                : joinKey.ComposeInsertionText(settings),
             $"{column.DataType}{(column.IsNullable ? " NULL" : " NOT NULL")}{annotations}{source}",
             $"{info.QualifiedName}\r\n{column.ToScriptLine()}",
             SuggestionKind.Column,
             schemaName: info.SchemaName,
-            tag: column);
+            tag: column,
+            joinKey: joinKey);
     }
 
     /// <remarks>

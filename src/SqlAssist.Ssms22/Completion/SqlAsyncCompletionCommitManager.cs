@@ -248,6 +248,16 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             settings,
             writtenName);
 
+        // 自動別名在建立清單時就算好了，掛在項目上；展開要看的是「函式呼叫補完
+        // 右括號之後」那個位置，所以由這裡轉交，展開本身問不出上下文。
+        if (expansion is SqlFunctionCallExpansion functionCallExpansion &&
+            item.Properties.TryGetProperty<string>(
+                SqlAsyncCompletionSource.TableSourceAliasKey,
+                out var tableSourceAliasSuffix))
+        {
+            functionCallExpansion.TableSourceAliasSuffix = tableSourceAliasSuffix;
+        }
+
         // 使用者自訂函式：「補上括號」開著時，這一次要寫的是名稱加一對空括號，
         // 游標停在中間。補到哪一步由 SqlFunctionCallInsertion 回答，展開那一端
         // 問的是同一份，所以兩邊不會各補一次。

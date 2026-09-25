@@ -179,6 +179,13 @@ SELECT CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), 'Collation'));";
     /// <c>sys.extended_properties</c> 的鍵是 class＋major_id＋minor_id＋name，
     /// 四個都給定就最多接得到一列，多的只有一欄，不是多一輪來回。
     /// 值同樣在伺服器端 <c>CONVERT</c>——它也是 <c>sql_variant</c>。
+    ///
+    /// 索引鍵欄位（<c>is_index_key</c>）走 <c>EXISTS</c> 子查詢而不是再
+    /// <c>LEFT JOIN</c> 一次 <c>sys.index_columns</c>：同一個資料行可以是好幾個索引的
+    /// 鍵，接了會讓這一列變成好幾列，整個欄位清單跟著出現重複項——主索引鍵那一條
+    /// 之所以接得安全，正是因為一張表只會有一個 <c>is_primary_key = 1</c> 的索引。
+    /// <c>key_ordinal &gt; 0</c> 用的是 <see cref="Indexes"/> 同一把尺：INCLUDE 欄位的
+    /// 序號是 0，不算索引鍵。讀取端據此把索引欄位排到 WHERE 之後的最前面。
     /// </remarks>
     public const string Columns = ColumnsHead + "sys.columns" + ColumnsTail;
 
@@ -242,7 +249,14 @@ SELECT
         WHEN COLUMNPROPERTY(c.object_id, c.name, 'IsRowGuidCol') > 0 THEN 1
         ELSE 0
     END) AS is_row_guid_col,
-    CONVERT(nvarchar(max), ep.value) AS column_description
+    CONVERT(nvarchar(max), ep.value) AS column_description,
+    CONVERT(bit, CASE WHEN EXISTS (
+        SELECT 1
+        FROM sys.index_columns AS ic
+        WHERE ic.object_id = c.object_id
+          AND ic.column_id = c.column_id
+          AND ic.key_ordinal > 0
+    ) THEN 1 ELSE 0 END) AS is_index_key
 FROM ";
 
     /// <summary>欄位查詢的後半段，從資料行的目錄檢視名稱之後接下去。</summary>

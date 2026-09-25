@@ -147,6 +147,25 @@ public static class SqlKeywordPositionAnalyzer
         };
 
     /// <summary>
+    /// 這個位置是不是「述詞的起點」。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="SqlKeywordPosition.Predicate"/> 是同一個位元，但用法不同：
+    /// 那個是「這裡列得出 WHERE、ON、HAVING 這些關鍵字」，
+    /// 這一個是「這裡該開始寫一條新的條件」。
+    ///
+    /// 關鍵在排除 <see cref="SqlKeywordPosition.Any"/>。它是一個多個旗標的聯集
+    /// （fail-open：判不出上下文時全放行），所以<b>也含</b> <c>Predicate</c> 那一位元。
+    /// 少了這道排除，配對鍵會在解析不出上下文的地方全部啟動，把每一個位置都當成
+    /// <c>ON</c> 後面——而那是「安靜地在錯的地方塞條件」這一種錯。
+    /// </remarks>
+    public static bool IsPredicateStart(SqlKeywordPosition position)
+    {
+        return position != SqlKeywordPosition.Any &&
+            (position & SqlKeywordPosition.Predicate) != SqlKeywordPosition.None;
+    }
+
+    /// <summary>
     /// 分析游標所在的位置。
     /// </summary>
     /// <param name="textBeforeToken">

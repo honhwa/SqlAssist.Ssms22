@@ -41,13 +41,30 @@ public static class SqlInsertionText
             return objectName;
         }
 
+        string insertionText;
+
         if (!NeedsSchema(context, settings) ||
             string.IsNullOrWhiteSpace(suggestion.SchemaName))
         {
-            return objectName;
+            insertionText = objectName;
+        }
+        else
+        {
+            insertionText = Quote(suggestion.SchemaName!, settings) + "." + objectName;
         }
 
-        return Quote(suggestion.SchemaName!, settings) + "." + objectName;
+        var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
+
+        // 資料表值函式在「展開函式呼叫」開啟時不在這裡接別名：那一條路徑要在引數
+        // 清單補完、右括號寫上之後才接得上，由 SqlFunctionCallExpansion 負責。
+        // 這裡再接一次會變成 fn() f f。
+        if (aliasSuffix is not null &&
+            (suggestion.Kind != SuggestionKind.TableFunction || !settings.ExpandFunctionCall))
+        {
+            return insertionText + aliasSuffix;
+        }
+
+        return insertionText;
     }
 
     /// <summary>
@@ -125,5 +142,22 @@ public static class SqlInsertionText
         return settings.UseSquareBrackets && !SqlIdentifier.IsScriptScoped(name)
             ? SqlIdentifier.Quote(name)
             : SqlIdentifier.QuoteIfNeeded(name);
+    }
+
+    /// <summary>
+    /// 把欄位名稱冠上限定字；讀不出限定字時就只有名稱本身。
+    /// </summary>
+    /// <remarks>
+    /// 需要它的地方有三處：資料表欄位、子查詢與 CTE 的欄位、以及配對鍵的兩側。
+    /// 三處都要「照同一份設定跳脫、讀不到限定字就只寫名稱」這一條規則，
+    /// 各寫一次的話，改設定時會漏掉其中一處。
+    /// </remarks>
+    public static string Qualify(string name, string? qualifier, SqlAssistSettings settings)
+    {
+        var quoted = Quote(name, settings);
+
+        return qualifier is null
+            ? quoted
+            : Quote(qualifier, settings) + "." + quoted;
     }
 }

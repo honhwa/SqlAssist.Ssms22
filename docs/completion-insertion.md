@@ -71,3 +71,17 @@ LibArchive」，而那個結構描述並不存在。關掉一個為了少打幾�
 
 `SqlInsertionText.Quote` 是這條規則的唯一入口，`SELECT *` 展開與建立欄位建議都走
 同一個方法；各自照設定再判斷一次的話，症狀是同一個欄位在清單上與展開後包法不同。
+
+## 資料來源的自動別名
+
+在資料來源位置提交資料表、檢視或資料表值函式時，名稱後面再接一段 ` lr `：
+`FROM`、`JOIN`、`APPLY`、`USING`、`UPDATE` 之後，以及這些清單的逗號續列。
+寫不寫 `AS` 與要不要補由 `sqlAssist.insertion.tableSourceAliasStyle` 決定
+（`none`／`as`／`off`），取名與撞名加序號在 `Core/Completion/SqlAutoAlias`。
+
+能不能接別名問的是 `SqlCompletionContext.MayAppendTableAlias`，不是 `Target`：
+`INSERT INTO` 的目標表與 `DROP TABLE` 的名稱一樣是 `DataSource`，文法上卻都不接受別名。
+
+資料表值函式在「展開函式呼叫」開著時不在插入文字裡接：提交會走函式呼叫展開，
+展開器把名稱換成 `fn(…)` 時會蓋掉先拼好的字。別名因此改由建議項帶著
+（`SqlAsyncCompletionSource.TableSourceAliasKey`），在展開結果之後才補上。
