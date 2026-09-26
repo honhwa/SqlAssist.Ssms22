@@ -352,7 +352,7 @@
         "不自動補上別名"
       ],
       "title": "插入資料表時自動補上別名",
-      "description": "在 FROM、JOIN、APPLY 等資料來源位置提交資料表、檢視或資料表值函式時，自動在名稱後補上別名。別名取名稱各段的首字母小寫（Lib_Reader 變成 lr），同一個敘述裡撞名時自動加序號（lr2）。INSERT INTO 的目標表、DROP TABLE 這類不接受別名的位置不補。",
+      "description": "在 FROM、JOIN、APPLY 等資料來源位置提交資料表、檢視或資料表值函式時，自動在名稱後補上別名。別名取名稱各段的首字母小寫（Lib_Reader 變成 lr），同一個敘述裡撞名時自動加序號（lr2）。INSERT 的目標表、DROP TABLE 這類不接受別名的位置不補。",
       "additionalKeywords": [ "alias", "別名", "AS", "簡寫", "來源" ]
     },
     "sqlAssist.insertion.expandWildcardOnTab": {
@@ -390,8 +390,8 @@
       "type": "boolean",
       "default": true,
       "order": 310,
-      "title": "在 INSERT INTO 之後展開完整的欄位與 VALUES",
-      "description": "選取資料表後不只補上名稱，而是展開成每列一個欄位的清單加上對應的 VALUES 預留值。IDENTITY、計算欄位、rowversion 與時態資料表的期間欄位會排除。關閉後只插入名稱。",
+      "title": "在 INSERT 之後展開完整的欄位與 VALUES",
+      "description": "選取資料表後不只補上名稱，而是展開成每列一個欄位的清單加上對應的 VALUES 預留值。INSERT INTO 與省略 INTO 的 INSERT 都算，寫回去的一律是 INSERT INTO。IDENTITY、計算欄位、rowversion 與時態資料表的期間欄位會排除。關閉後只插入名稱。",
       "additionalKeywords": [ "新增資料", "欄位清單", "產生 SQL", "樣板", "IDENTITY" ]
     },
     "sqlAssist.insertion.expandMergeStatement": {

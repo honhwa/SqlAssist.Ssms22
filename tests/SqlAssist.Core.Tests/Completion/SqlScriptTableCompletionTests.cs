@@ -240,9 +240,13 @@ public sealed class SqlScriptTableCompletionTests
     /// 展開需要兩件事：語句的關鍵字起點（要換掉哪一段）與掛在建議項上的資料行清單
     /// （換成什麼）。少了後者的症狀就是使用者說的「按 Tab 只補了名稱，
     /// 不會自動帶出所有欄位及 value」。
+    ///
+    /// 省略 <c>INTO</c> 的寫法要與寫了 <c>INTO</c> 的完全同格：兩種都合法，
+    /// 而只認其中一種的症狀是另一種寫法的使用者什麼都拿不到。
     /// </remarks>
     [Theory]
     [InlineData(TemporaryTable + "INSERT INTO #L|", "#Loan", CompletionIntent.InsertStatement)]
+    [InlineData(TemporaryTable + "INSERT #L|", "#Loan", CompletionIntent.InsertStatement)]
     [InlineData(TemporaryTable + "MERGE INTO #L|", "#Loan", CompletionIntent.MergeStatement)]
     public void 暫存資料表帶得出展開整句所需的資料(
         string sqlWithCaret,
@@ -269,9 +273,12 @@ public sealed class SqlScriptTableCompletionTests
     /// <remarks>
     /// 目標仍然是 <see cref="CompletionTarget.Variable"/>——清單裡放的是他自己宣告的
     /// 名稱——但那句話還沒寫完，與 <c>INSERT INTO dbo.Loan</c> 完全同格。
+    ///
+    /// 省略 <c>INTO</c> 的寫法同樣要能展開，理由與暫存資料表那一組相同。
     /// </remarks>
     [Theory]
     [InlineData(TableVariable + "INSERT INTO @L|", CompletionIntent.InsertStatement)]
+    [InlineData(TableVariable + "INSERT @L|", CompletionIntent.InsertStatement)]
     [InlineData(TableVariable + "MERGE INTO @L|", CompletionIntent.MergeStatement)]
     public void 資料表變數帶得出展開整句所需的資料(string sqlWithCaret, CompletionIntent intent)
     {

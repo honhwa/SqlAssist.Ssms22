@@ -28,7 +28,7 @@
 | | 按 Tab 把 SELECT * 展開成欄位清單 | `true` |
 | | SELECT * 展開後的欄位排版 | `oneLineWhenShort` |
 | | 在 ALTER 之後展開完整定義 | `true` |
-| | 在 INSERT INTO 之後展開完整的欄位與 VALUES | `true` |
+| | 在 INSERT 之後展開完整的欄位與 VALUES | `true` |
 | | 在 MERGE INTO 之後展開完整的比對鍵與動作子句 | `true` |
 | | 在 EXEC 之後展開完整的參數清單 | `true` |
 | | EXEC 展開時包含選擇性參數 | `true` |

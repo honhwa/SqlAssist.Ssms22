@@ -61,7 +61,7 @@ WHERE a.Code = c.Code COLLATE | → 定序名稱與 DATABASE_DEFAULT
 |---|---|---|
 | `FROM`、`JOIN`、`UPDATE`、`INTO`、`USING` | Table、View、資料表值函式 | 插入名稱；函式補上括號 |
 | `CROSS APPLY`、`OUTER APPLY` | 資料表值函式 | 補上括號 |
-| `INSERT INTO` | Table、View | 展開欄位清單與 `VALUES` |
+| `INSERT`／`INSERT INTO` | Table、View | 展開欄位清單與 `VALUES` |
 | `MERGE`／`MERGE INTO` | Table、View | 展開比對鍵、`UPDATE SET`、`INSERT` 與 `VALUES` |
 | `ALTER PROCEDURE`／`PROC` | Procedure | 展開完整 ALTER 定義 |
 | `ALTER FUNCTION` | 兩種函式 | 展開完整 ALTER 定義 |
@@ -87,6 +87,12 @@ WHERE a.Code = c.Code COLLATE | → 定序名稱與 DATABASE_DEFAULT
 `USING` 與 `FROM` 收在同一列不是為了湊數：MERGE 的來源與 FROM 的來源是同一條文法，
 `SqlKeywordPositionAnalyzer` 與 `SqlScopeAnalyzer` 也早就這樣歸類。只有這一份漏掉時，
 症狀是 `USING ` 之後完全沒有清單，而使用者看不出它和 `FROM ` 之後有什麼不同。
+
+`INSERT` 與 `INSERT INTO` 收在同一列，方向與 `USING` 相反：這裡是**不能**只認 `INTO`。
+`SELECT … INTO #tmp` 的 `INTO` 後面接的是還不存在的新名稱，認它會蓋掉使用者正在取的
+名字，所以認的是 `INSERT` 一個字；`INTO` 是選用關鍵字，兩種寫法都算同一件事。
+只有 `WHEN NOT MATCHED THEN INSERT (…)` 例外——那是 MERGE 的動作子句，接的是欄位清單。
+理由與錨點見[展開內容](statement-values.md#認-insert-一個字不認-into)。
 
 逗號那一列不靠前導關鍵字：前一、兩個詞元只有一個逗號，答案來自
 `SqlKeywordPositionAnalyzer` 的位置（逗號回到清單起點），這裡不再自己回頭找 `FROM`。

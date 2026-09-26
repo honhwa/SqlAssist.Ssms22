@@ -398,10 +398,21 @@ public static class SqlCompletionContextAnalyzer
 
         // INSERT INTO 之後選一張資料表，要的幾乎不會是「只把名稱補上」——那句話還沒寫完。
         // 光看 INTO 分不出來：SELECT … INTO #tmp 的 INTO 後面是一個還不存在的新名稱，
-        // 展開成 INSERT 骨架會蓋掉他正在取的名字。所以認的是 INSERT INTO 這兩個字。
+        // 展開成 INSERT 骨架會蓋掉他正在取的名字。所以認的是 INSERT 這一個字。
+        //
+        // INTO 是選用關鍵字（INSERT dbo.Loan (…) VALUES (…)、INSERT @rows … 都合法），
+        // 所以單獨一個 INSERT 也要認。只認兩個字連著寫的話，省略 INTO 的人在那個位置
+        // 完全沒有清單、提交也只換到一個名稱，而畫面上看不出兩種寫法有什麼差別。
+        // MERGE 早就是這樣處理的（MERGE 與 MERGE INTO 各一條），這裡只是補上同一件事。
+        //
+        // 唯一的例外是 MERGE 的動作子句：WHEN NOT MATCHED THEN INSERT 的尾巴同樣是
+        // INSERT，但那個位置接下來是欄位清單（INTO 在那裡根本不能寫），
+        // 列一串資料表等於誤導。
         intent = CompletionIntent.InsertStatement;
 
-        if (EndsWithKeywords(text, "INSERT", "INTO", out keywordStart))
+        if (!IsMergeInsertAction(text) &&
+            (EndsWithKeywords(text, "INSERT", "INTO", out keywordStart) ||
+             EndsWithKeyword(text, "INSERT", out keywordStart)))
         {
             return CompletionTarget.DataSource;
         }
@@ -512,6 +523,24 @@ public static class SqlCompletionContextAnalyzer
             ? text.Substring(0, start).TrimEnd()
             : text;
     }
+
+    /// <summary>
+    /// 這個 <c>INSERT</c> 是 MERGE 的動作子句，不是一句新的 <c>INSERT</c> 敘述。
+    /// </summary>
+    /// <remarks>
+    /// <c>WHEN NOT MATCHED THEN INSERT (欄位…) VALUES (…)</c> 的 <c>INSERT</c> 後面接的是
+    /// 欄位清單，而資料表名稱在那個位置文法上根本寫不出來——還把它當成一句新的敘述，
+    /// 等於在那裡列出一串使用者選了就會錯的資料表。
+    ///
+    /// 認 <c>THEN</c> 就夠，與 <c>SqlScopeAnalyzer.IsMergeAction</c> 認的是同一件事：
+    /// T-SQL 裡 <c>THEN</c> 只出現在 CASE 與 MERGE，而 CASE 的 <c>THEN</c> 後面是運算式，
+    /// <c>INSERT</c> 不是運算式。
+    ///
+    /// 不採用 <c>SqlScopeAnalyzer</c> 那個方法本身：它要的是整份敘述的詞元，
+    /// 而這裡手上只有游標前方那一段文字，兩者的輸入根本不同。
+    /// </remarks>
+    private static bool IsMergeInsertAction(string text) =>
+        EndsWithKeywords(text, "THEN", "INSERT", out _);
 
     private static bool EndsWithKeywords(string text, string first, string second, out int keywordStart)
     {

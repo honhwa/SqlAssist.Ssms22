@@ -170,7 +170,7 @@ public sealed class SqlAssistSettings
     /// 在 FROM／JOIN／APPLY 等資料來源位置提交資料表、檢視或資料表值函式時，
     /// 自動在物件名稱後補上別名並留下一個空格。別名取物件名各段的首字母小寫
     /// （<c>Lib_Reader</c> → <c>lr</c>）；同一個敘述裡已有相同別名時自動加序號
-    /// （<c>lr2</c>）。INSERT INTO 的目標表、DROP TABLE 這種不適用別名的位置不補。
+    /// （<c>lr2</c>）。INSERT 的目標表、DROP TABLE 這種不適用別名的位置不補。
     /// </remarks>
     public SqlTableSourceAliasStyle TableSourceAliasStyle { get; init; } = SqlTableSourceAliasStyle.None;
 
@@ -212,9 +212,11 @@ public sealed class SqlAssistSettings
     /// sqlAssist.insertion.expandInsertStatement
     /// </summary>
     /// <remarks>
-    /// 在 <c>INSERT INTO </c> 之後提交一張資料表時，把整句展開成欄位清單加
-    /// <c>VALUES</c> 預留值，而不是只補上名稱。關掉之後那個位置就跟其他位置一樣
-    /// 只插入名稱——<c>INSERT INTO t SELECT …</c> 這種寫法用得多的人會想關掉它。
+    /// 在 <c>INSERT</c> 之後提交一張資料表時，把整句展開成欄位清單加
+    /// <c>VALUES</c> 預留值，而不是只補上名稱。<c>INTO</c> 是選用關鍵字，
+    /// 所以 <c>INSERT INTO t</c> 與 <c>INSERT t</c> 都算；寫回去的一律是
+    /// <c>INSERT INTO</c>，整句本來就是重寫。關掉之後那個位置就跟其他位置一樣
+    /// 只插入名稱——<c>INSERT t SELECT …</c> 這種寫法用得多的人會想關掉它。
     /// </remarks>
     public bool ExpandInsertStatement { get; init; } = true;
 

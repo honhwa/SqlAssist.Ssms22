@@ -5,13 +5,18 @@
 ## 類型與安全寫回
 
 有四個位置提交的不是一個名稱，而是一整句：`ALTER PROCEDURE` 之後放進完整定義，
-`INSERT INTO` 之後放進欄位清單與 `VALUES`，`MERGE INTO` 之後放進比對鍵與兩個動作
+`INSERT` 之後放進欄位清單與 `VALUES`，`MERGE INTO` 之後放進比對鍵與兩個動作
 子句，`EXEC` 之後放進具名傳值的參數清單。第五種只換掉剛插入的那個名稱，
 見[函式呼叫](function-call-insertion.md)。
 
 `INSERT INTO #Loan` 與 `INSERT INTO @rows` 走的是完全同一條路，差別只在欄位從哪裡來
 ——那兩種名稱中繼資料查不到，欄位改讀[指令碼裡的宣告](script-tables.md)。
 「怎麼安全地把整句換掉」與「換成什麼樣子」兩段都不必為它們重寫。
+
+寫回去的一律是 `INSERT INTO`，即使使用者打的是省略 `INTO` 的 `INSERT dbo.Loan`：
+整句本來就是重寫，而 `INTO` 是手冊建議保留的寫法。`MERGE` 也一樣（一律 `MERGE INTO`），
+判準是「這裡有沒有第二個字可以算錯」，答案都是沒有。認得哪幾種寫法見
+[展開內容](statement-values.md#認-insert-一個字不認-into)。
 
 ```text
 INSERT INTO dbo.Cat_BookCopy
@@ -80,7 +85,7 @@ SELECT @NewDueDate AS NewDueDate;
 而少的那一道會覆蓋使用者的輸入。
 
 「換掉哪一段」只有兩個答案，由 `SqlCommitExpansionScope` 表示：上面四種從決定
-目標的那個關鍵字起算（`ALTER`、`INSERT INTO`、`MERGE`、`EXEC`），函式的引數則只
+目標的那個關鍵字起算（`ALTER`、`INSERT`、`MERGE`、`EXEC`），函式的引數則只
 蓋掉剛提交的那個名稱。後者非分開不可——`SELECT dbo.fn_DueDate` 那個位置根本沒有
 「決定目標的關鍵字」，`TargetKeywordStart` 是 -1。
 

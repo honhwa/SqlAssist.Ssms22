@@ -12,6 +12,8 @@ public sealed class SqlCompletionContextAnalyzerTests
     [InlineData("SELECT * FROM Loans INNER JOIN ", CompletionTarget.DataSource)]
     [InlineData("UPDATE ", CompletionTarget.DataSource)]
     [InlineData("INSERT INTO ", CompletionTarget.DataSource)]
+    [InlineData("INSERT ", CompletionTarget.DataSource)]
+    [InlineData("INSERT dbo.", CompletionTarget.DataSource)]
     [InlineData("MERGE INTO ", CompletionTarget.DataSource)]
     [InlineData("MERGE INTO dbo.Loan AS target USING ", CompletionTarget.DataSource)]
     [InlineData("ALTER TABLE ", CompletionTarget.DataSource)]
@@ -198,6 +200,9 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// <remarks>
     /// INSERT INTO 與單獨的 INTO 也必須分開。<c>SELECT … INTO #tmp</c> 的 INTO 後面
     /// 是一個還不存在的新名稱，在那裡展開 INSERT 骨架會蓋掉使用者正在取的名字。
+    ///
+    /// <c>INTO</c> 是選用關鍵字，所以單獨一個 <c>INSERT</c> 要和兩個字連著寫一樣展開。
+    /// 少了這一條，<c>INSERT dbo.Loan …</c> 的使用者在那個位置提交只換到一個名稱。
     /// </remarks>
     [Theory]
     [InlineData("ALTER PROCEDURE ", CompletionIntent.AlterDefinition)]
@@ -212,6 +217,10 @@ public sealed class SqlCompletionContextAnalyzerTests
     [InlineData("exec usp", CompletionIntent.ExecuteCall)]
     [InlineData("INSERT INTO ", CompletionIntent.InsertStatement)]
     [InlineData("insert into lo", CompletionIntent.InsertStatement)]
+    [InlineData("INSERT ", CompletionIntent.InsertStatement)]
+    [InlineData("insert lo", CompletionIntent.InsertStatement)]
+    [InlineData("INSERT dbo.Loan", CompletionIntent.InsertStatement)]
+    [InlineData("INSERT #Lo", CompletionIntent.InsertStatement)]
     [InlineData("SELECT * INTO ", CompletionIntent.Reference)]
     [InlineData("SELECT * FROM ", CompletionIntent.Reference)]
     [InlineData("DROP TRIGGER ", CompletionIntent.Reference)]
@@ -223,15 +232,47 @@ public sealed class SqlCompletionContextAnalyzerTests
 
     /// <remarks>
     /// 提交時要換掉的是整句，起點必須是 INSERT 而不是 INTO——只從 INTO 開始換
-    /// 會在編輯器裡留下一個孤零零的 INSERT。
+    /// 會在編輯器裡留下一個孤零零的 INSERT。省略 INTO 的寫法沒有第二個詞元可以
+    /// 算錯，起點同樣落在 INSERT 上。
     /// </remarks>
-    [Fact]
-    public void INSERT_INTO的關鍵字起點落在INSERT上()
+    [Theory]
+    [InlineData("  INSERT INTO ")]
+    [InlineData("  INSERT dbo.Loan")]
+    [InlineData("  INSERT ")]
+    public void INSERT的關鍵字起點落在INSERT上(string textBeforeCaret)
     {
-        var context = SqlCompletionContextAnalyzer.Analyze("  INSERT INTO ");
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
         Assert.Equal(2, context.TargetKeywordStart);
         Assert.Equal(CompletionTarget.DataSource, context.Target);
+    }
+
+    /// <remarks>
+    /// <c>WHEN NOT MATCHED THEN INSERT (欄位…) VALUES (…)</c> 的 <c>INSERT</c> 後面接的是
+    /// 欄位清單，資料表名稱在那個位置文法上根本寫不出來。把它讀成一句新的 INSERT 敘述，
+    /// 清單就會列出一串使用者選了必然出錯的資料表。
+    /// </remarks>
+    [Theory]
+    [InlineData("MERGE dbo.Target AS t USING dbo.Source AS s ON t.Id = s.Id WHEN NOT MATCHED THEN INSERT ")]
+    [InlineData("MERGE dbo.RowCount ON target.Id = source.Id WHEN NOT MATCHED THEN INSERT ")]
+    public void MERGE的INSERT動作子句不是新的INSERT敘述(string textBeforeCaret)
+    {
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+
+        Assert.NotEqual(CompletionIntent.InsertStatement, context.Intent);
+        Assert.NotEqual(CompletionTarget.DataSource, context.Target);
+    }
+
+    /// <remarks>
+    /// <c>INSERT</c> 後面那一格是資料表名稱，後面不會接別名——與 <c>INSERT INTO</c>
+    /// 一樣。多補一個別名進去，那一句就跑不動了。
+    /// </remarks>
+    [Theory]
+    [InlineData("INSERT ")]
+    [InlineData("INSERT INTO ")]
+    public void INSERT之後不接別名(string textBeforeCaret)
+    {
+        Assert.False(SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).MayAppendTableAlias);
     }
 
     /// <remarks>

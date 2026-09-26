@@ -82,7 +82,7 @@ LibArchive」，而那個結構描述並不存在。關掉一個為了少打幾�
 資料表值函式的別名都以 `f` 開頭，反而分不出 `lbr` 與 `ll`。
 
 能不能接別名問的是 `SqlCompletionContext.MayAppendTableAlias`，不是 `Target`：
-`INSERT INTO` 的目標表與 `DROP TABLE` 的名稱一樣是 `DataSource`，文法上卻都不接受別名。
+`INSERT`／`INSERT INTO` 的目標表與 `DROP TABLE` 的名稱一樣是 `DataSource`，文法上卻都不接受別名。
 
 別名一律接在**右括號之後**，而括號是提交當下才寫出來的，所以接的位置有三處，
 由 `SqlFunctionCallInsertion` 的模式一分為三：不補括號時 `SqlInsertionText`
