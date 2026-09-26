@@ -34,10 +34,10 @@ public readonly struct SqlObjectScriptText
 /// 這裡負責「送進一個新的查詢視窗還缺什麼」——換行要統一成目的地文件的那一種，
 /// 游標要停在名稱之後，以及認不出來的種類要整段註解掉。
 ///
-/// 批次分隔、SET 選項與模組的 <c>CREATE</c> → <c>ALTER</c> 改寫都<b>不</b>在這裡：
-/// 那三件事在 <see cref="SqlScriptOptions"/> 上各有一個選項，而排版只有 renderer
-/// 一份。曾經在這一層另外加一組樣板，症狀是選項開著時同一份指令碼有兩行 SET
-/// 與兩個結尾的 GO。
+/// 批次分隔、<c>USE</c>、<c>SET</c> 選項與模組的 <c>CREATE</c> → <c>ALTER</c> 改寫都
+/// <b>不</b>在這裡：那四件事在 <see cref="SqlScriptOptions"/> 上各有一個選項，
+/// 而排版只有 renderer 一份。曾經在這一層另外加一組樣板，症狀是選項開著時同一份
+/// 指令碼有兩行 SET 與兩個結尾的 GO。
 /// </remarks>
 public static class SqlObjectScript
 {
@@ -73,29 +73,36 @@ public static class SqlObjectScript
 
     /// <summary>游標該停在哪裡。</summary>
     /// <remarks>
-    /// 開頭的 <c>SET</c> 批次要先跳過再問名稱：<see cref="SqlModuleScript.FindHeaderNameEnd"/>
-    /// 要求第一個詞元就是 <c>CREATE</c> 或 <c>ALTER</c>，前面多兩行設定它就一律回報
-    /// 找不到，而那會讓每一次 F12 都停在整份指令碼的最前面。
+    /// 開頭那幾行要先用 <see cref="FindDefinitionStart"/> 跳過再問名稱：
+    /// <see cref="SqlModuleScript.FindHeaderNameEnd"/> 要求第一個詞元就是 <c>CREATE</c>
+    /// 或 <c>ALTER</c>，前面多一行 <c>USE</c> 或 <c>SET</c> 它就一律回報找不到，
+    /// 而那會讓每一次 F12 都停在整份指令碼的最前面。
     ///
     /// 認不出標頭（取不到定義時整段是註解）就停在本體的第一個字元，不是停在結尾
     /// ——見 <see cref="SqlObjectScriptText.CaretOffset"/>。
     /// </remarks>
     private static int FindCaret(string text)
     {
-        var offset = SkipLeadingSetBatches(text);
+        var offset = FindDefinitionStart(text);
         var nameEnd = SqlModuleScript.FindHeaderNameEnd(text.Substring(offset));
 
         return nameEnd < 0 ? offset : offset + nameEnd;
     }
 
-    /// <summary>回傳第一個不是 <c>SET</c> 也不是 <c>GO</c> 的那一行從哪裡開始。</summary>
-    private static int SkipLeadingSetBatches(string text)
+    /// <summary>回傳物件定義本身從哪一個字元開始；跳過工具加在最前面的那幾行。</summary>
+    /// <remarks>
+    /// 認得 <c>USE</c> 與 <c>SET</c> 兩種開頭，以及夾在中間的 <c>GO</c>。
+    /// 定義本身不可能以 <c>USE</c> 開頭（模組是 <c>CREATE</c>／<c>ALTER</c>，
+    /// 資料表是 <c>CREATE TABLE</c>，同義字與序列也是 <c>CREATE</c>），
+    /// 所以照這個字判斷不會把本體誤跳掉。
+    /// </remarks>
+    private static int FindDefinitionStart(string text)
     {
         var index = 0;
 
         while (index < text.Length)
         {
-            // 檔頭與健檢註解可能排在 SET 之前；沿用共用的註解掃描，不另造一份詞法器。
+            // 檔頭與健檢註解可能排在那幾行之前；沿用共用的註解掃描，不另造一份詞法器。
             index = SqlTrivia.Skip(text, index, text.Length);
             if (index == text.Length)
             {
@@ -107,6 +114,7 @@ public static class SqlObjectScript
 
             if (line.Length != 0 &&
                 !line.StartsWith("SET ", StringComparison.OrdinalIgnoreCase) &&
+                !line.StartsWith("USE ", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(line, "GO", StringComparison.OrdinalIgnoreCase))
             {
                 return index;

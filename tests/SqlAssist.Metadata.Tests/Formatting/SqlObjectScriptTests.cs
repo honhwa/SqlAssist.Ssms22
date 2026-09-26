@@ -10,8 +10,9 @@ namespace SqlAssist.Metadata.Tests.Formatting;
 /// F12 送進新查詢視窗的那一份指令碼。
 /// </summary>
 /// <remarks>
-/// 這裡固定三件事：批次分隔對不對、模組才改寫成 ALTER、以及游標停在名稱之後。
-/// 前兩件錯了指令碼就執行不了，第三件錯了只是難用——但三件都不會在編譯時被發現。
+/// 這裡固定四件事：開頭有沒有指名資料庫、批次分隔對不對、模組才改寫成 ALTER、
+/// 以及游標停在名稱之後。前三件錯了指令碼就執行不了，第四件錯了只是難用——
+/// 但四件都不會在編譯時被發現。
 /// </remarks>
 public sealed class SqlObjectScriptTests
 {
@@ -24,23 +25,37 @@ public sealed class SqlObjectScriptTests
         "SET ANSI_NULLS ON\r\nGO\r\nSET QUOTED_IDENTIFIER ON\r\nGO\r\n";
 
     /// <summary>F12 送進新查詢視窗用的那一組選項。</summary>
-    private static SqlScriptContext Execution(string? newLine) =>
+    /// <remarks>
+    /// 資料庫與伺服器預設都不指名，所以除了專講 <c>USE</c> 的那幾條之外，
+    /// 其餘案例的輸出裡不會多出開頭那一行。
+    /// </remarks>
+    private static SqlScriptContext Execution(
+        string? newLine,
+        string? databaseName = null,
+        string? serverName = null,
+        bool includeDatabaseContext = true) =>
         new(
             SqlScriptOptions.Fidelity with
             {
                 SetOptions = SqlSetOptionOutput.AlwaysOn,
                 BatchSeparation = SqlBatchSeparation.BetweenStatements,
-                ModuleStatement = SqlModuleStatement.Alter
+                ModuleStatement = SqlModuleStatement.Alter,
+                IncludeDatabaseContext = includeDatabaseContext
             },
-            newLine: newLine);
+            newLine: newLine,
+            serverName: serverName,
+            databaseName: databaseName);
 
     private static SqlObjectStructure Module(
         SqlObjectKind kind,
         string name,
-        string? definition)
+        string? definition,
+        string? databaseName = null)
     {
         return new SqlObjectStructure(
-            new SqlObjectDetail(new SqlObjectInfo(1, "dbo", name, kind), definition: definition));
+            new SqlObjectDetail(
+                new SqlObjectInfo(1, "dbo", name, kind, databaseName),
+                definition: definition));
     }
 
     private static SqlObjectStructure Table()
@@ -276,5 +291,147 @@ public sealed class SqlObjectScriptTests
             Execution("\r\n"));
 
         Assert.EndsWith("SELECT 1;\r\nGO\r\n", script.Text);
+    }
+
+    /// <summary>
+    /// 指名資料庫時開頭寫一行 <c>USE</c>，而且自己一個批次。
+    /// </summary>
+    /// <remarks>
+    /// 新的查詢視窗只沿用<b>來源</b>視窗那條連線，而定義本身不帶資料庫。少了這一行，
+    /// 游標停在 <c>LibArchive.dbo.usp_LoanFinish</c> 按 F12 之後再按 F5，改的是目前
+    /// 資料庫裡同名的那一個，或直接失敗，而畫面上看不出兩者的差別。
+    /// </remarks>
+    [Fact]
+    public void 指名資料庫時開頭寫USE()
+    {
+        const string definition = "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;";
+
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", definition, databaseName: "LibArchive"),
+            Execution("\r\n", databaseName: "LibArchive"));
+
+        Assert.Equal(
+            "USE [LibArchive]\r\nGO\r\n" + Header +
+            "ALTER PROCEDURE dbo.usp_LoanFinish AS SELECT 1;\r\nGO\r\n",
+            script.Text);
+    }
+
+    /// <remarks>
+    /// 方括號不是可選的排版：資料庫名稱只要是合法識別字就帶得動，而跳脫規則與其他
+    /// 識別字同一份——不跳脫的話 <c>USE [Lib]Archive]</c> 是一個壞掉的敘述，
+    /// 而 <c>SqlIdentifier</c> 以外的寫法不會知道這件事。
+    /// </remarks>
+    [Fact]
+    public void 資料庫名稱加方括號並跳脫()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(
+                SqlObjectKind.Procedure,
+                "usp_LoanFinish",
+                "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;",
+                databaseName: "Lib]Archive"),
+            Execution("\r\n", databaseName: "Lib]Archive"));
+
+        Assert.StartsWith("USE [Lib]]Archive]\r\nGO\r\n", script.Text);
+    }
+
+    /// <remarks>
+    /// 開頭那一行沒有被跳過的話，<c>SqlModuleScript.FindHeaderNameEnd</c> 找不到
+    /// <c>CREATE</c>／<c>ALTER</c>，游標會落在整份指令碼的最前面——那等於一打開
+    /// 就被丟回第一行。
+    /// </remarks>
+    [Fact]
+    public void 有USE時游標仍然停在名稱之後()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(
+                SqlObjectKind.Procedure,
+                "usp_LoanFinish",
+                "CREATE PROCEDURE dbo.usp_LoanFinish\r\n@Id int\r\nAS\r\nSELECT 1;",
+                databaseName: "LibArchive"),
+            Execution("\r\n", databaseName: "LibArchive"));
+
+        Assert.Equal(
+            "USE [LibArchive]\r\nGO\r\n" + Header + "ALTER PROCEDURE dbo.usp_LoanFinish",
+            script.Text.Substring(0, script.CaretOffset));
+    }
+
+    /// <summary>
+    /// 連結伺服器上的物件不寫 <c>USE</c>。
+    /// </summary>
+    /// <remarks>
+    /// <c>USE</c> 只換得動本機連線的資料庫，寫了會切到本機同名的資料庫——比不寫更糟，
+    /// 因為它會安靜地成功。這種定義本來就沒辦法在這裡執行（要 <c>EXEC … AT</c>）。
+    /// </remarks>
+    [Fact]
+    public void 連結伺服器上的物件不寫USE()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(
+                SqlObjectKind.Procedure,
+                "usp_LoanFinish",
+                "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;",
+                databaseName: "LibArchive"),
+            Execution("\r\n", databaseName: "LibArchive", serverName: "LibMirror"));
+
+        Assert.StartsWith(Header, script.Text);
+        Assert.DoesNotContain("USE [", script.Text);
+    }
+
+    /// <summary>
+    /// 沒有資料庫名稱時不寫 <c>USE</c>。
+    /// </summary>
+    /// <remarks>
+    /// 指令碼自己宣告的暫存資料表與資料表變數沒有資料庫可言，而連線還沒選定資料庫時
+    /// 名稱是空字串。兩種都不能拿來組 <c>USE</c>——空字串組出來的是兩個方括號。
+    /// </remarks>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void 沒有資料庫名稱時不寫USE(string? databaseName)
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;"),
+            Execution("\r\n", databaseName: databaseName));
+
+        Assert.StartsWith(Header, script.Text);
+        Assert.DoesNotContain("USE [", script.Text);
+    }
+
+    /// <remarks>
+    /// 唯讀的預覽表面顯示的是「這個物件的定義」，而 <c>USE</c> 不屬於定義——
+    /// 那一條走 <c>SqlScriptPreferences.Create</c>，這一項維持預設的 <c>false</c>。
+    /// </remarks>
+    [Fact]
+    public void 選項關閉時不寫USE()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(
+                SqlObjectKind.Procedure,
+                "usp_LoanFinish",
+                "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;",
+                databaseName: "LibArchive"),
+            Execution("\r\n", databaseName: "LibArchive", includeDatabaseContext: false));
+
+        Assert.StartsWith(Header, script.Text);
+        Assert.DoesNotContain("USE [", script.Text);
+    }
+
+    /// <summary>
+    /// 取不到定義時整段都是註解，連 <c>USE</c> 都不寫。
+    /// </summary>
+    /// <remarks>
+    /// 「從頭到尾都是註解」是缺資料時唯一的保證，而那一整段不是 T-SQL——前面多一行
+    /// 可以執行的 <c>USE</c> 就讓它看起來像一份跑得起來的指令碼。
+    /// </remarks>
+    [Fact]
+    public void 取不到定義時連USE都不寫()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", definition: null, databaseName: "LibArchive"),
+            Execution("\r\n", databaseName: "LibArchive"));
+
+        Assert.StartsWith("--", script.Text);
+        Assert.DoesNotContain("USE [", script.Text);
     }
 }

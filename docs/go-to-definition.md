@@ -4,8 +4,11 @@
 執行的定義，並沿用你目前的連線。
 
 ```sql
-SET QUOTED_IDENTIFIER ON
+USE [LibArchive]
+GO
 SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
 GO
 -- =============================================
 -- Author:      
@@ -23,6 +26,10 @@ GO
 
 游標停在 `usp_Loan_Renew` 之後——那是讀一份定義的起點，也是接著要改參數時的位置。
 停在整份的結尾等於一打開就被捲到最後一行。
+
+第一行是 `USE`：新視窗只沿用**來源**視窗那條連線，而定義本身不帶資料庫，少了它
+跨資料庫的定義按 F5 會改到目前資料庫裡同名的那一個。這一條的取捨見
+[F12 的物件指令碼](definition-scripts.md#開頭先指名資料庫)。
 
 「工具 → SqlAssist → 移至定義」是同一個功能的第二個入口，在沒有 SQL 查詢視窗時
 會變灰；第三個是按住 `Ctrl+Shift` 點物件名稱（見[點擊導覽](click-navigation.md)）。要換一個鍵請到「工具 → 選項 → 環境 → 鍵盤」，命令名稱是

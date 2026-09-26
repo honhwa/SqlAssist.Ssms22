@@ -29,7 +29,8 @@ internal static class SqlScriptPreferences
     /// 要拿去執行的那一份：F12 送進新查詢視窗的指令碼。
     /// </summary>
     /// <remarks>
-    /// 三項覆寫不是風格偏好，是可執行性的要求，所以不管使用者選了哪一組都要蓋掉：
+    /// 四項覆寫不是風格偏好，是可執行性的要求，所以不管使用者選了哪一組都要蓋掉：
+    /// 開頭要先指名資料庫，少了它的跨資料庫定義會改到目前資料庫裡同名的那一個；
     /// <c>ALTER PROCEDURE</c> 必須是批次裡的第一個敘述，少了 <c>GO</c> 就分不開；
     /// 計算資料行、篩選索引與索引檢視對那兩個 <c>SET</c> 的值有要求，
     /// 少了它們的 <c>CREATE TABLE</c> 在某些連線設定下會直接失敗；
@@ -60,7 +61,8 @@ internal static class SqlScriptPreferences
             {
                 SetOptions = SqlSetOptionOutput.FromCatalog,
                 BatchSeparation = SqlBatchSeparation.BetweenStatements,
-                ModuleStatement = SqlModuleStatement.Alter
+                ModuleStatement = SqlModuleStatement.Alter,
+                IncludeDatabaseContext = true
             };
         }
 

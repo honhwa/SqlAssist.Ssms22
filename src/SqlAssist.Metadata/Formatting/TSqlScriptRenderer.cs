@@ -178,6 +178,10 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
             return;
         }
 
+        // 指名資料庫排在可用性檢查之後：整段都是註解時多一行 USE 就讓「從頭到尾
+        // 都是註解」不再成立，而那正是缺資料時唯一的保證。
+        AppendDatabaseContext(statements, context);
+
         // 條件約束在健檢之前接走：健檢看的是一整張資料表（哪一個資料行沒有索引、
         // 哪一條規則擋不住什麼），而這一份結構上一個資料行都沒有——跑出來的發現
         // 會掛在一個不是它的物件上。
@@ -569,6 +573,33 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
                 ? altered
                 : definition,
             batched: true, requiresBatch: structure.Object.Kind.IsModule()));
+    }
+
+    /// <summary>
+    /// 開頭指名這份指令碼要跑在哪個資料庫。
+    /// </summary>
+    /// <remarks>
+    /// 新的查詢視窗只沿用<b>來源</b>視窗那條連線，而定義本身不帶資料庫——少了這一行，
+    /// 游標停在 <c>LibArchive.dbo.usp_X</c> 按 F12，接著按 F5 會去改目前資料庫裡同名的
+    /// 物件，或直接失敗，而畫面上看不出兩者的差別。
+    ///
+    /// 方括號不是可選的排版：資料庫名稱只要是合法的就帶得動（<c>Lib-Archive</c>、
+    /// <c>2024 Loan</c> 都是），而 <c>USE</c> 沒有第二種能補救的寫法。
+    ///
+    /// 連結伺服器上的物件不寫：<c>USE</c> 只換得動本機連線的資料庫，寫了會切到本機
+    /// 同名的資料庫——比不寫更糟，因為它會安靜地成功。這種定義本來就沒辦法在這裡執行
+    /// （要 <c>EXEC … AT</c>），那不是這一行解決得了的事。
+    /// </remarks>
+    private static void AppendDatabaseContext(List<Statement> statements, SqlScriptContext context)
+    {
+        if (!context.Options.IncludeDatabaseContext ||
+            context.ServerName is { Length: > 0 } ||
+            context.DatabaseName is not { Length: > 0 } database)
+        {
+            return;
+        }
+
+        statements.Add(new Statement("USE " + SqlIdentifier.Quote(database), batched: true));
     }
 
     /// <remarks>

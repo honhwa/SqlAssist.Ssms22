@@ -192,6 +192,23 @@ public sealed record SqlScriptOptions
     /// <summary>模組（程序、函式、觸發程序、檢視）的定義寫成 CREATE 還是 ALTER。</summary>
     public SqlModuleStatement ModuleStatement { get; init; } = SqlModuleStatement.Create;
 
+    /// <summary>
+    /// 開頭寫一行 <c>USE</c> 指名這份指令碼要在哪個資料庫執行。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="BatchSeparation"/>、<see cref="SetOptions"/>、
+    /// <see cref="ModuleStatement"/> 同一類：那是要拿去執行時非有不可的東西，
+    /// 不是風格偏好。新的查詢視窗只沿用<b>來源</b>視窗那條連線，而定義本身不帶資料庫，
+    /// 少了這一行，游標停在 <c>LibArchive.dbo.usp_X</c> 按 F12 之後再按 F5，
+    /// 改的是目前資料庫裡同名的那一個——或者直接失敗，而畫面上看不出兩者的差別。
+    ///
+    /// 預設是 <c>false</c>：唯讀的預覽表面顯示的是「這個物件的定義」，而 <c>USE</c>
+    /// 不屬於定義；只有 F12 與 SQL Search 的「移至定義」那一條打開它。
+    /// 資料庫名稱取自 <c>SqlScriptContext.DatabaseName</c>，物件在連結伺服器上時
+    /// <b>不寫</b>——<c>USE</c> 換不動別的伺服器，寫了會切到本機同名的資料庫。
+    /// </remarks>
+    public bool IncludeDatabaseContext { get; init; }
+
     /// <summary>檔頭註解：來源伺服器、資料庫、產生時間、工具版本與選項摘要。</summary>
     public bool IncludeHeaderComment { get; init; }
 
