@@ -248,12 +248,21 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             settings,
             writtenName);
 
-        // 自動別名在建立清單時就算好了，掛在項目上；展開要看的是「函式呼叫補完
-        // 右括號之後」那個位置，所以由這裡轉交，展開本身問不出上下文。
+        // 自動別名在建立清單時就算好了，掛在項目上。它要接在右括號之後，而右括號
+        // 是下面那一段才寫進去的，所以先取出來放在手上。
+        //
+        // 接的位置有三處，由 SqlFunctionCallInsertion 的模式一分為三，誰也接不到
+        // 兩次：「不補括號」在 SqlInsertionText 就接在名稱後面；「只補空括號」接在
+        // 下面那段寫完的右括號後面；「連引數一起補」換掉的是名稱與括號那一整段，
+        // 接在插入文字上會被它蓋掉，所以轉交給展開器在引數清單後面接。
+        var tableSourceAliasSuffix = item.Properties.TryGetProperty<string>(
+            SqlAsyncCompletionSource.TableSourceAliasKey,
+            out var aliasSuffix)
+            ? aliasSuffix
+            : null;
+
         if (expansion is SqlFunctionCallExpansion functionCallExpansion &&
-            item.Properties.TryGetProperty<string>(
-                SqlAsyncCompletionSource.TableSourceAliasKey,
-                out var tableSourceAliasSuffix))
+            tableSourceAliasSuffix is not null)
         {
             functionCallExpansion.TableSourceAliasSuffix = tableSourceAliasSuffix;
         }
@@ -285,6 +294,18 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
                 Array.Empty<SqlStatementParameter>(),
                 out caretOffset);
             insertedClose = ')';
+
+            // 資料表值函式的自動別名剩下這一條路可以接。這也正是預設設定走的那一條
+            // ——「補上括號」開著、「填入引數預留值」關著——少了這一段，
+            // FROM dbo.fn_LoansByReader(…) 就沒有別名：名稱後面已經被上面那一行
+            // 寫上右括號了，而展開那一條只在補引數時才會跑。
+            //
+            // 游標停在括號之間，接在尾巴不影響 caretOffset。
+            if (functionCall == SqlFunctionCallInsertionMode.Parentheses &&
+                tableSourceAliasSuffix is not null)
+            {
+                insertionText += tableSourceAliasSuffix;
+            }
         }
         else
         {

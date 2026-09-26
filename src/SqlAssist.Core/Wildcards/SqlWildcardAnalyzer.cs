@@ -118,8 +118,30 @@ public static class SqlWildcardAnalyzer
             start,
             caretPosition - start,
             qualifierText,
-            qualify: qualifierText is not null || references.Count > 1,
+            qualify: qualifierText is not null || references.Count > 1 || HasAlias(references),
             sources);
+    }
+
+    /// <summary>這一組來源裡有沒有人自己寫了別名。</summary>
+    /// <remarks>
+    /// 只有一個來源時欄位名稱本來不會模稜兩可，但使用者既然已經替它取了別名，
+    /// 展開出來的欄位就照著寫上那個別名——他接著多半要再 <c>JOIN</c> 一張表進來，
+    /// 而那時才回頭替每一個欄位補前綴，是這整件事裡最沒有意義的一段工。
+    ///
+    /// 沒寫別名的來源維持不加：<c>FROM dbo.Loan</c> 展開成 <c>Loan.Id</c>
+    /// 只是多了一批他沒有要求的字，而欄位名稱本來就唯一。
+    /// </remarks>
+    private static bool HasAlias(IReadOnlyList<SqlTableReference> references)
+    {
+        for (var index = 0; index < references.Count; index++)
+        {
+            if (!string.IsNullOrEmpty(references[index].Alias))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>找出結尾正好落在游標上的那個星號。</summary>

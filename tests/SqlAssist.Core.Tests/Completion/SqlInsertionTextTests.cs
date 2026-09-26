@@ -257,9 +257,10 @@ public sealed class SqlInsertionTextTests
     }
 
     /// <remarks>
-    /// 資料表值函式在「展開函式呼叫」開著時走展開那條路：展開器把名稱換成
-    /// <c>fn(…)</c> 時會蓋掉先拼好的字，別名因此由提交管理器在展開結果之後補，
-    /// 不在這裡（<c>SqlInsertionText</c> 只服務沒有展開的那一半）。
+    /// 資料表值函式的別名要接在右括號<b>之後</b>，而那個位置不在這裡——這一段文字
+    /// 之後還要補括號。三條路徑各接各的，由模式一分為三：不補括號接在名稱後面
+    /// （就是本則第二個斷言）；只補空括號由提交那一次編輯接在右括號後面；
+    /// 連引數一起補由展開器接在引數清單後面。這裡釘住的是後兩者不在插入文字裡。
     /// </remarks>
     [Fact]
     public void 資料表值函式的別名交給展開那條路()
@@ -273,6 +274,13 @@ public sealed class SqlInsertionTextTests
             TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
             ExpandFunctionCall = true,
         };
+        var expandedWithArguments = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+            ExpandFunctionCall = true,
+            ExpandFunctionArguments = true,
+        };
         var notExpanded = new SqlAssistSettings
         {
             QualifyObjectNames = true,
@@ -281,6 +289,7 @@ public sealed class SqlInsertionTextTests
         };
 
         Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expanded));
+        Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expandedWithArguments));
         Assert.Equal("dbo.LoanDetail ld ", Build(suggestion, "SELECT * FROM |", notExpanded));
     }
 }

@@ -78,10 +78,15 @@ LibArchive」，而那個結構描述並不存在。關掉一個為了少打幾�
 `FROM`、`JOIN`、`APPLY`、`USING`、`UPDATE` 之後，以及這些清單的逗號續列。
 寫不寫 `AS` 與要不要補由 `sqlAssist.insertion.tableSourceAliasStyle` 決定
 （`none`／`as`／`off`），取名與撞名加序號在 `Core/Completion/SqlAutoAlias`。
+函式名稱的 `fn_`／`ufn_`／`ifn_`／`tf_` 前綴先去掉再取首字母，否則每一個
+資料表值函式的別名都以 `f` 開頭，反而分不出 `lbr` 與 `ll`。
 
 能不能接別名問的是 `SqlCompletionContext.MayAppendTableAlias`，不是 `Target`：
 `INSERT INTO` 的目標表與 `DROP TABLE` 的名稱一樣是 `DataSource`，文法上卻都不接受別名。
 
-資料表值函式在「展開函式呼叫」開著時不在插入文字裡接：提交會走函式呼叫展開，
-展開器把名稱換成 `fn(…)` 時會蓋掉先拼好的字。別名因此改由建議項帶著
-（`SqlAsyncCompletionSource.TableSourceAliasKey`），在展開結果之後才補上。
+別名一律接在**右括號之後**，而括號是提交當下才寫出來的，所以接的位置有三處，
+由 `SqlFunctionCallInsertion` 的模式一分為三：不補括號時 `SqlInsertionText`
+接在名稱後面；只補空括號時由提交那一次編輯接在右括號後面；連引數一起補時
+由函式呼叫展開器接在引數清單後面（`SqlAsyncCompletionSource` 先把字尾掛在
+建議項上，`SqlAsyncCompletionCommitManager` 轉交）。一個模式接一處，
+所以不會有哪條路徑接兩次、也不會三條都落空。

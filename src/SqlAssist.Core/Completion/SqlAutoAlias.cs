@@ -18,13 +18,25 @@ namespace SqlAssist.Core.Completion;
 /// </remarks>
 public static class SqlAutoAlias
 {
+    /// <summary>資料表值函式名稱的常見前綴，取名之前先去掉。</summary>
+    /// <remarks>
+    /// 這幾個前綴在 T-SQL 裡的意思就是「這是函式」，留著的話每一個資料表值函式的
+    /// 別名都以 <c>f</c> 或 <c>t</c> 開頭，反而失去區辨力：<c>fn_LoansByReader</c>
+    /// 與 <c>fn_LoanList</c> 要的是 <c>lbr</c> 與 <c>ll</c>。
+    ///
+    /// 只看前綴，不問被提交的是不是函式：資料表與檢視不會這樣取名，而多帶一個
+    /// 「這是函式」的參數進來，只是把同一個判斷推給呼叫端各做一次。
+    /// </remarks>
+    private static readonly string[] FunctionPrefixes = { "ufn_", "ifn_", "tf_", "fn_" };
+
     /// <summary>
     /// 由物件名稱取出別名：各段的首字母小寫。
     /// </summary>
     /// <remarks>
-    /// <c>Lib_Reader</c> → <c>lr</c>、<c>LoanDetail</c> → <c>ld</c>。
-    /// 分段看的是底線、空白、連字號、點號，以及大小寫交替——所以
-    /// <c>HTTPServer</c> 會切成 <c>HTTP</c> 與 <c>Server</c>，兩個首字母是 <c>hs</c>。
+    /// <c>Lib_Reader</c> → <c>lr</c>、<c>LoanDetail</c> → <c>ld</c>、
+    /// <c>fn_LoansByReader</c> → <c>lbr</c>。分段看的是底線、空白、連字號、點號，
+    /// 以及大小寫交替——所以 <c>HTTPServer</c> 會切成 <c>HTTP</c> 與 <c>Server</c>，
+    /// 兩個首字母是 <c>hs</c>。
     ///
     /// 名稱裡一個字母都沒有時（例如 <c>dbo.[2024]</c>）退回「去掉分隔符後的小寫」；
     /// 連一個字元都不剩就回傳空字串，由呼叫端決定要怎麼處理。
@@ -36,8 +48,10 @@ public static class SqlAutoAlias
             return string.Empty;
         }
 
+        var name = StripFunctionPrefix(sourceName);
+
         var alias = new string(
-            SplitWords(sourceName)
+            SplitWords(name)
                 .Select(word => word.FirstOrDefault(char.IsLetter))
                 .Where(letter => letter != default)
                 .Select(char.ToLowerInvariant)
@@ -49,10 +63,31 @@ public static class SqlAutoAlias
         }
 
         return new string(
-            sourceName
+            name
                 .Where(char.IsLetterOrDigit)
                 .Select(char.ToLowerInvariant)
                 .ToArray());
+    }
+
+    /// <summary>
+    /// 去掉開頭的函式前綴；沒有的話原樣回傳。
+    /// </summary>
+    /// <remarks>
+    /// 整串就是前綴本身時不動（<c>fn_</c> → <c>fn_</c>）：去掉之後一個字都不剩，
+    /// 而那一格寧可留著一個不好看但唯一的別名，也不要回傳空字串讓呼叫端整個放棄。
+    /// </remarks>
+    private static string StripFunctionPrefix(string sourceName)
+    {
+        foreach (var prefix in FunctionPrefixes)
+        {
+            if (sourceName.Length > prefix.Length &&
+                sourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return sourceName.Substring(prefix.Length);
+            }
+        }
+
+        return sourceName;
     }
 
     /// <summary>

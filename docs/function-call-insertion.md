@@ -40,6 +40,8 @@ FROM dbo.fn_LoansByReader(0, NULL, N'')
 權限不足）時整句只剩 `dbo.dtoc`，一個把「補上括號」開著的人卻拿到語法錯誤。
 判斷只有一份，在 `Core/Completion/SqlFunctionCallInsertion`；提交那一端問「補不補括號」、
 展開那一端問「要不要查參數」問的是同一個答案，各問一次的症狀是兩邊都補。
+資料表值函式的自動別名接在哪裡也由同一個模式決定，見
+[插入文字](completion-insertion.md#資料來源的自動別名)。
 
 ## 引數怎麼排
 

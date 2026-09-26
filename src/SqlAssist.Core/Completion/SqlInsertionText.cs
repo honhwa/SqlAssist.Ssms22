@@ -55,9 +55,10 @@ public static class SqlInsertionText
 
         var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
 
-        // 資料表值函式在「展開函式呼叫」開啟時不在這裡接別名：那一條路徑要在引數
-        // 清單補完、右括號寫上之後才接得上，由 SqlFunctionCallExpansion 負責。
-        // 這裡再接一次會變成 fn() f f。
+        // 資料表值函式在「補上括號」開啟時不在這裡接別名：別名要接在右括號<b>之後</b>，
+        // 而那個位置還沒寫出來——括號由提交那一次編輯補上（只補空括號），
+        // 或由展開器連引數一起補（連引數一起補），兩條都要等寫完才接得上。
+        // 這裡是「不補括號」那一條，名稱後面就是最後一個位置。
         if (aliasSuffix is not null &&
             (suggestion.Kind != SuggestionKind.TableFunction || !settings.ExpandFunctionCall))
         {

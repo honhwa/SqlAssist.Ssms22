@@ -48,12 +48,43 @@ public sealed class SqlWildcardAnalyzerTests
     }
 
     /// <remarks>
-    /// 單一資料來源不加限定字：欄位名稱不可能模稜兩可，補上去只是雜訊。
+    /// 沒寫別名的單一資料來源不加限定字：欄位名稱不可能模稜兩可，補上去只是雜訊。
+    /// 使用者自己寫了別名的那一種要加，見下一則。
     /// </remarks>
     [Fact]
-    public void 只有一個資料來源時不加限定字()
+    public void 只有一個沒有別名的資料來源時不加限定字()
     {
         Assert.False(Expand("SELECT *| FROM dbo.PUBLISHER").Qualify);
+    }
+
+    /// <remarks>
+    /// 使用者已經用別名說話了，展開出來的欄位就照著寫上它。接著再 <c>JOIN</c>
+    /// 一張表進來時，兩百個欄位得靠他自己一個一個補前綴。
+    /// </remarks>
+    [Fact]
+    public void 只有一個資料來源但有別名時補上別名()
+    {
+        var target = Expand("SELECT *| FROM dbo.Loan l");
+
+        Assert.True(target.Qualify);
+        Assert.Equal(new[] { "l:表 Loan" }, Names(target));
+    }
+
+    /// <remarks>
+    /// 判準是別名<b>有沒有寫</b>：四種寫法都要認，而資料表提示夾在中間不影響
+    /// ——它排在別名之前或之後都合法，實際指令碼裡兩種都寫得出來。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT *| FROM dbo.Loan l", "l")]
+    [InlineData("SELECT *| FROM dbo.Loan AS l", "l")]
+    [InlineData("SELECT *| FROM dbo.Loan l (NOLOCK)", "l")]
+    [InlineData("SELECT *| FROM dbo.Loan l WITH (NOLOCK)", "l")]
+    public void 各種別名寫法都算寫了別名(string sqlWithCaret, string expected)
+    {
+        var target = Expand(sqlWithCaret);
+
+        Assert.True(target.Qualify);
+        Assert.Equal(expected, Assert.Single(target.Sources).Qualifier);
     }
 
     [Fact]
@@ -180,7 +211,9 @@ public sealed class SqlWildcardAnalyzerTests
         var target = Expand("SELECT *| FROM (SELECT Id, Name FROM dbo.PUBLISHER) d");
 
         Assert.Equal(new[] { "d:Id", "d:Name" }, Names(target));
-        Assert.False(target.Qualify);
+
+        // 衍生資料表的別名是文法要求的，不是可有可無的偏好——展開的欄位照著寫上它。
+        Assert.True(target.Qualify);
     }
 
     [Fact]
@@ -352,7 +385,7 @@ public sealed class SqlWildcardAnalyzerTests
         var target = Expand("SELECT *| FROM dbo.A a WHERE a.Id IN (SELECT b.Id FROM dbo.B b)");
 
         Assert.Equal(new[] { "a:表 A" }, Names(target));
-        Assert.False(target.Qualify);
+        Assert.True(target.Qualify);
     }
 
     [Fact]
@@ -394,7 +427,7 @@ public sealed class SqlWildcardAnalyzerTests
         var target = Expand("SELECT *| FROM dbo.fn_LoansByReader(0, N'x') f");
 
         Assert.Equal(new[] { "f:表 fn_LoansByReader" }, Names(target));
-        Assert.False(target.Qualify);
+        Assert.True(target.Qualify);
     }
 
     /// <remarks>資料表與資料表值函式併用時，兩個來源都要在。</remarks>

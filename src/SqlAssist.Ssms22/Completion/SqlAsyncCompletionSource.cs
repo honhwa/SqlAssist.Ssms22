@@ -608,8 +608,9 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         // 提交與排名都需要拿回原始建議項；PropertyCollection 是官方提供的掛載點。
         item.Properties.AddProperty(SuggestionKey, suggestion);
 
-        // 展開函式呼叫時，別名要接在右括號之後，而那串引數是提交當下才知道的，
-        // 所以這裡先把字尾算好掛在項目上，交給 SqlAsyncCompletionCommitManager 轉給展開器。
+        // 資料表值函式的別名要接在右括號之後，而括號與引數都是提交當下才寫出來的，
+        // 所以這裡先把字尾算好掛在項目上，由 SqlAsyncCompletionCommitManager 在括號
+        // 寫完之後接上：補空括號那一條它自己接，連引數一起補那一條轉給展開器。
         // 掛在 item 而不是 session：同一個 session 裡的每一筆建議各帶各的別名。
         if (suggestion.Kind == SuggestionKind.TableFunction && settings.ExpandFunctionCall)
         {
