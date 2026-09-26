@@ -221,8 +221,17 @@
       "default": true,
       "order": 210,
       "title": "自動補上成對的括號與引號",
-      "description": "輸入 ( ' [ \" 時補上另一半並把游標留在中間；接著輸入結尾字元會跳過補上的那一個，Backspace 刪掉開頭字元時把空的另一半一起收掉，先選取一段文字再輸入開頭字元則是把它包起來。從建議清單提交自己帶著左括號的項目（GETDATE、varchar）時也一併補上右括號。字串與註解裡不配對，建議清單或程式碼片段欄位開著時也不介入。BEGIN…END 不在這一項底下，那是程式碼片段。",
+      "description": "輸入 ( ' [ \" 時補上另一半並把游標留在中間；接著輸入結尾字元會跳過補上的那一個，Backspace 刪掉開頭字元時把空的另一半一起收掉，先選取一段文字再輸入開頭字元則是把它包起來。從建議清單提交自己帶著左括號的項目（GETDATE、varchar）時也一併補上右括號。字串與註解裡不配對，建議清單或程式碼片段欄位開著時也不介入。BEGIN…END 與 TRY…CATCH 是多字元的區塊骨架，由「自動補上區塊骨架」那一項管。",
       "additionalKeywords": [ "括號", "引號", "配對", "自動關閉", "auto close", "bracket", "quote" ],
+      "enableWhen": "${config:sqlAssist.general.enabled} == 'true'"
+    },
+    "sqlAssist.general.autoPairBlocks": {
+      "type": "boolean",
+      "default": true,
+      "order": 211,
+      "title": "自動補上區塊骨架",
+      "description": "選取一段文字之後打 BEGIN，把它包成 BEGIN…END；打 BEGIN TRY 則包成 BEGIN TRY／END TRY／BEGIN CATCH／END CATCH 四段。內容整段往右縮一層，游標停在區塊裡面第一行的開頭。只認得這兩種開頭，BEGIN TRAN、BEGIN DIALOG 之類不會被補上 END。字串、註解與方括號識別字裡不介入。",
+      "additionalKeywords": [ "區塊", "BEGIN", "END", "TRY", "CATCH", "block", "自動關閉" ],
       "enableWhen": "${config:sqlAssist.general.enabled} == 'true'"
     },
     "sqlAssist.general.checkForUpdates": {

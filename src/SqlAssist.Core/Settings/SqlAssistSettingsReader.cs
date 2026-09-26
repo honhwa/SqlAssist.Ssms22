@@ -75,6 +75,10 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.AutoPairDelimiters,
                 defaults.AutoPairDelimiters),
+            AutoPairBlocks = Value(
+                source,
+                SqlAssistMonikers.AutoPairBlocks,
+                defaults.AutoPairBlocks),
             CheckForUpdates = Value(source, SqlAssistMonikers.CheckForUpdates, defaults.CheckForUpdates),
             Animations = Value(source, SqlAssistMonikers.Animations, defaults.Animations),
             IgnoreWindowsAnimationSetting = Value(

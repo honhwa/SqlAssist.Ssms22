@@ -251,6 +251,14 @@ internal sealed class SqlAssistCompletionCommandHandler :
                 () => SqlCompletionReopen.AfterSeparator(args.TextView, Broker));
         }
 
+        // 區塊骨架排到這一輪之後才問：判斷要看的是「緩衝區裡有沒有 BEGIN」，
+        // 而此刻那個字元還沒進去。這一條與上面的建議清單無關——使用者選著一段文字
+        // 打 BEGIN 時清單本來就不會開著，所以不必等 Broker 那一問。
+        TextViewDispatch.AfterCurrentCommand(
+            args.TextView,
+            "處理區塊骨架",
+            SqlAutoPairing.TrySurroundSelectionWithBlock);
+
         RequestParameterHint(args.TextView, args.TypedChar);
         return handled;
     }
