@@ -87,6 +87,7 @@ Tab／Shift+Tab 在欄位之間移動；完整捷徑表見[程式碼片段](snip
 | 找自己寫過的 SQL | **SqlAssist 工具列 → History／Favorites** |
 | 修改功能行為 | `Ctrl+,` 後搜尋 `SqlAssist` |
 | 用片段包住選取的 SQL | `Ctrl+Alt+S`，或查詢視窗右鍵「以片段包住選取範圍」 |
+| 把複製來的一欄值貼成 `IN (…)` | 查詢視窗右鍵「貼上為 IN 條件」，或「貼上為值清單」 |
 | 編輯內建或自訂片段 | **工具 → SqlAssist → 程式碼片段…** |
 | 回報問題前檢查狀態 | **工具 → SqlAssist → 關於與診斷…** |
 

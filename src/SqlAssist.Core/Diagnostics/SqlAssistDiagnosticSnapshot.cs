@@ -17,7 +17,10 @@ public enum SqlAssistActivityKind
     FunctionCallExpanded,
     DefinitionOpened,
     ResultGridScripted,
-    SqlMemoryOpened
+    SqlMemoryOpened,
+
+    /// <summary>右鍵的「貼上為 IN 條件」或「貼上為值清單」。</summary>
+    PastedValues
 }
 
 /// <summary>最近一次可辨識的 SqlAssist 動作。</summary>

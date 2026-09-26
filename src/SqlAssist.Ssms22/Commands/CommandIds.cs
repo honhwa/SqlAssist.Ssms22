@@ -139,4 +139,26 @@ internal static class CommandIds
 
     /// <summary>結果格線：把選取範圍寫成 JSON 陣列。</summary>
     public const int ResultGridJson = 0x0307;
+
+    /// <summary>
+    /// 查詢視窗右鍵：把剪貼簿的一欄值貼成 <c>IN</c> 條件。
+    /// </summary>
+    /// <remarks>
+    /// 刻意沒有鍵繫結。命令表的鍵繫結只能用全域範圍，而 Ctrl+V 與它的一整族
+    /// 變體是使用者最常按的鍵——綁上去就是在整個殼層搶走那個鍵，
+    /// 而這個功能的用法是「複製一欄值、在要放條件的地方按右鍵」，
+    /// 本來就不需要一組快捷鍵。要綁的人走「選項 → 環境 → 鍵盤」，
+    /// 命令名稱是 <c>SqlAssist.PasteAsInPredicate</c>。
+    /// </remarks>
+    public const int PasteAsInPredicate = 0x021D;
+
+    /// <summary>
+    /// 查詢視窗右鍵：只貼值，不含 <c>IN</c> 與括號。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="PasteAsInPredicate"/> 共用同一份實作，差別只在頭尾那兩個符號。
+    /// 分成兩個命令而不是一個命令加對話框：兩者的差別只有一個字，
+    /// 每次都要在彈出來的視窗裡再選一次只是多一次點擊。
+    /// </remarks>
+    public const int PasteAsValues = 0x021E;
 }

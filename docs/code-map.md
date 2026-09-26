@@ -35,6 +35,7 @@
 | F12 抵達了卻沒開視窗 | `Ssms22/Editor/SqlDefinitionOpener.cs` |
 | Ctrl＋點擊沒有底線或點了沒反應 | `Ssms22/Editor/SqlClickNavigator.cs` |
 | 結果格線右鍵選單的命令、產出的 SQL 不對 | `Metadata/ResultGrid/`、`Ssms22/ResultGrid/` |
+| 貼上值清單的引號、逗號或縮排不對 | `Metadata/ResultGrid/`、`Ssms22/Editor/` |
 | 新增選單項目或鍵繫結後沒生效 | `Menus.vsct` ＋ `ProvideMenuResource` 版號，且必須重新安裝 |
 | F12 開出來的指令碼內容不對 | `Metadata/Formatting/SqlObjectScript.cs` |
 | 新查詢視窗沒有沿用連線 | `Ssms22/Connections/SsmsScriptWindow.cs`；SQL Search 別台的結果刻意不連，判斷在 `Search/SqlSearchActivation.cs` |

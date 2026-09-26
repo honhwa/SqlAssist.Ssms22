@@ -22,6 +22,12 @@ internal static class SqlClipboard
     /// <summary>剪貼簿一直打不開時的訊息；工具窗的狀態列與測試共用。</summary>
     internal const string BusyMessage = "剪貼簿正被其他程式使用，未複製；請稍後再試。";
 
+    /// <summary>讀不到時的同義訊息；「未複製」在這裡不成立，所以另寫一句。</summary>
+    internal const string BusyReadMessage = "剪貼簿正被其他程式使用，讀不到內容；請稍後再試。";
+
+    /// <summary>剪貼簿裡沒有純文字（複製的是圖片、檔案，或根本是空的）。</summary>
+    internal const string NoTextMessage = "剪貼簿裡沒有純文字內容。";
+
     /// <summary>勾起來的列都已不在（例如剛被刪除）時的訊息。</summary>
     internal const string EmptyMessage = "沒有可複製的項目。";
 
@@ -40,6 +46,48 @@ internal static class SqlClipboard
         // WPF 把 HTML 格式的字串以 UTF-8 寫進剪貼簿，與 CF_HTML 標頭裡的位元組位移同一種單位。
         data.SetData(DataFormats.Html, content.Html);
         return data;
+    }
+
+    /// <summary>
+    /// 讀剪貼簿上的純文字。
+    /// </summary>
+    /// <remarks>
+    /// 與寫入同樣把「剪貼簿被別的程式佔住」當成預期失敗：<see cref="ExternalException"/>
+    /// 在這裡接掉、回一句話給使用者，不走平台 Guard（其餘例外照樣往上丟，
+    /// 由呼叫端的使用者動作邊界回報）。
+    ///
+    /// <b>不重試。</b>寫入那條路重試是因為它慢到會撞上對方還在讀；讀取只是一次
+    /// 取值，而在 UI 執行緒上重試就得同步等，代價比「請稍後再試」大得多。
+    ///
+    /// <see cref="Clipboard.ContainsText()"/> 與 <c>GetText()</c> 是兩次開剪貼簿，
+    /// 但少了前者，剪貼簿裡放的是圖片或檔案時會拿到空字串以外的東西。這條路徑
+    /// 由使用者按右鍵觸發，不在按鍵的熱路徑上。
+    /// </remarks>
+    /// <param name="failure">拿不到內容時要顯示給使用者的原因；成功時是空字串。</param>
+    /// <param name="read">實際讀取；測試換掉它，不去動真正的系統剪貼簿。</param>
+    /// <returns>剪貼簿上的文字；沒有文字或讀不到時為 null。</returns>
+    public static string? TryReadText(out string failure, Func<string?>? read = null)
+    {
+        read ??= () => Clipboard.ContainsText() ? Clipboard.GetText() : null;
+
+        try
+        {
+            var text = read();
+
+            if (text is null || text.Length == 0)
+            {
+                failure = NoTextMessage;
+                return null;
+            }
+
+            failure = string.Empty;
+            return text;
+        }
+        catch (ExternalException)
+        {
+            failure = BusyReadMessage;
+            return null;
+        }
     }
 
     /// <summary>一段純文字（名稱、SQL）；重試與失敗訊息與 <see cref="WriteAsync"/> 同一份。</summary>

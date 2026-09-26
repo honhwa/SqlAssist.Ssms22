@@ -6,6 +6,7 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using SqlAssist.Core.Notifications;
 using SqlAssist.Core.Settings;
+using SqlAssist.Metadata.ResultGrid;
 using SqlAssist.Ssms22;
 using SqlAssist.Ssms22.Completion;
 using SqlAssist.Ssms22.Connections;
@@ -79,6 +80,17 @@ internal sealed class SqlAssistCommands
             CommandIds.SurroundWithFromTools,
             SurroundWith,
             SqlSnippetSurroundAction.IsAvailable);
+
+        // 查詢視窗右鍵的兩個貼上命令，共用一份實作，差別只在頭尾那兩個符號。
+        // 沒有鍵繫結：Ctrl+V 那一族是使用者最常按的鍵，理由見 CommandIds。
+        AddCommand(
+            CommandIds.PasteAsInPredicate,
+            (_, _) => PasteValues(SqlPasteShape.InPredicate),
+            SqlPasteValuesAction.IsAvailable);
+        AddCommand(
+            CommandIds.PasteAsValues,
+            (_, _) => PasteValues(SqlPasteShape.ValuesOnly),
+            SqlPasteValuesAction.IsAvailable);
 
         // 右鍵與工具選單使用不同的 VSCT ID 才能有不同圖示，但共用執行與狀態邏輯。
         // SQL Memory 關著或沒有東西可收就變灰，不讓使用者按下去才知道。
@@ -346,6 +358,45 @@ internal sealed class SqlAssistCommands
             // 同上：這條路徑綁著按鍵，例外也走狀態列。
             SqlAssistDiagnostics.WriteAlways($"以片段包住選取範圍失敗：{exception}");
             SqlAssistStatusBar.Show(_package, "以片段包住選取範圍失敗；原因已寫入診斷紀錄檔。");
+        }
+    }
+
+    /// <summary>
+    /// 把剪貼簿的一欄值寫成 <c>IN</c> 條件或值清單。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="SurroundWith"/> 同一條路：使用者按了右鍵選單卻什麼都沒發生
+    /// 等於故障，所以失敗一律走狀態列說明原因，<b>不用對話框</b>——
+    /// 他接著要做的是繼續編輯。
+    /// </remarks>
+    private void PasteValues(SqlPasteShape shape)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, "SqlAssist 目前已停用。");
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is not { } textView)
+            {
+                SqlAssistStatusBar.Show(_package, "請先把游標放進 SQL 查詢視窗。");
+                return;
+            }
+
+            if (!SqlPasteValuesAction.TryRun(textView, shape, out var message))
+            {
+                SqlAssistStatusBar.Show(_package, message);
+            }
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"貼上值清單失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, "貼上值清單失敗；原因已寫入診斷紀錄檔。");
         }
     }
 

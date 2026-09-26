@@ -303,6 +303,7 @@ public static class SqlAssistDiagnosticReport
             SqlAssistActivityKind.DefinitionOpened => "在新查詢視窗開啟定義",
             SqlAssistActivityKind.ResultGridScripted => "從查詢結果產生指令碼",
             SqlAssistActivityKind.SqlMemoryOpened => "已從 SQL Memory 開啟 SQL",
+            SqlAssistActivityKind.PastedValues => WithCount("貼上值清單", activity, "筆值"),
             _ => "未知活動"
         };
 

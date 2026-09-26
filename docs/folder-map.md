@@ -34,7 +34,7 @@
 | `Caching/` | 依「伺服器＋資料庫」快取，並協調分層載入 |
 | `Formatting/` | 型別、欄位呈現，以及重建物件定義的排版與批次樣板 |
 | `Analysis/` | 結構健檢的規則與分析器 |
-| `ResultGrid/` | 格線模型、值轉字面值、`#temp` 與 `IN` |
+| `ResultGrid/` | 格線模型、值轉字面值、`#temp`、`IN` 與貼上值清單 |
 | `Search/` | 目錄物件與 Agent 作業的搜尋來源、搜尋索引與它的快取 |
 
 ## SQL Memory 儲存

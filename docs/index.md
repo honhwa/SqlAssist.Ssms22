@@ -66,6 +66,7 @@
 | 失敗註解、新查詢 | [F12 指令碼](definition-scripts.md)／[移至定義](go-to-definition.md) |
 | ShellCommandFilter、命令表、鍵繫結 | [殼層命令](shell-commands.md) |
 | ResultGrid 命令、JSON、欄位剖析、字面值 | [結果格線](result-grid.md)／[格線輸出](result-grid-generation.md) |
+| 貼上為 IN 條件、剪貼簿值清單、哪些值不加引號 | [貼上值清單](paste-values.md) |
 | enableWhen、enum 相容 | [設定](settings.md)／[入口](settings-entries.md)／[設定結構](settings-schema.md) |
 | 分層載入 | [中繼資料](metadata.md)／[跨資料庫](metadata-cross-db.md) |
 | USE、連結伺服器、OPENQUERY、舊版、權限 | [連線](metadata-connection.md)／[遠端](metadata-remote.md)／[相容](metadata-compatibility.md) |
