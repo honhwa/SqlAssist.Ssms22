@@ -177,4 +177,25 @@ internal static class CommandIds
     /// </summary>
     /// <remarks>與 <see cref="QualifySchema"/> 共用同一份實作，差別只在呼叫哪一支分析器。</remarks>
     public const int ParenthesizeTop = 0x0220;
+
+    /// <summary>
+    /// 查詢視窗右鍵：就地改掉游標所在的 <c>@變數</c>，同批次的其他出現位置一起改。
+    /// </summary>
+    /// <remarks>
+    /// 右鍵選單那一顆。與 <see cref="InlineRenameKey"/> 共用同一份實作，差別只在狀態：
+    /// 這一顆只看游標在不在變數上，按鍵那一顆還要求鍵盤真的在編輯器上。
+    /// 命令的狀態是掛在 ID 上的，共用一個 ID 就表達不出這個差別——而那個差別正是
+    /// F2 會不會搶走物件總管「重新命名節點」的關鍵。
+    /// </remarks>
+    public const int InlineRename = 0x0221;
+
+    /// <summary>
+    /// 就地改名的 F2 鍵繫結；不出現在任何選單。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="GoToDefinition"/> 同一條命令表路徑，鍵繫結也只能用全域範圍。
+    /// F2 在 SSMS 是「重新命名物件總管的節點」，所以這一顆的狀態另外要求鍵盤在
+    /// SQL 編輯器上；停用的命令殼層不派送，物件總管那裡的 F2 就照常是它原本的用途。
+    /// </remarks>
+    public const int InlineRenameKey = 0x0222;
 }

@@ -42,6 +42,17 @@
       <Group guid="guidSqlAssistCommandSet" id="SqlAssistSettingsPageGroup" priority="0x0900" />
 
       <!--
+        只有鍵繫結、不出現在任何選單的命令。與設定頁那一組同樣掛在沒有父選單的
+        群組下，所以底下每一顆都必須標 CommandWellOnly——少標一個，那顆命令會被
+        畫進某個選單，而它沒有適合出現的地方。tools/Test-CommandTable.ps1 擋著。
+
+        這一組存在的理由是「同一個功能需要兩種狀態」。命令的可用狀態掛在 ID 上，
+        而 F2 在 SSMS 是「重新命名物件總管的節點」：鍵繫結只能用全域範圍，
+        要讓那一顆在鍵盤不在 SQL 編輯器時回報停用，就不能與右鍵選單那一顆共用 ID。
+      -->
+      <Group guid="guidSqlAssistCommandSet" id="SqlAssistKeyboardOnlyGroup" priority="0x0A00" />
+
+      <!--
         掛進 SSMS 查詢結果格線的右鍵選單。父選單是 SSMS 內部的命令表項目，不是
         公開的擴充契約，值的出處是 SQLEditors.dll：DisplaySqlResultsTabControl
         的 WndProc 收到 WM_CONTEXTMENU、確認作用中控制項是 GridControl 之後，
@@ -279,6 +290,30 @@
           <CanonicalName>SqlAssist.ParenthesizeTop</CanonicalName>
           <LocCanonicalName>SqlAssist.TOP補上括號</LocCanonicalName>
           <ToolTipText>把沒加括號的 TOP 10 寫成 TOP (10)；已加括號與 TOP @變數 不動</ToolTipText>
+        </Strings>
+      </Button>
+      <!--
+        就地改名。右鍵選單這一顆與 F2 那一顆共用同一份實作，只有狀態不同；
+        為什麼要分成兩顆見上方 SqlAssistKeyboardOnlyGroup 的說明。
+      -->
+      <Button guid="guidSqlAssistCommandSet" id="cmdidInlineRename" priority="0x0340" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <Strings>
+          <ButtonText>就地改名（@變數）</ButtonText>
+          <CanonicalName>SqlAssist.InlineRename</CanonicalName>
+          <LocCanonicalName>SqlAssist.就地改名</LocCanonicalName>
+          <ToolTipText>把游標所在的 @變數 連同同一個批次的其他出現位置一起改；Enter 定案，Esc 還原</ToolTipText>
+        </Strings>
+      </Button>
+      <Button guid="guidSqlAssistCommandSet" id="cmdidInlineRenameKey" priority="0x0300" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistKeyboardOnlyGroup" />
+        <CommandFlag>CommandWellOnly</CommandFlag>
+        <Strings>
+          <ButtonText>就地改名（@變數，F2）</ButtonText>
+          <CanonicalName>SqlAssist.InlineRenameKey</CanonicalName>
+          <LocCanonicalName>SqlAssist.就地改名F2</LocCanonicalName>
+          <ToolTipText>與右鍵選單那一項同一份實作；這一顆只在鍵盤真的在 SQL 編輯器上時可用</ToolTipText>
         </Strings>
       </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidManageSnippets" priority="0x0300" type="Button">
@@ -583,6 +618,21 @@
                 editor="guidVSStd97"
                 key1="S"
                 mod1="Control Alt" />
+    <!--
+      F2。與 F12 同一條命令表路徑，理由也相同：SSMS 的查詢視窗沒有可靠的編輯器範圍，
+      猜錯 GUID 的症狀是繫結安靜地不生效。全域一定註冊得上。
+
+      但這一條是全表搶鍵風險最高的一條：F2 在 SSMS 是「重新命名物件總管的節點」，
+      而「最後拿過焦點的 SQL 編輯器」與「現在有焦點的那一個」是兩件事。因此這一顆
+      不是綁在右鍵選單那一顆命令上，而是自己一顆（cmdidInlineRenameKey），狀態另外
+      要求鍵盤真的在編輯器上——停用的命令殼層不派送，物件總管那裡的 F2 就照常是
+      它原本的用途。改成與 cmdidInlineRename 共用 ID 的話，那個保護當場消失，
+      而且症狀是「在物件總管按 F2 改到查詢視窗裡的變數」，畫面上看不出關聯。
+    -->
+    <KeyBinding guid="guidSqlAssistCommandSet"
+                id="cmdidInlineRenameKey"
+                editor="guidVSStd97"
+                key1="VK_F2" />
   </KeyBindings>
 
   <Symbols>
@@ -600,6 +650,7 @@
       <IDSymbol name="SqlAssistSelectionActionsGroup" value="0x1320" />
       <IDSymbol name="SqlAssistSupportGroup" value="0x1400" />
       <IDSymbol name="SqlAssistSettingsPageGroup" value="0x1500" />
+      <IDSymbol name="SqlAssistKeyboardOnlyGroup" value="0x1510" />
       <IDSymbol name="SqlAssistResultGridCopyGroup" value="0x1610" />
       <IDSymbol name="SqlAssistResultGridActionsGroup" value="0x1620" />
       <IDSymbol name="SqlAssistResultGridDiagnosticsGroup" value="0x1630" />
@@ -632,6 +683,8 @@
       <IDSymbol name="cmdidPasteAsValues" value="0x021E" />
       <IDSymbol name="cmdidQualifySchema" value="0x021F" />
       <IDSymbol name="cmdidParenthesizeTop" value="0x0220" />
+      <IDSymbol name="cmdidInlineRename" value="0x0221" />
+      <IDSymbol name="cmdidInlineRenameKey" value="0x0222" />
       <IDSymbol name="cmdidProbeResultGrid" value="0x0300" />
       <IDSymbol name="cmdidResultGridTempTable" value="0x0301" />
       <IDSymbol name="cmdidResultGridInPredicate" value="0x0302" />

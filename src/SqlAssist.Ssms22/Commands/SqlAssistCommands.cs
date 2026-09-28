@@ -103,6 +103,18 @@ internal sealed class SqlAssistCommands
             (_, _) => RewriteText(SqlTextRewriteKind.TopParenthesis),
             SqlTextRewriteAction.IsAvailable);
 
+        // 就地改名分成兩顆命令，共用同一份實作。右鍵選單那一顆只看游標在不在變數上；
+        // F2 那一顆還要求鍵盤真的在編輯器上——命令的狀態掛在 ID 上，共用一個 ID
+        // 就表達不出這個差別，而那個差別正是 F2 會不會搶走物件總管「重新命名節點」的關鍵。
+        AddCommand(
+            CommandIds.InlineRename,
+            InlineRename,
+            InlineRenameCommand.IsAvailable);
+        AddCommand(
+            CommandIds.InlineRenameKey,
+            InlineRename,
+            InlineRenameCommand.IsKeyBindingAvailable);
+
         // 右鍵與工具選單使用不同的 VSCT ID 才能有不同圖示，但共用執行與狀態邏輯。
         // SQL Memory 關著或沒有東西可收就變灰，不讓使用者按下去才知道。
         AddCommand(
@@ -445,6 +457,48 @@ internal sealed class SqlAssistCommands
         {
             SqlAssistDiagnostics.WriteAlways($"就地改寫失敗：{exception}");
             SqlAssistStatusBar.Show(_package, "就地改寫失敗；原因已寫入診斷紀錄檔。");
+        }
+    }
+
+    /// <summary>
+    /// 就地改掉游標所在的 <c>@變數</c>。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="RewriteText"/> 同一條路：使用者按了選單卻什麼都沒發生等於故障，
+    /// 所以開始不了的時候一律說明原因，<b>不用對話框</b>——他接著要做的是繼續編輯。
+    ///
+    /// 進入改名模式之後的成敗改由狀態列回報（不合法的名稱、撞名），而那是
+    /// <see cref="InlineRenameCommand"/> 自己的事：那時候使用者的鍵盤還在編輯器上，
+    /// 訊息要跟著他的下一次按鍵走。
+    /// </remarks>
+    private void InlineRename(object? sender, EventArgs eventArgs)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, "SqlAssist 目前已停用。");
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is not { } textView)
+            {
+                SqlAssistStatusBar.Show(_package, "請先把游標放進 SQL 查詢視窗。");
+                return;
+            }
+
+            if (!InlineRenameCommand.TryBegin(textView, _package, out var message))
+            {
+                SqlAssistStatusBar.Show(_package, message);
+            }
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"就地改名失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, "就地改名失敗；原因已寫入診斷紀錄檔。");
         }
     }
 
