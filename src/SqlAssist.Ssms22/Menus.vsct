@@ -252,6 +252,35 @@
           <ToolTipText>只貼值，不含 IN 與括號；給 IN ( 已經打好、游標停在括號裡的位置</ToolTipText>
         </Strings>
       </Button>
+      <!--
+        就地改寫的一對。兩者動的都是整段文字（有選取就只動選取），而且都會把游標留在
+        原地，所以排在一起、中間不夾別的項目；相隔好幾行時使用者得來回讀第二次才知道
+        自己在選什麼。
+
+        沒有鍵繫結，理由與上面兩個貼上命令相同：用法是「選一段、按右鍵、挑一個」，
+        要綁鍵的人走「選項 → 環境 → 鍵盤」，命令名稱是 SqlAssist.QualifySchema
+        與 SqlAssist.ParenthesizeTop。
+      -->
+      <Button guid="guidSqlAssistCommandSet" id="cmdidQualifySchema" priority="0x0320" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <Strings>
+          <ButtonText>補齊結構描述（dbo.）</ButtonText>
+          <CanonicalName>SqlAssist.QualifySchema</CanonicalName>
+          <LocCanonicalName>SqlAssist.補齊結構描述</LocCanonicalName>
+          <ToolTipText>為沒帶結構描述的表、檢視、預存程序與函式補上 dbo.，並把 db..物件 正規化為 db.dbo.物件</ToolTipText>
+        </Strings>
+      </Button>
+      <Button guid="guidSqlAssistCommandSet" id="cmdidParenthesizeTop" priority="0x0330" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <Strings>
+          <ButtonText>TOP 補上括號</ButtonText>
+          <CanonicalName>SqlAssist.ParenthesizeTop</CanonicalName>
+          <LocCanonicalName>SqlAssist.TOP補上括號</LocCanonicalName>
+          <ToolTipText>把沒加括號的 TOP 10 寫成 TOP (10)；已加括號與 TOP @變數 不動</ToolTipText>
+        </Strings>
+      </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidManageSnippets" priority="0x0300" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorActionsGroup" />
         <Strings>
@@ -601,6 +630,8 @@
       <IDSymbol name="cmdidFocusNotifications" value="0x021C" />
       <IDSymbol name="cmdidPasteAsInPredicate" value="0x021D" />
       <IDSymbol name="cmdidPasteAsValues" value="0x021E" />
+      <IDSymbol name="cmdidQualifySchema" value="0x021F" />
+      <IDSymbol name="cmdidParenthesizeTop" value="0x0220" />
       <IDSymbol name="cmdidProbeResultGrid" value="0x0300" />
       <IDSymbol name="cmdidResultGridTempTable" value="0x0301" />
       <IDSymbol name="cmdidResultGridInPredicate" value="0x0302" />

@@ -161,4 +161,20 @@ internal static class CommandIds
     /// 每次都要在彈出來的視窗裡再選一次只是多一次點擊。
     /// </remarks>
     public const int PasteAsValues = 0x021E;
+
+    /// <summary>
+    /// 查詢視窗右鍵：把沒帶結構描述的物件名稱補成 <c>dbo.</c>。
+    /// </summary>
+    /// <remarks>
+    /// 沒有鍵繫結，理由與 <see cref="PasteAsInPredicate"/> 相同：這是「整理目前這一段」
+    /// 的動作，用法本來就是先選取再按右鍵，綁鍵只是多佔一組快捷鍵。
+    /// 命令名稱是 <c>SqlAssist.QualifySchema</c>。
+    /// </remarks>
+    public const int QualifySchema = 0x021F;
+
+    /// <summary>
+    /// 查詢視窗右鍵：把 <c>TOP 10</c> 補成 <c>TOP (10)</c>。
+    /// </summary>
+    /// <remarks>與 <see cref="QualifySchema"/> 共用同一份實作，差別只在呼叫哪一支分析器。</remarks>
+    public const int ParenthesizeTop = 0x0220;
 }

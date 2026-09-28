@@ -92,6 +92,17 @@ internal sealed class SqlAssistCommands
             (_, _) => PasteValues(SqlPasteShape.ValuesOnly),
             SqlPasteValuesAction.IsAvailable);
 
+        // 就地改寫的兩顆：同樣沒有鍵繫結，而且一律回一句結果——動的是散在整份文件裡的
+        // 幾十處，不回報的話使用者得自己捲一遍才知道有沒有生效。
+        AddCommand(
+            CommandIds.QualifySchema,
+            (_, _) => RewriteText(SqlTextRewriteKind.SchemaQualification),
+            SqlTextRewriteAction.IsAvailable);
+        AddCommand(
+            CommandIds.ParenthesizeTop,
+            (_, _) => RewriteText(SqlTextRewriteKind.TopParenthesis),
+            SqlTextRewriteAction.IsAvailable);
+
         // 右鍵與工具選單使用不同的 VSCT ID 才能有不同圖示，但共用執行與狀態邏輯。
         // SQL Memory 關著或沒有東西可收就變灰，不讓使用者按下去才知道。
         AddCommand(
@@ -397,6 +408,43 @@ internal sealed class SqlAssistCommands
         {
             SqlAssistDiagnostics.WriteAlways($"貼上值清單失敗：{exception}");
             SqlAssistStatusBar.Show(_package, "貼上值清單失敗；原因已寫入診斷紀錄檔。");
+        }
+    }
+
+    /// <summary>
+    /// 就地改寫游標所在的選取範圍（沒有選取就是整份文件）。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="PasteValues"/> 同一條路：使用者按了右鍵選單卻什麼都沒發生
+    /// 等於故障，所以結果一律走狀態列說明，<b>不用對話框</b>——他接著要做的是繼續編輯。
+    /// 成功也說一聲，因為這一種命令動的是散在整份文件裡的好幾處。
+    /// </remarks>
+    private void RewriteText(SqlTextRewriteKind kind)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, "SqlAssist 目前已停用。");
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is not { } textView)
+            {
+                SqlAssistStatusBar.Show(_package, "請先把游標放進 SQL 查詢視窗。");
+                return;
+            }
+
+            SqlTextRewriteAction.TryRun(textView, kind, out var message);
+            SqlAssistStatusBar.Show(_package, message);
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"就地改寫失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, "就地改寫失敗；原因已寫入診斷紀錄檔。");
         }
     }
 
