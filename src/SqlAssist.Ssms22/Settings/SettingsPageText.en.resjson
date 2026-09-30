@@ -51,7 +51,7 @@
   "GeneralIgnoreWindowsAnimationSettingTitle": "Ignore Windows animation setting",
   "GeneralIgnoreWindowsAnimationSettingDescription": "Keeps playing animations when Windows has \"Show animations in Windows\" turned off (common on Remote Desktop or with performance options). Affects only SqlAssist and doesn't change Windows settings; turn this off to follow Windows.",
   "GeneralLanguageTitle": "Interface language",
-  "GeneralLanguageDescription": "Language for SqlAssist's own interface: suggestion lists, tooltips, notifications, tool windows, menu commands, and comments in generated scripts. \"Follow SSMS\" picks it from the SSMS display language: Chinese uses Traditional Chinese, any other language uses English. Takes effect immediately; this settings page and the extension list always follow SSMS.",
+  "GeneralLanguageDescription": "Language for SqlAssist's own interface: suggestion lists, tooltips, notifications, tool windows, menu commands, and comments in generated scripts. \"Follow SSMS\" picks it from the SSMS display language: Chinese uses Traditional Chinese, any other language uses English. Takes effect immediately; SSMS draws this settings page, so its text follows after SSMS restarts. The extension list always follows SSMS.",
   "GeneralLanguageItemAuto": "Follow SSMS",
   "GeneralLanguageItemZhHant": "Traditional Chinese",
   "GeneralLanguageItemEn": "English",

@@ -17,11 +17,13 @@
   （SQLTXT001–011），不在執行期退回來源語言。
 - 不用 resx：衛星組件要靠 VSIX 探測路徑與隔離 AppDomain 各自載入，載不到只會安靜退回；
   產生器把所有語言編進同一個組件，參數個數也由編譯器檢查。XML 對 diff 與 AI 也都貴。
-- 唯一例外是設定頁：註冊檔只能寫 `@鍵;{packageGuid}`，由 SSMS 到套件組件的資源查表。文字照樣寫在
-  `Ssms22/Settings/SettingsPageText.<語言>.resjson`、照同一流程翻譯；檔案標 `SqlAssistTextResourceOnly`，
-  產生器照同一套 SQLTXT 規則驗證但不產生類別。`SettingsPageText.targets` 在建置時把英文編成中性資源
-  、其餘語言編成衛星組件，註冊檔引用不存在的鍵是 SQLSET006。衛星組件在
-  Deploy 白名單裡，缺了只會安靜退回英文。
+- 唯一例外是設定頁：註冊檔寫 `@鍵;{packageGuid}`，由 SSMS 依**它自己的**介面語言到套件組件的資源查表，
+  本設定碰不到那條鏈。文字照樣寫在 `Ssms22/Settings/SettingsPageText.<語言>.resjson`、照同一流程翻譯；檔案標
+  `SqlAssistTextResourceOnly`，產生器照同一套 SQLTXT 規則驗證但不產生類別。`SettingsPageText.targets`
+  建置時把英文編成中性資源、其餘語言編成衛星組件（在 Deploy 白名單裡，缺了只退回英文），
+  註冊檔引用不存在的鍵是 SQLSET006。`SettingsPageManifest` 再把安裝資料夾那一份的鍵換成該語言的
+  字面值（樣板是內嵌的同一份檔），並改寫 pkgdef 的 `CacheTag` 讓殼層重讀——殼層在啟動時讀註冊檔，
+  所以要重新啟動 SSMS。
 - 中性語言一律是英文：設定頁資源、命令表（`Menus.vsct`）與 vsixmanifest 都寫英文，繁中分別走衛星組件、
   `TextChanges` 與 `zh-Hant/Extension.vsixlangpack`。
 - 語言清單只有根目錄 `Directory.Build.props` 的 `SqlAssistTextLanguages` 一份（逗號分隔）。
@@ -87,7 +89,8 @@
 | 選單命令 | 命令表每顆標 `TextChanges`，QueryStatus 設 `Text`；`Test-CommandTable.ps1` 核對 |
 | 字型與色彩的分類名稱（`ClassificationFormatDefinition`） | MEF 建立時定字，重新啟動 SSMS 才換 |
 | 強制回應對話框 | 開著時進不了設定，不處理 |
-| 設定頁、擴充功能清單、鍵盤頁的命令名稱 | 跟隨 SSMS 介面語言，本設定管不到：設定頁走 `@key;{packageGuid}` 資源，清單走 `zh-Hant/Extension.vsixlangpack`，命令名稱（`LocCanonicalName`）只有英文 |
+| 設定頁 | `SettingsPageManifest` 改寫註冊檔的鍵與 `CacheTag`，重新啟動 SSMS 後生效 |
+| 擴充功能清單、鍵盤頁的命令名稱 | 跟隨 SSMS 介面語言，本設定管不到：清單走 `zh-Hant/Extension.vsixlangpack`，命令名稱（`LocCanonicalName`）只有英文 |
 
 ## 新增介面文字（省 token 的做法）
 

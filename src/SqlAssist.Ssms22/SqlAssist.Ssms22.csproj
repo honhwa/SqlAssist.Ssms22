@@ -267,6 +267,14 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <!--
+      同一份註冊檔再收一份成內嵌資源。殼層只用自己的介面語言查 "@鍵;{packageGuid}"，
+      換不到 SqlAssist 的語言設定，所以 SettingsPageManifest 要拿這份樣板，在切換語言時
+      把鍵換成該語言的字面值寫回安裝資料夾（見 docs/localization.md）。
+      與上面的 Content 同源，不另外放一份會走樣的副本。
+    -->
+    <EmbeddedResource Include="SqlAssist.registration.json"
+                      LogicalName="$(RootNamespace).SqlAssist.registration.json" />
+    <!--
       擴充管理員的圖示與預覽圖。直接連結 docs 底下那一張，不在這裡另存一份縮圖：
       同一張圖放兩份的下場一律是其中一份改了另一份沒改。
       Link 決定它在 VSIX 裡的檔名，manifest 的 Icon／PreviewImage 就是照這個名字找。

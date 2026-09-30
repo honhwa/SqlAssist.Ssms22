@@ -5,6 +5,7 @@ using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using SqlAssist.Core.Localization;
+using SqlAssist.Core.Notifications;
 using SqlAssist.Core.Settings;
 
 namespace SqlAssist.Ssms22.Settings;
@@ -51,11 +52,17 @@ internal static class SqlLanguageSwitch
     }
 
     /// <summary>依設定決定語言；與目前相同時什麼都不做。</summary>
-    public static void Apply(SqlAssistSettings settings)
+    /// <param name="origin">這一次是啟動時接上的還是使用者改的；決定設定頁那則通知算誰的事。</param>
+    public static void Apply(SqlAssistSettings settings, NotificationOrigin origin)
     {
         var language = settings.Language ?? SqlLanguage.Match(HostCulture);
         if (SqlText.SetLanguage(language))
             SqlAssistDiagnostics.WriteAlways($"介面語言：{language.Name}（設定 {settings.Language?.Name ?? "auto"}，SSMS {HostCulture.Name}）");
+
+        // 設定頁的文字由殼層解析，走不到上面這一條；它只有「把註冊檔換成字面值」一條路，
+        // 而殼層在套件載入之前就讀完註冊檔了——所以這一步排定的是下一次啟動要用的內容。
+        // 內容已經是這一份時它什麼都不做，所以每次接上設定都呼叫是安全的。
+        SettingsPageManifest.Apply(language, origin);
     }
 
     private static CultureInfo ReadHostCulture(IServiceProvider serviceProvider)

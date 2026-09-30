@@ -162,6 +162,13 @@
   // 叉號的 ToolTip：不是拒絕，只是這次工作階段先收起來。
   "PromptLater": "稍後提醒",
 
+  // ── 設定頁的語言 ──
+  // 設定頁是殼層畫的，文字只有「把註冊檔換成字面值」一條路，而殼層在套件載入前就讀完它了，
+  // 所以切換語言之後要等下一次啟動；這一則就是說這件事。
+  "SettingsPageLanguagePending": "排定設定頁語言",
+  "SettingsPageLanguagePendingDone": "已排定設定頁語言",
+  "SettingsPageLanguageRestartNotice": "設定頁的文字是 SSMS 畫的，要重新啟動 SSMS 才會跟著換；SqlAssist 的其餘介面已立即生效。",
+
   // ── 通知島 ──
   // 清單抬頭與多項膠囊共用；分子只算成功。英文避開單複數：用「標籤: 數字」的句型。
   "ProgressText": "{total} 項工作 · {succeeded}/{total}",

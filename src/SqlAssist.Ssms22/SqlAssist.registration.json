@@ -3,9 +3,12 @@
   //   <SSMS>\Common7\IDE\UnifiedSettings\registration.schema.json
   //
   // 顯示文字（title、description、enumItemLabels，以及 messages、commands 的 text）
-  // 一律寫成 "@鍵;{packageGuid}"：SSMS 依自己的介面語言到套件組件的資源查表，
-  // 不受 SqlAssist 的語言設定控制。文字在 Settings/SettingsPageText.<語言>.resjson，
-  // 建置時英文編成中性資源、其餘語言編成衛星組件（Settings/SettingsPageText.targets）。
+  // 一律寫成 "@鍵;{packageGuid}"：SSMS 依自己的介面語言到套件組件的資源查表。
+  // 那一條鏈碰不到 SqlAssist 的語言設定，所以安裝資料夾裡的那一份會被
+  // Settings/SettingsPageManifest.cs 換成該語言的字面值；本檔（內嵌成資源）就是它的樣板。
+  // 換過之後殼層沒有鍵可以查，只能照著畫。殼層在啟動時讀註冊檔，所以切換語言要重新啟動 SSMS。
+  // 文字在 Settings/SettingsPageText.<語言>.resjson，建置時英文編成中性資源、
+  // 其餘語言編成衛星組件（Settings/SettingsPageText.targets）：那是「跟隨 SSMS」時的後備路徑。
   // 新增設定時鍵要同時加進每一種語言；引用了不存在的鍵是建置錯誤 SQLSET006，
   // 否則設定頁只會把引用原樣畫出來。additionalKeywords 只供搜尋、不顯示，維持原文。
   //

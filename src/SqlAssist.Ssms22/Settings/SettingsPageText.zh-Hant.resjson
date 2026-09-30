@@ -54,7 +54,7 @@
   "GeneralIgnoreWindowsAnimationSettingTitle": "不受 Windows 動畫設定影響",
   "GeneralIgnoreWindowsAnimationSettingDescription": "Windows 關閉「在 Windows 中顯示動畫」（常見於遠端桌面或效能選項）時仍照常播放。只影響 SqlAssist，不更改 Windows 設定；關閉這一項則跟隨 Windows。",
   "GeneralLanguageTitle": "介面語言",
-  "GeneralLanguageDescription": "SqlAssist 自製介面的語言：建議清單、提示、通知、工具視窗、選單命令與產生的指令碼註解。「跟隨 SSMS」依 SSMS 的介面語言選擇，中文用繁體中文，其他語言用英文。切換後立即生效；本設定頁與擴充功能清單的文字固定跟隨 SSMS。",
+  "GeneralLanguageDescription": "SqlAssist 自製介面的語言：建議清單、提示、通知、工具視窗、選單命令與產生的指令碼註解。「跟隨 SSMS」依 SSMS 的介面語言選擇，中文用繁體中文，其他語言用英文。切換後立即生效；本設定頁的文字由 SSMS 畫，要重新啟動 SSMS 才會跟著換，擴充功能清單則一律跟隨 SSMS。",
   "GeneralLanguageItemAuto": "跟隨 SSMS",
   "GeneralLanguageItemZhHant": "繁體中文",
   "GeneralLanguageItemEn": "英文",

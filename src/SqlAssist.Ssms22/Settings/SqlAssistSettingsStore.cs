@@ -101,7 +101,7 @@ internal static class SqlAssistSettingsStore
         }
 
         // Unified Settings 缺席時也要套：預設值「跟隨 SSMS」仍然要看宿主的語言。
-        SqlLanguageSwitch.Apply(_current);
+        SqlLanguageSwitch.Apply(_current, NotificationOrigin.Startup);
 
         // 每一次都重套，不是只有第一次：這個方法在套件載入與每一個 SQL 編輯器
         // 建立時都會走到，而那正是「有人在外面把它改回去了」最可能被發現的時機。
@@ -239,7 +239,7 @@ internal static class SqlAssistSettingsStore
         }
 
         // 語言先換：設定變更的訂閱者重建介面時，取到的就是新語言的文字。
-        SqlLanguageSwitch.Apply(_current);
+        SqlLanguageSwitch.Apply(_current, NotificationOrigin.User);
         NotifyChanged();
         // 語言偏好還要推到擴充外面去。
         // 少了這一行，勾掉「只使用 SqlAssist 的建議清單」要重開 SSMS 才會生效。
