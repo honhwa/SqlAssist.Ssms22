@@ -30,7 +30,8 @@ public sealed class SqlCompletionContext
         bool expectsScalar = false,
         bool bracketed = false,
         SqlTableReference? columnOwner = null,
-        string? textBeforeCaret = null)
+        string? textBeforeCaret = null,
+        bool mayAppendTableAlias = false)
     {
         ScriptSources = scriptSources ?? NoScriptSources;
         Slot = slot;
@@ -51,6 +52,7 @@ public sealed class SqlCompletionContext
         Bracketed = bracketed;
         ColumnOwner = columnOwner;
         TextBeforeCaret = textBeforeCaret;
+        MayAppendTableAlias = mayAppendTableAlias;
     }
 
     /// <summary>
@@ -103,6 +105,19 @@ public sealed class SqlCompletionContext
     /// 重組一份的話還要再決定一次「他到底寫了什麼」，而那正是這裡不做的事。
     /// </remarks>
     public int QualifierStart { get; }
+
+    /// <summary>
+    /// 這個位置接不接受「名稱後面再加一個別名」。
+    /// </summary>
+    /// <remarks>
+    /// 刻意不從 <see cref="Target"/> 推導。有幾個位置的目標同樣是
+    /// <see cref="CompletionTarget.DataSource"/>，文法上卻不接受別名：
+    /// <c>INSERT INTO</c> 的目標表與 <c>DROP TABLE</c> 的名稱一樣是資料來源，
+    /// 兩者後面接一個別名都是語法錯誤。反過來說，<c>FROM </c> 與 <c>JOIN </c>
+    /// 之後的名稱不接別名只是可惜，不是錯——所以這一個判斷與「別名還沒寫」
+    /// 那一個（<c>SqlKeywordPositionAnalyzer</c>）互補，兩邊都問過才動手。
+    /// </remarks>
+    public bool MayAppendTableAlias { get; }
 
     /// <summary>
     /// 點號前方的識別字，也就是路徑最右邊那一段。
@@ -327,7 +342,8 @@ public sealed class SqlCompletionContext
             StartsBatch,
             ExpectsScalar,
             bracketed ?? Bracketed,
-            ColumnOwner,
-            textBeforeCaret ?? TextBeforeCaret);
+            columnOwner: ColumnOwner,
+            textBeforeCaret: textBeforeCaret ?? TextBeforeCaret,
+            mayAppendTableAlias: MayAppendTableAlias);
     }
 }

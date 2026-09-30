@@ -65,7 +65,7 @@ public static class SqlSchemaQualification
         // CTE 名稱只存在於這份文字裡，補上 dbo. 會讓 FROM cte 找不到東西。
         // 名冊與欄位建議共用，不在這裡再掃一次。
         var cteNames = new HashSet<string>(
-            new SqlColumnSourceResolver(tokens).CommonTableExpressionNames,
+            new SqlColumnSourceResolver(sql, tokens).CommonTableExpressionNames,
             StringComparer.OrdinalIgnoreCase);
 
         var edits = new List<SqlTextEdit>();

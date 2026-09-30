@@ -21,7 +21,8 @@ public sealed class SqlColumnInfo
         string? computedDefinition = null,
         bool isGeneratedAlways = false,
         SqlColumnScriptDetail? script = null,
-        string? description = null)
+        string? description = null,
+        bool isIndexKey = false)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -40,6 +41,7 @@ public sealed class SqlColumnInfo
         IsGeneratedAlways = isGeneratedAlways;
         Script = script ?? SqlColumnScriptDetail.None;
         Description = description;
+        IsIndexKey = isIndexKey;
     }
 
     public int Ordinal { get; }
@@ -55,6 +57,19 @@ public sealed class SqlColumnInfo
     public bool IsComputed { get; }
 
     public bool IsPrimaryKey { get; }
+
+    /// <summary>
+    /// 這個欄位是某個索引的<b>鍵</b>欄位（含主索引鍵）。
+    /// </summary>
+    /// <remarks>
+    /// 只認鍵欄位，<c>INCLUDE</c> 的欄位不算：敘述的篩選條件走得動的只有鍵，
+    /// 而這個旗標的用途正是「WHERE 之後先列哪幾欄」。與 <see cref="IsPrimaryKey"/>
+    /// 不是同一件事——一張表可以有很多個索引，主索引鍵只是其中一個。
+    ///
+    /// 判斷放在中繼資料層而不是建議清單那一層：索引不存在於指令碼裡，
+    /// 只有資料庫答得出來。
+    /// </remarks>
+    public bool IsIndexKey { get; }
 
     public string? DefaultDefinition { get; }
 

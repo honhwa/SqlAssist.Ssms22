@@ -31,7 +31,7 @@ WHERE a.Code = c.Code COLLATE | → 定序名稱與 DATABASE_DEFAULT
 是因為那兩個位置本來也沒有正確答案——前者要的是索引選項，後者要的是使用者自己取的
 資料行名稱，換掉的只是一份同樣不對的關鍵字清單。
 
-定序是唯一清單不在本機的一種，見 [定序](completion-collation.md)。
+名單只在伺服器上的定序、語言與時區見[執行個體名單](completion-instance-lists.md)。
 
 `SET NOCOUNT ON` 這一類的工作階段選項**沒有**收進來。位置分不開：位置分析看到
 `SET` 一律回報同一個位置，而 `UPDATE t SET |` 要的是資料行，跟 `SET NOCOUNT` 完全

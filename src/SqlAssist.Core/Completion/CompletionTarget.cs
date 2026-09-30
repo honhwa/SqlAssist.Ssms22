@@ -3,6 +3,7 @@ namespace SqlAssist.Core.Completion;
 public enum CompletionTarget
 {
     Any,
+
     DataSource,
     Procedure,
 

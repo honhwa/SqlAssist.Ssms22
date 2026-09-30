@@ -5,5 +5,6 @@
   "TableVariable": "資料表變數",
   "Variable": "變數",
   // 說明面板的標題列：名稱加上上面其中一種說明，或變數宣告的型別。
-  "NameWithDescription": "{name}（{description}）"
+  "NameWithDescription": "{name}（{description}）",
+  "AliasOf": "{alias}（{source} 的別名）"
 }

@@ -70,10 +70,25 @@ public sealed class SqlAssistSettings
     /// 這幾種行為是同一件事的幾個方向，分成多個開關只會調出自相矛盾的組合
     /// （補得出來卻收不掉）。
     ///
-    /// <c>BEGIN</c>…<c>END</c> 不在這個開關底下：那是程式碼片段的守備範圍，
-    /// 與「每一次按鍵都要判斷」的分隔字元不是同一個機制。
+    /// <c>BEGIN</c>…<c>END</c> 與 <c>TRY</c>／<c>CATCH</c> 不在這個開關底下：
+    /// 它們是多字元的骨架，由 <see cref="AutoPairBlocks"/> 管。
     /// </remarks>
     public bool AutoPairDelimiters { get; init; } = true;
+
+    /// <summary>
+    /// sqlAssist.general.autoPairBlocks
+    /// </summary>
+    /// <remarks>
+    /// 選取一段文字之後打 <c>BEGIN</c>，把它包成 <c>BEGIN</c>…<c>END</c>；
+    /// 打 <c>BEGIN TRY</c> 則一次補出 <c>END TRY</c>／<c>BEGIN CATCH</c>／<c>END CATCH</c>。
+    ///
+    /// 與 <see cref="AutoPairDelimiters"/> 分成兩個開關，因為兩者的觸發條件與代價都不同：
+    /// 單字元配對在每一次按鍵上都要判斷，而區塊只在使用者<b>先選了一段文字</b>、
+    /// 又打了 <c>BEGIN</c> 的時候才成立。分開之後才調得出「括號要配對但區塊不要」這種組合。
+    ///
+    /// 只認得那兩種開頭：<c>BEGIN TRAN</c>、<c>BEGIN DIALOG</c> 不是區塊，不補 <c>END</c>。
+    /// </remarks>
+    public bool AutoPairBlocks { get; init; } = true;
 
     /// <summary>
     /// sqlAssist.general.checkForUpdates
@@ -157,6 +172,20 @@ public sealed class SqlAssistSettings
 
     /// <summary>sqlAssist.insertion.useSquareBrackets</summary>
     public bool UseSquareBrackets { get; init; }
+
+    /// <summary>
+    /// sqlAssist.insertion.tableSourceAliasStyle
+    /// </summary>
+    /// <remarks>
+    /// 資料來源名稱補完之後要不要順手接一個別名。三種狀態回答兩個問題：
+    /// 自動補別名嗎（<see cref="SqlTableSourceAliasStyle.Off"/> 以外都是「要」），
+    /// 以及要寫 <c>AS</c> 嗎（<see cref="SqlTableSourceAliasStyle.As"/> 寫、
+    /// <see cref="SqlTableSourceAliasStyle.None"/> 不寫）。
+    ///
+    /// 這一份只是偏好，最終仍要問位置：<c>INSERT INTO</c> 的目標表後面接別名是語法錯誤，
+    /// 所以兩邊都同意才會動手（見 <c>SqlCompletionContext.MayAppendTableAlias</c>）。
+    /// </remarks>
+    public SqlTableSourceAliasStyle TableSourceAliasStyle { get; init; } = SqlTableSourceAliasStyle.None;
 
     /// <summary>
     /// sqlAssist.insertion.expandWildcardOnTab

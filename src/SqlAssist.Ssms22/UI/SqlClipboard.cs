@@ -24,6 +24,47 @@ internal static class SqlClipboard
     /// <summary>勾起來的列都已不在（例如剛被刪除）時的訊息。</summary>
     internal static string EmptyMessage => ChromeText.NothingToCopy;
 
+    /// <summary>讀剪貼簿時它被別的程式開著。</summary>
+    internal static string BusyReadMessage => ChromeText.ClipboardBusyRead;
+
+    /// <summary>剪貼簿裡沒有文字。</summary>
+    internal static string NoTextMessage => ChromeText.ClipboardNoText;
+
+    /// <summary>
+    /// 讀一段剪貼簿的純文字；讀不到時回傳 <c>null</c> 並把原因寫進
+    /// <paramref name="failure"/>（已翻好的訊息，可以直接給使用者看）。
+    /// </summary>
+    /// <param name="failure">讀不到時的原因；成功時是空字串。</param>
+    /// <param name="read">測試用的讀取器；不給就讀真正的剪貼簿。</param>
+    /// <remarks>
+    /// 剪貼簿是跨行程的共用資源，被別的程式開著時讀取會直接丟
+    /// <see cref="ExternalException"/>——那是使用者會遇到的正常狀況（另一個程式正在複製），
+    /// 不是程式錯誤，所以這裡把它翻成一則訊息而不是讓它往上冒。
+    /// </remarks>
+    public static string? TryReadText(out string failure, Func<string?>? read = null)
+    {
+        read ??= () => Clipboard.ContainsText() ? Clipboard.GetText() : null;
+
+        try
+        {
+            var text = read();
+
+            if (text is null || text.Length == 0)
+            {
+                failure = NoTextMessage;
+                return null;
+            }
+
+            failure = string.Empty;
+            return text;
+        }
+        catch (ExternalException)
+        {
+            failure = BusyReadMessage;
+            return null;
+        }
+    }
+
     /// <summary>表格複製成功時通知上的說明（標題已經是「已複製清單」）；SQL Memory 與 SQL Search 同一句。</summary>
     public static string CopiedNote(int rows) =>
         ChromeText.CopiedRows(rows);

@@ -32,7 +32,7 @@
 | 搜尋範圍、伺服器、資料庫清單 | [範圍](search-scope.md) |
 | 建議清單、排名、IntelliSense | [補全](completion.md) |
 | CompletionContext、觸發、大小寫 | [上下文](completion-context.md) |
-| `COLLATE` 之後、定序名單、fn_helpcollations | [定序](completion-collation.md) |
+| 定序、語言、時區名單，`COLLATE`、`AT TIME ZONE` | [執行個體名單](completion-instance-lists.md) |
 | `ON` 是資料表或述詞、MERGE 動作子句 | [ON／MERGE](completion-on-merge.md) |
 | TVF／純量函式、系統物件範圍 | [物件種類](completion-object-kinds.md) |
 | 多段式名稱、資料庫／結構描述判定 | [限定名稱](qualified-names.md) |
@@ -43,6 +43,7 @@
 | INSERT 欄位、EXEC 參數、預留值 | [展開內容](statement-values.md) |
 | 自訂函式括號、引數預留值 | [函式呼叫](function-call-insertion.md) |
 | 關鍵字產生器、位置旗標、物件過濾 | [關鍵字](completion-keywords.md) |
+| SET 選項、子句片語、ClauseKeyword | [片語](completion-phrases.md)／[產生器](phrase-generator.md) |
 | 子句回溯、換行邊界、不開清單 | [子句邊界](completion-boundaries.md) |
 | 內建函式、資料型別目錄 | [函式與型別](completion-builtins.md) |
 | 用途、範例、style、datepart、名稱辨識 | [內建說明](builtin-help.md) |

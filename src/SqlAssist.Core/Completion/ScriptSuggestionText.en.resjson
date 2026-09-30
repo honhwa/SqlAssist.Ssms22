@@ -3,5 +3,6 @@
   "TemporaryTable": "temporary table",
   "TableVariable": "table variable",
   "Variable": "variable",
-  "NameWithDescription": "{name} ({description})"
+  "NameWithDescription": "{name} ({description})",
+  "AliasOf": "{alias} (alias of {source})"
 }

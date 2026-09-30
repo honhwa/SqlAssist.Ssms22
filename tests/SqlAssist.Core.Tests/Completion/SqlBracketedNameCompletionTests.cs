@@ -15,11 +15,12 @@ namespace SqlAssist.Core.Tests.Completion;
 /// </remarks>
 public sealed class SqlBracketedNameCompletionTests
 {
+    // 自動別名關掉：這裡測的是方括號的保留，別名接在後面會蓋掉要驗的那一段。
     private static readonly SqlAssistSettings Qualified =
-        new() { QualifyObjectNames = true, UseSquareBrackets = false };
+        new() { QualifyObjectNames = true, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlAssistSettings Unqualified =
-        new() { QualifyObjectNames = false, UseSquareBrackets = false };
+        new() { QualifyObjectNames = false, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlSuggestion Loan =
         new("Loan", "Loan", "Table", "Loan", SuggestionKind.Table, schemaName: "dbo");

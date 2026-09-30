@@ -180,5 +180,18 @@
   "RehearsalPromptWithActivity": "Prompt with activity",
   "HiddenByEnabled": "\"Enable SqlAssist\" is turned off; test notifications will not appear.",
   "HiddenByNotifications": "\"Show notifications\" is turned off; test notifications will not appear.",
-  "HiddenByFailures": "\"Show all kinds of failures\" is turned off; failure tests will not appear."
+  "HiddenByFailures": "\"Show all kinds of failures\" is turned off; failure tests will not appear.",
+  "LoadingLanguages": "Loading languages",
+  "LoadingLanguagesDone": "Loaded languages",
+  "LoadingLoginLanguage": "Loading login default language",
+  "LoadingLoginLanguageDone": "Loaded login default language",
+  "LoadingTimeZones": "Loading time zones",
+  "LoadingTimeZonesDone": "Loaded time zones",
+  "LoadingServerTimeZone": "Loading server time zone",
+  "LoadingServerTimeZoneDone": "Loaded server time zone",
+  "BuildingSearchIndex": "Building search index",
+  "BuildingSearchIndexDone": "Built search index",
+  "RunningInternalStep": "Running SqlAssist internal step",
+  "RunningInternalStepDone": "Ran SqlAssist internal step",
+  "ResultUnexpected": "Skipped this time; the stack trace is in the diagnostic log"
 }

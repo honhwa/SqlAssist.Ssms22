@@ -199,6 +199,11 @@ public static class SqlCompletionContextAnalyzer
             ? SqlColumnOwner.Find(tokens, keywordPosition)
             : null;
 
+        // 接不接受別名問的是「游標前面那幾個字是什麼」，與目標是什麼無關：
+        // INSERT INTO 與 DROP TABLE 的目標同樣是 DataSource，文法上卻都不接受別名。
+        // 有路徑時看的是路徑之前的文字，因為「那幾段限定字」本身已經取代了名稱位置。
+        var mayAppendTableAlias = IsTableSourceNameSlot(qualifierPath is null ? beforeToken : beforeQualifier);
+
         return new SqlCompletionContext(
             caret.Slot,
             tokenStart,
@@ -212,7 +217,8 @@ public static class SqlCompletionContextAnalyzer
             qualifierStart: qualifierStart,
             clausePhrase: caret.Phrase,
             startsBatch: caret.StartsBatch,
-            columnOwner: columnOwner);
+            columnOwner: columnOwner,
+            mayAppendTableAlias: mayAppendTableAlias);
     }
 
     /// <summary>
@@ -556,10 +562,21 @@ public static class SqlCompletionContextAnalyzer
 
         // INSERT INTO 之後選一張資料表，要的幾乎不會是「只把名稱補上」——那句話還沒寫完。
         // 光看 INTO 分不出來：SELECT … INTO #tmp 的 INTO 後面是一個還不存在的新名稱，
-        // 展開成 INSERT 骨架會蓋掉他正在取的名字。所以認的是 INSERT INTO 這兩個字。
+        // 展開成 INSERT 骨架會蓋掉他正在取的名字。所以認的是 INSERT 這一個字。
+        //
+        // INTO 是選用關鍵字（INSERT dbo.Loan (…) VALUES (…)、INSERT @rows … 都合法），
+        // 所以單獨一個 INSERT 也要認。只認兩個字連著寫的話，省略 INTO 的人在那個位置
+        // 完全沒有清單、提交也只換到一個名稱，而畫面上看不出兩種寫法有什麼差別。
+        // MERGE 早就是這樣處理的（MERGE 與 MERGE INTO 各一條），這裡只是補上同一件事。
+        //
+        // 唯一的例外是 MERGE 的動作子句：WHEN NOT MATCHED THEN INSERT 的尾巴同樣是
+        // INSERT，但那個位置接下來是欄位清單（INTO 在那裡根本不能寫），
+        // 列一串資料表等於誤導。
         intent = CompletionIntent.InsertStatement;
 
-        if (EndsWithKeywords(text, "INSERT", "INTO", out keywordStart))
+        if (!IsMergeInsertAction(text) &&
+            (EndsWithKeywords(text, "INSERT", "INTO", out keywordStart) ||
+             EndsWithKeyword(text, "INSERT", out keywordStart)))
         {
             return CompletionTarget.DataSource;
         }
@@ -734,6 +751,119 @@ public static class SqlCompletionContextAnalyzer
 
         keywordStart = firstStart;
         return true;
+    }
+
+    /// <summary>
+    /// 這個 <c>INSERT</c> 是 MERGE 的動作子句，不是一句新的 <c>INSERT</c> 敘述。
+    /// </summary>
+    /// <remarks>
+    /// <c>WHEN NOT MATCHED THEN INSERT (欄位…) VALUES (…)</c> 的 <c>INSERT</c> 後面接的是
+    /// 欄位清單，而資料表名稱在那個位置文法上根本寫不出來——還把它當成一句新的敘述，
+    /// 等於在那裡列出一串使用者選了就會錯的資料表。
+    ///
+    /// 認 <c>THEN</c> 就夠，與 <c>SqlScopeAnalyzer.IsMergeAction</c> 認的是同一件事：
+    /// T-SQL 裡 <c>THEN</c> 只出現在 CASE 與 MERGE，而 CASE 的 <c>THEN</c> 後面是運算式，
+    /// <c>INSERT</c> 不是運算式。
+    ///
+    /// 不採用 <c>SqlScopeAnalyzer</c> 那個方法本身：它要的是整份敘述的詞元，
+    /// 而這裡手上只有游標前方那一段文字，兩者的輸入根本不同。
+    /// </remarks>
+    private static bool IsMergeInsertAction(string text) =>
+        EndsWithKeywords(text, "THEN", "INSERT", out _);
+
+    /// <summary>
+    /// 游標是不是停在「資料來源的名稱」這一格上，也就是後面接一個別名也讀得通的位置。
+    /// </summary>
+    /// <remarks>
+    /// <c>FROM </c>、<c>JOIN </c>、<c>APPLY </c>、<c>USING </c>、<c>UPDATE </c>
+    /// 之後直接就是名稱；<c>FROM dbo.Loan, </c> 這種「逗號之後」也是。
+    ///
+    /// 逗號那條不能只看前一個詞元：<c>SELECT a, </c> 與 <c>VALUES (1, </c> 的逗號
+    /// 在文字上長得一樣。所以往左找第一個「足以決定這是清單」的關鍵字——
+    /// 看到 <c>FROM</c>／<c>JOIN</c>／<c>APPLY</c> 就是資料來源清單，
+    /// 看到 <c>SELECT</c>／<c>VALUES</c>／<c>WHERE</c> 這些就不是。
+    ///
+    /// 名稱已經寫完、正準備打別名的位置（<c>FROM dbo.Loan </c>）回傳 false：
+    /// 那時使用者要的是自己打別名或直接往下寫，不是再被塞一個。
+    /// </remarks>
+    private static bool IsTableSourceNameSlot(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var trimmed = text.TrimEnd();
+
+        if (EndsWithKeyword(trimmed, "FROM", out _) ||
+            EndsWithKeyword(trimmed, "JOIN", out _) ||
+            EndsWithKeyword(trimmed, "APPLY", out _) ||
+            EndsWithKeyword(trimmed, "USING", out _) ||
+            EndsWithKeyword(trimmed, "UPDATE", out _))
+        {
+            return true;
+        }
+
+        if (!trimmed.EndsWith(",", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var tokens = SqlTokenizer.Tokenize(trimmed);
+
+        // 從倒數第二個詞元(也就是逗號)往左找，跳過逗號自己。
+        for (var index = tokens.Count - 2; index >= 0; index--)
+        {
+            var word = tokens[index].Text;
+
+            if (IsTableSourceAnchor(word))
+            {
+                return true;
+            }
+
+            if (IsNonSourceListKeyword(word))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTableSourceAnchor(string word)
+    {
+        return string.Equals(word, "FROM", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "JOIN", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "APPLY", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 逗號清單裡「不會接資料表」的那幾個關鍵字，看到就可以停止往左找。
+    /// </summary>
+    /// <remarks>
+    /// 這份名單是往安全的方向漏的：漏掉一個的後果是別名多補在那個位置，
+    /// 而多寫一個的後果是資料來源位置認不出來、功能安靜地不作用。
+    /// 所以只列真的有把握的。
+    /// </remarks>
+    private static bool IsNonSourceListKeyword(string word)
+    {
+        return string.Equals(word, "SELECT", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "WHERE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "IN", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "INTO", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "ON", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "SET", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "VALUES", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "MERGE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "INSERT", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "UPDATE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "DELETE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "TABLE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "HAVING", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "GROUP", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "ORDER", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "UNION", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "WITH", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool EndsWithKeyword(string text, string keyword, out int keywordStart)

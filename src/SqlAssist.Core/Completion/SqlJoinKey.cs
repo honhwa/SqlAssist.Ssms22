@@ -39,13 +39,13 @@ public sealed class SqlJoinKey
 
     /// <summary>整條條件，例如 <c>b.CopyNo = a.CopyNo</c>。</summary>
     public string ComposeInsertionText(SqlAssistSettings settings) =>
-        SqlInsertionText.Qualify(ColumnName, Qualifier, settings) +
+        SqlInsertionText.Column(ColumnName, Qualifier, settings) +
         " = " +
-        SqlInsertionText.Qualify(CounterpartName, CounterpartQualifier, settings);
+        SqlInsertionText.Column(CounterpartName, CounterpartQualifier, settings);
 
     /// <summary>
     /// 只寫右半邊，接在已寫好的 <c>b.CopyNo</c> 之後，例如 <c>= a.CopyNo</c>。
     /// </summary>
     public string ComposeSuffix(SqlAssistSettings settings) =>
-        "= " + SqlInsertionText.Qualify(CounterpartName, CounterpartQualifier, settings);
+        "= " + SqlInsertionText.Column(CounterpartName, CounterpartQualifier, settings);
 }

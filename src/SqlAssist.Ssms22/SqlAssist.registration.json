@@ -229,6 +229,16 @@
       "additionalKeywords": [ "括號", "引號", "配對", "自動關閉", "auto close", "bracket", "quote" ],
       "enableWhen": "${config:sqlAssist.general.enabled} == 'true'"
     },
+
+    "sqlAssist.general.autoPairBlocks": {
+      "type": "boolean",
+      "default": true,
+      "order": 211,
+      "title": "@GeneralAutoPairBlocksTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "description": "@GeneralAutoPairBlocksDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "additionalKeywords": [ "區塊", "BEGIN", "END", "TRY", "CATCH", "block", "自動關閉" ],
+      "enableWhen": "${config:sqlAssist.general.enabled} == 'true'"
+    },
     "sqlAssist.general.checkForUpdates": {
       "type": "boolean",
       "default": true,
@@ -349,6 +359,21 @@
       "title": "@InsertionUseSquareBracketsTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "description": "@InsertionUseSquareBracketsDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "additionalKeywords": [ "[]", "中括號", "bracket", "跳脫", "保留字" ]
+    },
+
+    "sqlAssist.insertion.tableSourceAliasStyle": {
+      "type": "string",
+      "default": "none",
+      "order": 120,
+      "enum": [ "none", "as", "off" ],
+      "enumItemLabels": [
+        "@InsertionTableSourceAliasStyleItemNone;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+        "@InsertionTableSourceAliasStyleItemAs;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+        "@InsertionTableSourceAliasStyleItemOff;{b386e18d-f34b-4db4-a40d-b9092a31d89f}"
+      ],
+      "title": "@InsertionTableSourceAliasStyleTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "description": "@InsertionTableSourceAliasStyleDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "additionalKeywords": [ "alias", "別名", "AS", "簡寫", "來源" ]
     },
     "sqlAssist.insertion.expandWildcardOnTab": {
       "type": "boolean",

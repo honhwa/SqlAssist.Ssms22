@@ -626,7 +626,7 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 敘述裡看得到的欄位放在資料庫物件前面：SELECT | FROM PUBLISHER a 這種位置，
         // 使用者要的幾乎都是欄位，而不是整個資料庫的物件清單。
-        var scopeColumns = _metadataService.GetCachedScopeColumns(context.ScopeSources);
+        var scopeColumns = _metadataService.GetCachedScopeColumns(context);
         var candidates = builtIn.Concat(scopeColumns).Concat(database);
 
         // sys.| 與 EXEC | 才把系統物件拉進來：那一份有一兩千筆，混進一般清單的話，

@@ -18,7 +18,16 @@ public enum SqlAssistActivityKind
     FunctionCallExpanded,
     DefinitionOpened,
     ResultGridScripted,
-    SqlMemoryOpened
+    SqlMemoryOpened,
+
+    /// <summary>把剪貼簿的一欄值貼成 <c>IN</c> 條件。</summary>
+    PastedValues,
+
+    /// <summary>把沒帶結構描述的物件名稱補成 <c>dbo.</c>。</summary>
+    SchemaQualified,
+
+    /// <summary>把 <c>TOP 10</c> 補成 <c>TOP (10)</c>。</summary>
+    TopParenthesized
 }
 
 /// <summary>最近一次可辨識的 SqlAssist 動作。</summary>

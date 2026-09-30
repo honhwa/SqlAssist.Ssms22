@@ -16,14 +16,16 @@ namespace SqlAssist.Core.Tests.Completion;
 /// </remarks>
 public sealed class SqlInsertionTextTests
 {
+    // 自動別名一律關掉：這一組測的是結構描述與方括號的規則，別名接在後面會把
+    // 每一個期望值都變成兩件事的乘積。別名本身在 SqlAutoAliasTests 測。
     private static readonly SqlAssistSettings Qualified =
-        new() { QualifyObjectNames = true, UseSquareBrackets = false };
+        new() { QualifyObjectNames = true, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlAssistSettings Unqualified =
-        new() { QualifyObjectNames = false, UseSquareBrackets = false };
+        new() { QualifyObjectNames = false, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlAssistSettings Bracketed =
-        new() { QualifyObjectNames = true, UseSquareBrackets = true };
+        new() { QualifyObjectNames = true, UseSquareBrackets = true, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static SqlSuggestion Table(string name, string? schema = "dbo") =>
         new(name, name, "Table", name, SuggestionKind.Table, schemaName: schema);

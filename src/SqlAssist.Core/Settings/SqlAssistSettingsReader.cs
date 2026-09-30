@@ -78,6 +78,10 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.AutoPairDelimiters,
                 defaults.AutoPairDelimiters),
+            AutoPairBlocks = Value(
+                source,
+                SqlAssistMonikers.AutoPairBlocks,
+                defaults.AutoPairBlocks),
             CheckForUpdates = Value(source, SqlAssistMonikers.CheckForUpdates, defaults.CheckForUpdates),
             Animations = Value(source, SqlAssistMonikers.Animations, defaults.Animations),
             IgnoreWindowsAnimationSetting = Value(
@@ -114,6 +118,9 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.UseSquareBrackets,
                 defaults.UseSquareBrackets),
+            TableSourceAliasStyle = ParseTableSourceAliasStyle(
+                Value(source, SqlAssistMonikers.TableSourceAliasStyle, string.Empty),
+                defaults.TableSourceAliasStyle),
             ExpandWildcardOnTab = Value(
                 source,
                 SqlAssistMonikers.ExpandWildcardOnTab,
@@ -306,6 +313,19 @@ public static class SqlAssistSettingsReader
             "onePerLine" => SqlWildcardLayout.OnePerLine,
             "oneLineWhenShort" => SqlWildcardLayout.OneLineWhenShort,
             "fillWidth" => SqlWildcardLayout.FillWidth,
+            _ => fallback
+        };
+    }
+
+    private static SqlTableSourceAliasStyle ParseTableSourceAliasStyle(
+        string value,
+        SqlTableSourceAliasStyle fallback)
+    {
+        return value switch
+        {
+            "none" => SqlTableSourceAliasStyle.None,
+            "as" => SqlTableSourceAliasStyle.As,
+            "off" => SqlTableSourceAliasStyle.Off,
             _ => fallback
         };
     }

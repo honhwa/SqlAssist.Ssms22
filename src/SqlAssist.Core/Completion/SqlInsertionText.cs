@@ -86,13 +86,31 @@ public static class SqlInsertionText
             return objectName;
         }
 
+        string insertionText;
+
         if (!NeedsSchema(context, settings) ||
             string.IsNullOrWhiteSpace(suggestion.SchemaName))
         {
-            return objectName;
+            insertionText = objectName;
+        }
+        else
+        {
+            insertionText = Quote(suggestion.SchemaName!, settings) + "." + objectName;
         }
 
-        return Quote(suggestion.SchemaName!, settings) + "." + objectName;
+        var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
+
+        // 資料表值函式在「補上括號」開啟時不在這裡接別名：別名要接在右括號<b>之後</b>，
+        // 而那個位置還沒寫出來——括號由提交那一次編輯補上（只補空括號），
+        // 或由展開器連引數一起補（連引數一起補），兩條都要等寫完才接得上。
+        // 這裡是「不補括號」那一條，名稱後面就是最後一個位置。
+        if (aliasSuffix is not null &&
+            (suggestion.Kind != SuggestionKind.TableFunction || !settings.ExpandFunctionCall))
+        {
+            return insertionText + aliasSuffix;
+        }
+
+        return insertionText;
     }
 
     /// <summary>
