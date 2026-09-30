@@ -256,21 +256,21 @@
       <Button guid="guidSqlAssistCommandSet" id="cmdidPasteAsInPredicate" priority="0x0300" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
         <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
         <Strings>
-          <ButtonText>貼上為 IN 條件</ButtonText>
+          <ButtonText>Paste as IN Predicate</ButtonText>
           <CanonicalName>SqlAssist.PasteAsInPredicate</CanonicalName>
-          <LocCanonicalName>SqlAssist.貼上為IN條件</LocCanonicalName>
-          <ToolTipText>把剪貼簿的一欄值寫成 IN (…)，一行一個值</ToolTipText>
+          <LocCanonicalName>SqlAssist.PasteAsInPredicate</LocCanonicalName>
         </Strings>
       </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidPasteAsValues" priority="0x0310" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
         <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
         <Strings>
-          <ButtonText>貼上為值清單</ButtonText>
+          <ButtonText>Paste as Value List</ButtonText>
           <CanonicalName>SqlAssist.PasteAsValues</CanonicalName>
-          <LocCanonicalName>SqlAssist.貼上為值清單</LocCanonicalName>
-          <ToolTipText>只貼值，不含 IN 與括號；給 IN ( 已經打好、游標停在括號裡的位置</ToolTipText>
+          <LocCanonicalName>SqlAssist.PasteAsValues</LocCanonicalName>
         </Strings>
       </Button>
       <!--
@@ -285,21 +285,21 @@
       <Button guid="guidSqlAssistCommandSet" id="cmdidQualifySchema" priority="0x0320" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
         <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
         <Strings>
-          <ButtonText>補齊結構描述（dbo.）</ButtonText>
+          <ButtonText>Qualify Schema (dbo.)</ButtonText>
           <CanonicalName>SqlAssist.QualifySchema</CanonicalName>
-          <LocCanonicalName>SqlAssist.補齊結構描述</LocCanonicalName>
-          <ToolTipText>為沒帶結構描述的表、檢視、預存程序與函式補上 dbo.，並把 db..物件 正規化為 db.dbo.物件</ToolTipText>
+          <LocCanonicalName>SqlAssist.QualifySchema</LocCanonicalName>
         </Strings>
       </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidParenthesizeTop" priority="0x0330" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
         <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
         <Strings>
-          <ButtonText>TOP 補上括號</ButtonText>
+          <ButtonText>Parenthesize TOP</ButtonText>
           <CanonicalName>SqlAssist.ParenthesizeTop</CanonicalName>
-          <LocCanonicalName>SqlAssist.TOP補上括號</LocCanonicalName>
-          <ToolTipText>把沒加括號的 TOP 10 寫成 TOP (10)；已加括號與 TOP @變數 不動</ToolTipText>
+          <LocCanonicalName>SqlAssist.ParenthesizeTop</LocCanonicalName>
         </Strings>
       </Button>
       <!--
@@ -309,21 +309,21 @@
       <Button guid="guidSqlAssistCommandSet" id="cmdidInlineRename" priority="0x0340" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
         <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
         <Strings>
-          <ButtonText>就地改名（@變數）</ButtonText>
+          <ButtonText>Rename Variable in Place</ButtonText>
           <CanonicalName>SqlAssist.InlineRename</CanonicalName>
-          <LocCanonicalName>SqlAssist.就地改名</LocCanonicalName>
-          <ToolTipText>把游標所在的 @變數 連同同一個批次的其他出現位置一起改；Enter 定案，Esc 還原</ToolTipText>
+          <LocCanonicalName>SqlAssist.InlineRename</LocCanonicalName>
         </Strings>
       </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidInlineRenameKey" priority="0x0300" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistKeyboardOnlyGroup" />
         <CommandFlag>CommandWellOnly</CommandFlag>
+        <CommandFlag>TextChanges</CommandFlag>
         <Strings>
-          <ButtonText>就地改名（@變數，F2）</ButtonText>
+          <ButtonText>Rename Variable in Place (F2)</ButtonText>
           <CanonicalName>SqlAssist.InlineRenameKey</CanonicalName>
-          <LocCanonicalName>SqlAssist.就地改名F2</LocCanonicalName>
-          <ToolTipText>與右鍵選單那一項同一份實作；這一顆只在鍵盤真的在 SQL 編輯器上時可用</ToolTipText>
+          <LocCanonicalName>SqlAssist.InlineRenameKey</LocCanonicalName>
         </Strings>
       </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidManageSnippets" priority="0x0300" type="Button">

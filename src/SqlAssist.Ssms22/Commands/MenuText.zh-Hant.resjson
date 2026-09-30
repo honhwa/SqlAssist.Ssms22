@@ -13,6 +13,13 @@
   "ShowObjectStructure": "顯示游標處物件的結構",
   "RefreshSuggestions": "重新整理建議",
   "SurroundWith": "以片段包住選取範圍",
+  // 查詢視窗右鍵的貼上與就地改寫；InlineRenameKey 是就地改名的 F2 那一顆，只出現在鍵盤設定。
+  "PasteAsInPredicate": "貼上為 IN 條件",
+  "PasteAsValues": "貼上為值清單",
+  "QualifySchema": "補齊結構描述（dbo.）",
+  "ParenthesizeTop": "TOP 補上括號",
+  "InlineRename": "就地改名（@變數）",
+  "InlineRenameKey": "就地改名（@變數，F2）",
   "ManageSnippets": "程式碼片段…",
   "OpenSettings": "設定…",
   "FocusNotifications": "聚焦通知",
