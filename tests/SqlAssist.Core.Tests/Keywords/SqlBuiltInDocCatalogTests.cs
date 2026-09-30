@@ -1,4 +1,5 @@
 using System;
+using SqlAssist.Core.Completion;
 using SqlAssist.Core.Keywords;
 using SqlAssist.Core.Parsing;
 using Xunit;
@@ -22,6 +23,12 @@ public sealed class SqlBuiltInDocCatalogTests
     /// <summary>範例是一行程式碼，太寬的提示會被螢幕邊界切掉。</summary>
     private const int MaximumExampleLength = 90;
 
+    /// <summary>
+    /// QuickInfo 只顯示第一段，「單行、不超過 <see cref="MaximumExampleLength"/>」只套用第一段；
+    /// 第二段以後只在浮動視窗顯示，改成「不超過這麼多行」，不逐行限長。
+    /// </summary>
+    private const int MaximumExampleLinesAfterFirst = 15;
+
     [Fact]
     public void 內建說明資源載入成功()
     {
@@ -41,7 +48,8 @@ public sealed class SqlBuiltInDocCatalogTests
         Assert.Equal(SqlBuiltInKind.Function, doc.Kind);
         Assert.NotEqual(string.Empty, doc.Signature);
         Assert.NotEqual(string.Empty, doc.Summary);
-        Assert.NotEqual(string.Empty, doc.Example);
+        Assert.NotEmpty(doc.Examples);
+        Assert.NotEqual(string.Empty, doc.Examples[0].Sql);
         Assert.StartsWith("https://learn.microsoft.com/", doc.DocsUrl, StringComparison.Ordinal);
     }
 
@@ -72,7 +80,7 @@ public sealed class SqlBuiltInDocCatalogTests
         Assert.Equal(string.Empty, doc.Signature);
         Assert.True(SqlDataTypeCatalog.TryGetDescription("NVARCHAR", out var description));
         Assert.Equal(description, doc.Summary);
-        Assert.NotEqual(string.Empty, doc.Example);
+        Assert.NotEmpty(doc.Examples);
     }
 
     /// <summary>
@@ -91,7 +99,7 @@ public sealed class SqlBuiltInDocCatalogTests
             Assert.True(SqlBuiltInDocCatalog.TryGet(name, SqlBuiltInKind.Function, out var doc), name);
             Assert.NotEqual(string.Empty, doc.Signature);
             Assert.True(doc.Summary.Length > 0, name);
-            Assert.True(doc.Example.Length > 0, name);
+            Assert.True(doc.Examples.Count > 0, name);
             Assert.StartsWith("https://learn.microsoft.com/", doc.DocsUrl, StringComparison.Ordinal);
         });
     }
@@ -132,13 +140,13 @@ public sealed class SqlBuiltInDocCatalogTests
     /// <remarks>
     /// 少了它，<c>SELECT year FROM dbo.Loan</c> 停在 <c>year</c> 上會冒出 <c>YEAR()</c>
     /// 的說明，而 <c>CREATE TABLE</c> 的 <c>TABLE</c> 會被說成資料表變數的型別——
-    /// 兩個都是提示自己編出來的答案。
+    /// 兩個都是提示自己編出來的答案。那個 <c>TABLE</c> 屬於語句，答案是 CREATE TABLE 的說明。
     /// </remarks>
     [Theory]
     [InlineData("SELECT CONVERT(int, '1')", 8, true, "CONVERT")]
     [InlineData("SELECT CONVERT (int, '1')", 8, true, "CONVERT")]
     [InlineData("SELECT year FROM dbo.Loan", 8, false, null)]
-    [InlineData("CREATE TABLE dbo.Loan (Id int)", 8, false, null)]
+    [InlineData("CREATE TABLE dbo.Loan (Id int)", 8, true, "CREATE TABLE")]
     [InlineData("DECLARE @t TABLE (Id int)", 12, true, "TABLE")]
     [InlineData("DECLARE @x nvarchar(20)", 12, true, "NVARCHAR")]
     [InlineData("DECLARE @x int", 12, true, "INT")]
@@ -363,12 +371,12 @@ public sealed class SqlBuiltInDocCatalogTests
         Assert.True(SqlBuiltInDocCatalog.TryGet("NOLOCK", SqlBuiltInKind.TableHint, out var documented));
 
         Assert.False(documented.HasReferences);
-        Assert.NotEqual(string.Empty, documented.Example);
+        Assert.NotEmpty(documented.Examples);
 
         Assert.True(SqlBuiltInDocCatalog.TryGet("PAGLOCK", SqlBuiltInKind.TableHint, out var bare));
 
         Assert.False(bare.HasReferences);
-        Assert.Equal(string.Empty, bare.Example);
+        Assert.Empty(bare.Examples);
         Assert.NotEqual(string.Empty, bare.Summary);
     }
 
@@ -384,7 +392,7 @@ public sealed class SqlBuiltInDocCatalogTests
     {
         Assert.True(SqlBuiltInDocCatalog.TryGet(name, kind, out var doc));
 
-        Assert.NotEqual(string.Empty, doc.Example);
+        Assert.NotEmpty(doc.Examples);
         Assert.Equal(Description(name, kind), doc.Summary);
         Assert.StartsWith("https://learn.microsoft.com/", doc.DocsUrl, StringComparison.Ordinal);
     }
@@ -420,9 +428,23 @@ public sealed class SqlBuiltInDocCatalogTests
             Assert.True(SqlBuiltInDocCatalog.TryGetDocumentedKind(name, out var kind), name);
             Assert.True(SqlBuiltInDocCatalog.TryGet(name, kind, out var doc), name);
             Assert.True(doc.Summary.Length <= MaximumSummaryLength, $"{name}：{doc.Summary.Length}");
-            Assert.True(doc.Example.Length <= MaximumExampleLength, $"{name}：{doc.Example.Length}");
             Assert.DoesNotContain('\n', doc.Summary);
-            Assert.DoesNotContain('\n', doc.Example);
+
+            for (var i = 0; i < doc.Examples.Count; i++)
+            {
+                var example = doc.Examples[i];
+
+                if (i == 0)
+                {
+                    Assert.True(example.Sql.Length <= MaximumExampleLength, $"{name}／{example.Id}：{example.Sql.Length}");
+                    Assert.DoesNotContain('\n', example.Sql);
+                }
+                else
+                {
+                    var lineCount = example.Sql.Split('\n').Length;
+                    Assert.True(lineCount <= MaximumExampleLinesAfterFirst, $"{name}／{example.Id}：{lineCount}");
+                }
+            }
         });
     }
 
@@ -479,18 +501,29 @@ public sealed class SqlBuiltInDocCatalogTests
     [Fact]
     public void 英文介面的內建說明取自覆蓋檔()
     {
+        SqlBuiltInDoc doc;
+        SqlBuiltInDoc chooseEn;
+
         using (SqlText.Use(English))
         {
-            Assert.True(SqlBuiltInDocCatalog.TryGet("CONVERT", SqlBuiltInKind.Function, out var doc));
+            Assert.True(SqlBuiltInDocCatalog.TryGet("CONVERT", SqlBuiltInKind.Function, out doc));
             Assert.Equal("Convert type; style formats dates/numbers; type goes first", doc.Summary);
-            Assert.StartsWith("SELECT CONVERT(varchar(10), GETDATE(), 120)", doc.Example);
             Assert.Equal("style (date and time)", doc.References[0].Title);
             Assert.Equal("Built-in function", SqlBuiltInKind.Function.GetDisplayName());
+
+            Assert.True(SqlBuiltInDocCatalog.TryGet("CHOOSE", SqlBuiltInKind.Function, out chooseEn));
         }
 
         Assert.True(SqlBuiltInDocCatalog.TryGet("CONVERT", SqlBuiltInKind.Function, out var source));
         Assert.Equal("內建函式", SqlBuiltInKind.Function.GetDisplayName());
         Assert.NotEqual("Convert type; style formats dates/numbers; type goes first", source.Summary);
+
+        // 不綁住範例的實際文字（那是內容分支的事）：挑一筆範例本來就含中文字面值的（CHOOSE），
+        // 只驗證覆蓋檔真的生效——英文版跟中文版不同，且不含中日韓字元。
+        Assert.True(SqlBuiltInDocCatalog.TryGet("CHOOSE", SqlBuiltInKind.Function, out var chooseZh));
+        Assert.NotEqual(chooseZh.Examples[0].Sql, chooseEn.Examples[0].Sql);
+        Assert.DoesNotContain(chooseEn.Examples[0].Sql, ch => ch >= '\u4e00' && ch <= '\u9fff');
+        Assert.DoesNotContain(chooseEn.Examples[0].Title, ch => ch >= '\u4e00' && ch <= '\u9fff');
     }
 
     [Fact]
@@ -524,7 +557,25 @@ public sealed class SqlBuiltInDocCatalogTests
                 Assert.True(SqlBuiltInDocCatalog.TryGetDocumentedKind(name, out var kind), name);
                 Assert.True(SqlBuiltInDocCatalog.TryGet(name, kind, out var doc), name);
                 Assert.True(doc.Summary.Length <= MaximumSummaryLength, $"{name}: {doc.Summary.Length}");
-                Assert.True(doc.Example.Length <= MaximumExampleLength, $"{name}: {doc.Example.Length}");
+
+                for (var i = 0; i < doc.Examples.Count; i++)
+                {
+                    var example = doc.Examples[i];
+
+                    if (i == 0)
+                    {
+                        Assert.True(
+                            example.Sql.Length <= MaximumExampleLength,
+                            $"{name}/{example.Id}: {example.Sql.Length}");
+                    }
+                    else
+                    {
+                        var lineCount = example.Sql.Split('\n').Length;
+                        Assert.True(
+                            lineCount <= MaximumExampleLinesAfterFirst,
+                            $"{name}/{example.Id}: {lineCount}");
+                    }
+                }
             }
 
             var catalogs = SqlGlobalVariableCatalog.All
@@ -532,7 +583,7 @@ public sealed class SqlBuiltInDocCatalogTests
                 .Concat(SqlArgumentCatalog.QueryHints)
                 .Concat(SqlArgumentCatalog.DateParts)
                 .Concat(SqlDataTypeCatalog.All)
-                .Concat(SqlCollationCatalog.Defaults);
+                .Concat(SqlInstanceList.All.SelectMany(list => list.Defaults));
 
             foreach (var suggestion in catalogs)
             {
@@ -541,5 +592,416 @@ public sealed class SqlBuiltInDocCatalogTests
                     $"{suggestion.DisplayText}: {suggestion.Description.Length}");
             }
         }
+    }
+
+    /// <summary>
+    /// 系統程序與語句的資料還沒寫（stage 3），這裡疊一份測試專用的假資料，
+    /// 不寫進正式 JSON——見 <see cref="SqlBuiltInDocCatalog.UseTestEntries"/>。
+    /// </summary>
+    private const string SystemProcedureTestDocs = """
+        [
+          {
+            "name": "sp_executesql",
+            "kind": "systemProcedure",
+            "summary": "執行一段參數化的動態 SQL。",
+            "signature": "sp_executesql @stmt, @params, ..."
+          },
+          {
+            "name": "sp_help",
+            "kind": "systemProcedure",
+            "summary": "列出物件的結構描述資訊。",
+            "signature": "sp_help [ @objname ]"
+          }
+        ]
+        """;
+
+    /// <summary>
+    /// 用 <c>aliases</c> 驗證 EXEC／EXECUTE 共用同一份內容；MERGE、BULK INSERT 各自一筆；
+    /// CREATE INDEX 的修飾字組合也是別名。
+    /// </summary>
+    private const string StatementTestDocs = """
+        [
+          {
+            "name": "EXEC",
+            "kind": "statement",
+            "summary": "呼叫預存程序或執行動態 SQL。",
+            "signature": "EXEC [ @return_status = ] procedure [ arguments ]",
+            "aliases": ["EXECUTE"]
+          },
+          {
+            "name": "MERGE",
+            "kind": "statement",
+            "summary": "依條件同時做新增、更新與刪除。",
+            "signature": "MERGE target USING source ON ..."
+          },
+          {
+            "name": "BULK INSERT",
+            "kind": "statement",
+            "summary": "把檔案內容整批載入資料表。",
+            "signature": "BULK INSERT target FROM 'file'"
+          },
+          {
+            "name": "CREATE INDEX",
+            "kind": "statement",
+            "summary": "建立索引。",
+            "signature": "CREATE [ UNIQUE ] [ NONCLUSTERED ] INDEX name ON table ( column )",
+            "aliases": ["CREATE UNIQUE INDEX", "CREATE UNIQUE NONCLUSTERED INDEX"]
+          }
+        ]
+        """;
+
+    /// <summary>
+    /// 系統程序的限定字只認空、<c>sys</c>、<c>master.sys</c>、<c>master..</c>；
+    /// 方括號寫法一樣認，<c>dbo.sp_x</c> 這種不算。
+    /// </summary>
+    [Theory]
+    [InlineData("EXEC sys.sp_executesql N'SELECT 1'", "sp_executesql", true)]
+    [InlineData("EXEC [sys].[sp_executesql] N'SELECT 1'", "sp_executesql", true)]
+    [InlineData("EXEC master.sys.sp_help 'dbo.Lib_Reader'", "sp_help", true)]
+    [InlineData("EXEC master..sp_help 'dbo.Lib_Reader'", "sp_help", true)]
+    [InlineData("EXEC dbo.sp_executesql N'SELECT 1'", "sp_executesql", false)]
+    public void 系統程序限定字決定認不認得(string text, string name, bool found)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(SystemProcedureTestDocs);
+
+        var position = text.IndexOf(name, StringComparison.OrdinalIgnoreCase);
+        var reference = SqlIdentifierScanner.FindAt(text, position);
+
+        Assert.NotNull(reference);
+        Assert.Equal(found, SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc));
+
+        if (found)
+        {
+            Assert.Equal(name.ToUpperInvariant(), doc.Name);
+            Assert.Equal(SqlBuiltInKind.SystemProcedure, doc.Kind);
+        }
+    }
+
+    /// <summary>
+    /// 未限定的系統程序名稱位置不限：EXEC 之後、<c>INSERT … EXEC</c> 之後、
+    /// 批次第一句都認得出來。
+    /// </summary>
+    [Theory]
+    [InlineData("EXEC sp_executesql N'SELECT 1'")]
+    [InlineData("INSERT #t EXEC sp_executesql N'SELECT 1'")]
+    [InlineData("sp_executesql N'SELECT 1'")]
+    public void 系統程序未限定時位置不限(string text)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(SystemProcedureTestDocs);
+
+        var position = text.IndexOf("sp_executesql", StringComparison.OrdinalIgnoreCase);
+        var reference = SqlIdentifierScanner.FindAt(text, position);
+
+        Assert.NotNull(reference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc));
+        Assert.Equal(SqlBuiltInKind.SystemProcedure, doc.Kind);
+    }
+
+    /// <summary>語句開頭的 EXEC／EXECUTE／MERGE 認得出來；EXEC 的別名 EXECUTE 走同一份資料。</summary>
+    [Theory]
+    [InlineData("EXEC dbo.Lib_GetReader")]
+    [InlineData("EXECUTE dbo.Lib_GetReader")]
+    [InlineData("MERGE INTO Lib_Tag AS t USING Lib_TagStage AS s ON t.Id = s.Id;")]
+    public void 語句開頭的關鍵字認得出來(string text)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        var reference = SqlIdentifierScanner.FindAt(text, 0);
+
+        Assert.NotNull(reference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc));
+        Assert.Equal(SqlBuiltInKind.Statement, doc.Kind);
+    }
+
+    /// <summary>EXEC 與別名 EXECUTE 是同一份說明，不是各寫一份。</summary>
+    [Fact]
+    public void EXEC別名EXECUTE共用同一份內容()
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        Assert.True(SqlBuiltInDocCatalog.TryGet("EXEC", SqlBuiltInKind.Statement, out var exec));
+        Assert.True(SqlBuiltInDocCatalog.TryGet("EXECUTE", SqlBuiltInKind.Statement, out var execute));
+
+        Assert.Equal(exec.Summary, execute.Summary);
+        Assert.Equal(exec.Signature, execute.Signature);
+    }
+
+    /// <summary>多字寫法只認第一個詞、由長到短試，BULK INSERT 在語句開頭一樣認得出來。</summary>
+    [Fact]
+    public void BulkInsert多字語句在語句開頭認得出來()
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        const string text = "BULK INSERT Lib_Tag FROM 'C:\\tags.csv'";
+        var reference = SqlIdentifierScanner.FindAt(text, 0);
+
+        Assert.NotNull(reference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc));
+        Assert.Equal("BULK INSERT", doc.Name);
+        Assert.Equal(SqlBuiltInKind.Statement, doc.Kind);
+    }
+
+    /// <summary>
+    /// 停在一句開頭那串字的任何一個字上都認得，名稱取對得上的最長那一段。
+    /// </summary>
+    /// <remarks>
+    /// 以前只認第一個詞：停在 <c>BULK INSERT</c> 的 <c>INSERT</c> 上什麼都沒有，
+    /// 而建議清單上選到的正是那個字。修飾字的組合是資料裡的別名，不是另一份名單。
+    /// </remarks>
+    [Theory]
+    [InlineData("BULK INSERT Lib_Tag FROM 'C:\\tags.csv'", "INSERT", "BULK INSERT")]
+    [InlineData("CREATE INDEX IX_CopyNo ON Loan (CopyNo)", "CREATE", "CREATE INDEX")]
+    [InlineData("CREATE INDEX IX_CopyNo ON Loan (CopyNo)", "INDEX", "CREATE INDEX")]
+    [InlineData("CREATE UNIQUE NONCLUSTERED INDEX IX_CopyNo ON Loan (CopyNo)", "NONCLUSTERED", "CREATE UNIQUE NONCLUSTERED INDEX")]
+    [InlineData("SELECT 1\nCREATE UNIQUE INDEX IX_CopyNo ON Loan (CopyNo)", "UNIQUE", "CREATE UNIQUE INDEX")]
+    public void 語句開頭那串字都認得出語句(string text, string word, string expected)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        var reference = SqlIdentifierScanner.FindAt(text, text.IndexOf(word, StringComparison.Ordinal));
+
+        Assert.NotNull(reference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc));
+        Assert.Equal(expected, doc.Name);
+        Assert.Equal(SqlBuiltInKind.Statement, doc.Kind);
+    }
+
+    /// <summary>那串字在名稱處斷掉；對上的名稱沒蓋到的字也不算。</summary>
+    [Theory]
+    [InlineData("ALTER TABLE Loan MERGE", "MERGE")]
+    [InlineData("CREATE UNIQUE CLUSTERED COLUMNSTORE INDEX IX ON Loan", "UNIQUE")]
+    [InlineData("CREATE INDEX IX_CopyNo ON Loan (CopyNo)", "ON")]
+    public void 語句開頭那串字以外不認(string text, string word)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        var reference = SqlIdentifierScanner.FindAt(text, text.IndexOf(word, StringComparison.Ordinal));
+
+        Assert.NotNull(reference);
+        Assert.False(SqlBuiltInDocCatalog.TryGetAt(text, reference, out _));
+    }
+
+    /// <summary>
+    /// 建議清單的關鍵字候選與停留提示同一條規則：接在游標前的文字後面再問。
+    /// </summary>
+    /// <remarks>
+    /// 只比名稱的症狀是 <c>ALTER TABLE Loan </c> 之後選到 <c>MERGE</c> 按向右鍵，開出 MERGE 陳述式的說明。
+    /// </remarks>
+    [Theory]
+    [InlineData("", "MERGE", "MERGE")]
+    [InlineData("SELECT * FROM Loan\n", "MERGE", "MERGE")]
+    [InlineData("CREATE ", "INDEX", "CREATE INDEX")]
+    [InlineData("CREATE UNIQUE ", "INDEX", "CREATE UNIQUE INDEX")]
+    [InlineData("INSERT #t ", "EXEC", "EXEC")]
+    [InlineData("ALTER TABLE Loan ", "MERGE", null)]
+    [InlineData("CREATE ", "UNIQUE", null)]
+    [InlineData("CREATE PROCEDURE dbo.Lib_Proc\nWITH ", "EXECUTE", null)]
+    [InlineData("SELECT ", "SELECT", null)]
+    public void 關鍵字候選照位置對到語句說明(string before, string candidate, string? expected)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        var text = before + "|後面的文字不影響判斷";
+        var found = SqlBuiltInDocCatalog.TryGetStatementFor(text, before.Length, candidate, out var doc);
+
+        Assert.Equal(expected is not null, found);
+
+        if (expected is not null)
+        {
+            Assert.Equal(expected, doc.Name);
+        }
+
+        // 記住答案的那一層問的是同一支，換一份清單才重算。
+        var candidates = new SqlStatementCandidates(text, before.Length);
+        Assert.Equal(found, candidates.TryGet(candidate, out _));
+        Assert.Equal(found, candidates.TryGet(candidate.ToLowerInvariant(), out _));
+    }
+
+    /// <summary>
+    /// <c>INSERT 目標 EXEC</c> 這一句本身不是以 EXEC 開頭，但 EXEC 一樣算數。
+    /// 帶 <c>INTO</c> 與限定名稱的那一種單靠 <see cref="SqlStatementBoundaries.IsStatementHead"/>
+    /// 認不出來，拿掉「前一格是不是 INSERT 目標」那一關就是第二筆失敗。
+    /// </summary>
+    [Theory]
+    [InlineData("INSERT #t EXEC sp_executesql N'SELECT 1'")]
+    [InlineData("INSERT INTO dbo.Lib_Tag EXEC sp_executesql N'SELECT 1'")]
+    [InlineData("INSERT #t (TagId, TagName) EXEC sp_executesql N'SELECT 1'")]
+    [InlineData("INSERT #t\nEXEC sp_executesql N'SELECT 1'")]
+    public void INSERT目標之後的EXEC算數(string text)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        var position = text.IndexOf("EXEC", StringComparison.Ordinal);
+        var reference = SqlIdentifierScanner.FindAt(text, position);
+
+        Assert.NotNull(reference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc));
+        Assert.Equal(SqlBuiltInKind.Statement, doc.Kind);
+    }
+
+    /// <summary><c>EXECUTE AS</c> 是切換執行身分的敘述，不是呼叫程序的 EXEC。</summary>
+    [Theory]
+    [InlineData("EXECUTE AS USER = 'dbo'")]
+    [InlineData("CREATE PROCEDURE dbo.Lib_Proc\nWITH EXECUTE AS OWNER\nAS\nSELECT 1")]
+    public void EXECUTE_AS不是EXEC語句(string text)
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        var position = text.IndexOf("EXECUTE", StringComparison.Ordinal);
+        var reference = SqlIdentifierScanner.FindAt(text, position);
+
+        Assert.NotNull(reference);
+        Assert.False(SqlBuiltInDocCatalog.TryGetAt(text, reference, out _));
+    }
+
+    /// <summary>語句中間、不是語句開頭的位置不認：<c>AND EXEC</c> 的 EXEC 只是接在述詞後面。</summary>
+    [Fact]
+    public void 語句中間不是語句開頭的位置不認()
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(StatementTestDocs);
+
+        const string text = "SELECT * FROM Lib_Reader WHERE 1 = 1 AND EXEC = 1";
+        var position = text.IndexOf("EXEC", StringComparison.Ordinal);
+        var reference = SqlIdentifierScanner.FindAt(text, position);
+
+        Assert.NotNull(reference);
+        Assert.False(SqlBuiltInDocCatalog.TryGetAt(text, reference, out _));
+    }
+
+    /// <summary>
+    /// 資源裡的語句在一句開頭認得：換行、區塊裡、IF 的主體與模組的 AS 之後都算開頭。
+    /// </summary>
+    /// <remarks>
+    /// 問的是資源本身而不是測試資料：<c>BEGIN</c>、<c>SET</c>、<c>END</c> 算不算一句的開頭要看位置分析，
+    /// 名稱或別名寫錯的症狀則是那一筆安靜地永遠對不上。
+    /// </remarks>
+    [Theory]
+    [InlineData("ALTER TABLE Loan ADD DueDate date NULL", "TABLE", "ALTER TABLE")]
+    [InlineData("SELECT 1\nALTER TABLE Loan DROP COLUMN DueDate", "ALTER", "ALTER TABLE")]
+    [InlineData("BEGIN TRY\n    SELECT 1\nEND TRY\nBEGIN CATCH\n    THROW;\nEND CATCH", "TRY", "BEGIN TRY")]
+    [InlineData("BEGIN TRY\n    SELECT 1\nEND TRY\nBEGIN CATCH\n    THROW;\nEND CATCH", "CATCH", "BEGIN CATCH")]
+    [InlineData("BEGIN TRY\n    SELECT 1\nEND TRY", "END", "END TRY")]
+    [InlineData("SELECT 1\nBEGIN TRANSACTION", "TRANSACTION", "BEGIN TRANSACTION")]
+    [InlineData("BEGIN TRY\n    BEGIN TRAN\nEND TRY", "TRAN", "BEGIN TRAN")]
+    [InlineData("UPDATE Loan SET CopyNo = 1\nCOMMIT", "COMMIT", "COMMIT")]
+    [InlineData("IF @@TRANCOUNT > 0 ROLLBACK TRAN", "ROLLBACK", "ROLLBACK TRAN")]
+    [InlineData("BEGIN TRAN\nSAVE TRANSACTION BeforeLoan", "SAVE", "SAVE TRANSACTION")]
+    [InlineData("SET NOCOUNT ON\nSET XACT_ABORT ON", "XACT_ABORT", "SET XACT_ABORT")]
+    [InlineData("CREATE PROCEDURE dbo.Lib_Proc AS\nSET NOCOUNT ON", "SET", "SET NOCOUNT")]
+    [InlineData("SELECT 1\nSET TRANSACTION ISOLATION LEVEL SNAPSHOT", "ISOLATION", "SET TRANSACTION ISOLATION LEVEL")]
+    [InlineData("CREATE TABLE #Loan (LoanId int)\nCREATE TABLE #Copy (CopyNo int)", "TABLE", "CREATE TABLE")]
+    [InlineData("GO\nCREATE OR ALTER PROCEDURE dbo.Lib_Proc AS SELECT 1", "PROCEDURE", "CREATE OR ALTER PROCEDURE")]
+    [InlineData("ALTER PROC dbo.Lib_Proc AS SELECT 1", "PROC", "ALTER PROC")]
+    [InlineData("CREATE OR ALTER FUNCTION dbo.Lib_Double (@n int) RETURNS int", "OR", "CREATE OR ALTER FUNCTION")]
+    [InlineData("CREATE VIEW dbo.Lib_BranchView AS SELECT 1 AS One", "VIEW", "CREATE VIEW")]
+    [InlineData("CREATE TRIGGER dbo.Lib_TagInsert ON dbo.Lib_Tag AFTER INSERT AS\nSET NOCOUNT ON", "TRIGGER", "CREATE TRIGGER")]
+    [InlineData("IF OBJECT_ID('tempdb..#Loan') IS NOT NULL\n    DROP TABLE #Loan", "DROP", "DROP TABLE")]
+    [InlineData("DROP PROCEDURE IF EXISTS dbo.Lib_Proc", "PROCEDURE", "DROP PROCEDURE")]
+    [InlineData("EXEC sys.sp_help\nTRUNCATE TABLE Loan", "TRUNCATE", "TRUNCATE TABLE")]
+    [InlineData("SELECT 1\nDECLARE c CURSOR FOR SELECT CopyNo FROM Loan", "DECLARE", "DECLARE")]
+    [InlineData("WHILE @@FETCH_STATUS = 0\nBEGIN\n    FETCH NEXT FROM c INTO @CopyNo\nEND", "NEXT", "FETCH NEXT")]
+    [InlineData("ALTER INDEX ALL ON Loan REBUILD", "INDEX", "ALTER INDEX")]
+    [InlineData("SELECT 1\nUPDATE STATISTICS Loan WITH FULLSCAN", "STATISTICS", "UPDATE STATISTICS")]
+    [InlineData("CREATE STATISTICS st_CopyNo ON Loan (CopyNo)", "CREATE", "CREATE STATISTICS")]
+    [InlineData("BACKUP LOG Lib_Db TO DISK = 'x.trn'", "LOG", "BACKUP LOG")]
+    [InlineData("RESTORE FILELISTONLY FROM DISK = 'x.bak'", "RESTORE", "RESTORE FILELISTONLY")]
+    [InlineData("GRANT SELECT ON Loan TO Lib_Reader\nDENY SELECT ON Loan TO Lib_Reader", "DENY", "DENY")]
+    [InlineData("SELECT 1\nDBCC SHOW_STATISTICS ('Loan', IX_Loan)", "SHOW_STATISTICS", "DBCC SHOW_STATISTICS")]
+    [InlineData("DBCC TRACESTATUS", "TRACESTATUS", "DBCC TRACESTATUS")]
+    [InlineData("DBCC LOGINFO", "DBCC", "DBCC")]
+    public void 資源裡的語句在句首認得(string text, string word, string expected)
+    {
+        var reference = SqlIdentifierScanner.FindAt(text, text.IndexOf(word, StringComparison.Ordinal));
+
+        Assert.NotNull(reference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc));
+        Assert.Equal(SqlBuiltInKind.Statement, doc.Kind);
+        Assert.Equal(expected, doc.Name);
+    }
+
+    /// <summary>
+    /// 同一批字不在一句開頭、或開頭那串字對不上任何名稱時不是語句：
+    /// <c>UPDATE … SET</c> 的 SET、<c>ALTER DATABASE … SET</c> 的選項、區塊的 BEGIN／END。
+    /// </summary>
+    [Theory]
+    [InlineData("UPDATE Loan SET CopyNo = 1", "SET")]
+    [InlineData("UPDATE Loan\nSET CopyNo = 1", "SET")]
+    [InlineData("ALTER DATABASE Lib_Db SET RECOVERY SIMPLE", "SET")]
+    [InlineData("ALTER TABLE Loan DROP COLUMN DueDate", "DROP")]
+    [InlineData("IF 1 = 1\nBEGIN\n    SELECT 1\nEND", "BEGIN")]
+    [InlineData("IF 1 = 1\nBEGIN\n    SELECT 1\nEND", "END")]
+    [InlineData("SET NOCOUNT ON", "ON")]
+    [InlineData("SELECT CopyNo FROM Loan WHERE CopyNo = 1 OR CopyNo = 2", "OR")]
+    [InlineData("ALTER TABLE Loan DROP CONSTRAINT CK_Loan_Qty", "CONSTRAINT")]
+    [InlineData("DECLARE @t TABLE (Id int)", "TABLE")]
+    [InlineData("UPDATE Loan SET CopyNo = 1", "UPDATE")]
+    [InlineData("SELECT CopyNo FROM Loan ORDER BY CopyNo OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY", "FETCH")]
+    [InlineData("SELECT CopyNo FROM Loan ORDER BY CopyNo\nOFFSET 0 ROWS\nFETCH NEXT 5 ROWS ONLY", "FETCH")]
+    [InlineData("ALTER DATABASE Lib_Db\nSET RECOVERY SIMPLE", "SET")]
+    [InlineData("GRANT SELECT ON Loan TO Lib_Reader", "SELECT")]
+    public void 資源裡的語句在句首以外不認(string text, string word)
+    {
+        var reference = SqlIdentifierScanner.FindAt(text, text.IndexOf(word, StringComparison.Ordinal));
+
+        Assert.NotNull(reference);
+        Assert.False(
+            SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc) && doc.Kind == SqlBuiltInKind.Statement,
+            word);
+    }
+
+    /// <summary>建議清單的關鍵字候選用資源本身問，與停留提示同一個答案。</summary>
+    [Theory]
+    [InlineData("SET ", "NOCOUNT", "SET NOCOUNT")]
+    [InlineData("SET ", "TRANSACTION", "SET TRANSACTION")]
+    [InlineData("BEGIN ", "TRY", "BEGIN TRY")]
+    [InlineData("BEGIN TRY\n    SELECT 1\nEND TRY\nBEGIN ", "CATCH", "BEGIN CATCH")]
+    [InlineData("SELECT 1\n", "COMMIT", "COMMIT")]
+    [InlineData("", "BEGIN", null)]
+    [InlineData("UPDATE Loan ", "SET", null)]
+    [InlineData("CREATE ", "TABLE", "CREATE TABLE")]
+    [InlineData("CREATE OR ALTER ", "VIEW", "CREATE OR ALTER VIEW")]
+    [InlineData("ALTER TABLE Loan ", "DROP", null)]
+    [InlineData("", "DECLARE", "DECLARE")]
+    [InlineData("UPDATE ", "STATISTICS", "UPDATE STATISTICS")]
+    [InlineData("DBCC ", "CHECKDB", "DBCC CHECKDB")]
+    public void 資源裡的關鍵字候選照位置對到語句說明(string before, string candidate, string? expected)
+    {
+        var found = SqlBuiltInDocCatalog.TryGetStatementFor(before, before.Length, candidate, out var doc);
+
+        Assert.Equal(expected is not null, found);
+
+        if (expected is not null)
+        {
+            Assert.Equal(expected, doc.Name);
+        }
+    }
+
+    /// <summary>
+    /// 物件解析優先順序：函式維持在物件解析之後，系統程序搶在物件解析之前。
+    /// </summary>
+    /// <remarks>
+    /// 順序規則唯一出處是 <see cref="SqlBuiltInKinds.PrecedesObjectResolution"/>；平台層的
+    /// 接法在 <c>Ssms22/Editor/SqlBuiltInObjectResolution</c>（不在 Core，這裡只驗證
+    /// <see cref="SqlBuiltInDocCatalog.TryGetAt"/> 認出的種類餵進那支規則會得到什麼答案）。
+    /// </remarks>
+    [Fact]
+    public void 系統程序排在物件解析之前函式排在之後()
+    {
+        using var scope = SqlBuiltInDocCatalog.UseTestEntries(SystemProcedureTestDocs);
+
+        const string functionText = "SELECT CONVERT(int, '1')";
+        var functionPosition = functionText.IndexOf("CONVERT", StringComparison.Ordinal);
+        var functionReference = SqlIdentifierScanner.FindAt(functionText, functionPosition);
+        Assert.NotNull(functionReference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(functionText, functionReference, out var functionDoc));
+        Assert.False(functionDoc.Kind.PrecedesObjectResolution());
+
+        const string procedureText = "EXEC sys.sp_executesql N'SELECT 1'";
+        var procedurePosition = procedureText.IndexOf("sp_executesql", StringComparison.Ordinal);
+        var procedureReference = SqlIdentifierScanner.FindAt(procedureText, procedurePosition);
+        Assert.NotNull(procedureReference);
+        Assert.True(SqlBuiltInDocCatalog.TryGetAt(procedureText, procedureReference, out var procedureDoc));
+        Assert.Equal(SqlBuiltInKind.SystemProcedure, procedureDoc.Kind);
+        Assert.True(procedureDoc.Kind.PrecedesObjectResolution());
     }
 }

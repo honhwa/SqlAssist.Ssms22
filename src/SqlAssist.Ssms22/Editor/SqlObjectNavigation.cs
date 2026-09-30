@@ -7,6 +7,7 @@ using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Keywords;
 using SqlAssist.Core.Notifications;
 using SqlAssist.Core.Parsing;
+using SqlAssist.Core.Preview;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Ssms22.Completion;
 using SqlAssist.Ssms22.Preview;
@@ -69,88 +70,73 @@ internal static class SqlObjectNavigation
 
             var text = point.Snapshot.GetText();
             var metadataService = SqlCompletionServices.GetMetadataService(view, serviceProvider);
+            var reference = SqlIdentifierScanner.FindAt(text, point.Position);
+            var hasBuiltIn = SqlBuiltInDocCatalog.TryGetAt(text, reference, out var builtIn);
 
-            // 使用者主動要求的路徑，等得起一次查詢。
-            var location = await SqlObjectLocator.LocateAsync(
-                metadataService,
-                text,
-                point.Position,
-                CancellationToken.None,
-                NotificationOrigin.User).ConfigureAwait(true);
+            // 只有裝得滿一個視窗的說明才能搶答（Ctrl+F12 開的是同一個視窗，見
+            // SqlBuiltInDoc.DeservesWindow）；查得到條目但只有一行摘要時不算——那種名稱
+            // 交給下面的物件解析才問得到「這其實是使用者自己的物件」，不然系統程序與語句
+            // 一律優先（PrecedesObjectResolution）會讓 ResolveAsync 完全不呼叫物件解析，
+            // 使用者自己的同名物件就再也查不到，只留下一句「不是可辨識的資料庫物件」。
+            var resolution = await SqlBuiltInObjectResolution.ResolveAsync(
+                hasBuiltIn && builtIn.DeservesWindow ? builtIn : null,
+                () => SqlObjectLocator.LocateAsync(
+                    metadataService,
+                    text,
+                    point.Position,
+                    CancellationToken.None,
+                    NotificationOrigin.User)).ConfigureAwait(true);
 
             if (view.IsClosed)
             {
                 return;
             }
 
-            if (location is null)
+            if (resolution.Location is { } location)
             {
-                // CONVERT 與 DATEADD 不是資料庫物件，但停在它們上面時要問的事一模一樣：
-                // 這個引數可以填什麼。同一個視窗答得出來。
-                if (!ShowBuiltIn(view, point.Snapshot, text, point.Position, serviceProvider))
+                var anchor = point.Snapshot.CreateTrackingSpan(
+                    new Span(location.Reference.Start, location.Reference.Length),
+                    SpanTrackingMode.EdgeInclusive);
+
+                if (SqlStructurePreview.GetOrCreate(view, serviceProvider) is { } preview)
                 {
-                    SqlAssistStatusBar.Show(serviceProvider, NotRecognized(point));
+                    // 暫存資料表、資料表變數與 CTE 的結構在定位那一步就讀出來了；
+                    // 它們不在中繼資料裡，交給一般載入路徑只會等到一句「沒有可用的連線」。
+                    preview.Open(
+                        PreviewTrigger.Command,
+                        anchor,
+                        SqlPreviewSubject.ForObject(
+                            location.Object,
+                            location.Detail is { } detail ? new SqlObjectStructure(detail) : null),
+                        metadataService);
+                    return;
                 }
 
+                SqlAssistStatusBar.Show(serviceProvider, EditorText.QueryWindowClosed);
                 return;
             }
 
-            var anchor = point.Snapshot.CreateTrackingSpan(
-                new Span(location.Reference.Start, location.Reference.Length),
-                SpanTrackingMode.EdgeInclusive);
-
-            if (SqlStructurePreview.GetOrCreate(view, serviceProvider) is { } preview)
+            // CONVERT、DATEADD、系統程序與語句都不是資料庫物件，但停在它們上面時要問的事
+            // 一模一樣：這個名稱可以怎麼用。同一個視窗答得出來，只有真的裝得滿一個視窗才開
+            // （SqlBuiltInDoc.DeservesWindow，與建議清單那條入口同一條規則）。
+            if (resolution.BuiltIn is { } doc && doc.DeservesWindow && reference is not null &&
+                SqlStructurePreview.GetOrCreate(view, serviceProvider) is { } builtInPreview)
             {
-                // 暫存資料表、資料表變數與 CTE 的結構在定位那一步就讀出來了；
-                // 它們不在中繼資料裡，交給一般載入路徑只會等到一句「沒有可用的連線」。
-                preview.ShowAt(
-                    anchor,
-                    location.Object,
-                    metadataService,
-                    location.Detail is { } detail ? new SqlObjectStructure(detail) : null);
+                builtInPreview.Open(
+                    PreviewTrigger.Command,
+                    point.Snapshot.CreateTrackingSpan(new Span(reference.Start, reference.Length), SpanTrackingMode.EdgeInclusive),
+                    SqlPreviewSubject.ForBuiltIn(doc),
+                    metadataService: null);
                 return;
             }
 
-            SqlAssistStatusBar.Show(serviceProvider, EditorText.QueryWindowClosed);
+            SqlAssistStatusBar.Show(serviceProvider, NotRecognized(point));
         }
         catch (Exception exception)
         {
             SqlAssistDiagnostics.WriteAlways($"開啟物件結構失敗：{exception}");
             SqlAssistStatusBar.Show(serviceProvider, EditorText.StructureFailed);
         }
-    }
-
-    /// <summary>
-    /// 停在內建函式或型別上時，用同一個視窗顯示它的完整說明。
-    /// </summary>
-    /// <remarks>
-    /// 只有真的裝得滿一個視窗才開（<see cref="SqlBuiltInDoc.DeservesWindow"/>，
-    /// 與建議清單那條入口同一條規則）。裝不滿時只剩一個標題，那還不如把「不是可辨識的
-    /// 資料庫物件」說清楚——使用者至少知道要換個字試。
-    /// </remarks>
-    private static bool ShowBuiltIn(
-        IWpfTextView view,
-        ITextSnapshot snapshot,
-        string text,
-        int position,
-        IServiceProvider serviceProvider)
-    {
-        var reference = SqlIdentifierScanner.FindAt(text, position);
-
-        if (!SqlBuiltInDocCatalog.TryGetAt(text, reference, out var doc) || !doc.DeservesWindow)
-        {
-            return false;
-        }
-
-        if (SqlStructurePreview.GetOrCreate(view, serviceProvider) is not { } preview)
-        {
-            return false;
-        }
-
-        preview.ShowBuiltInAt(
-            snapshot.CreateTrackingSpan(new Span(reference!.Start, reference.Length), SpanTrackingMode.EdgeInclusive),
-            doc);
-        return true;
     }
 
     /// <summary>

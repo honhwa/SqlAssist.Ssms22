@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
@@ -15,16 +14,12 @@ using SqlAssist.Ssms22;
 namespace SqlAssist.Ssms22.Completion;
 
 /// <summary>
-/// 決定原生建議清單的排序、篩選、選取與命中標示。
+/// 把原生建議清單的排序、篩選與命中標示接到 <see cref="SuggestionList"/>。
 /// </summary>
 /// <remarks>
 /// 沒有這個匯出，平台會用自己的比對器，詞首感知排名就會失效——
 /// 輸入 <c>libr</c> 時 <c>Lib_Reader</c> 又會掉到含子字串的名稱後面。
-/// 這裡改用本擴充的模糊比對器，並把命中區段交給平台去畫粗體。
-///
-/// 篩選之後順便把選取拉回排名第一的那一筆（正式選取，因此 Enter、Tab 與滑鼠都提交它）：
-/// 使用者打了前綴就直接按 Enter，帶出來的應該是最前面那一個，
-/// 而不是上一次篩選留下來的索引被夾住之後剛好落在的那一個。
+/// 規則全在 Core；這裡只把平台的項目、按鈕狀態與命中區段換進換出。
 ///
 /// 同時實作新舊兩版介面：平台優先呼叫
 /// <see cref="IAsyncCompletionItemManager2"/> 的清單版本以避免多一次陣列複製，
@@ -32,30 +27,14 @@ namespace SqlAssist.Ssms22.Completion;
 /// </remarks>
 internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManager, IAsyncCompletionItemManager2
 {
-    /// <summary>
-    /// 篩選後最多交出幾筆。
-    /// </summary>
-    /// <remarks>
-    /// 這是效能保險，不是偏好：在有數千個物件的資料庫裡輸入一個字元，
-    /// 沒有上限就要為每一筆配置命中區段並排序。使用者感覺不到差別——
-    /// 清單本來就要捲動，而且再多打一個字，排名就整個重算了。
-    /// </remarks>
-    private const int MaximumItems = 300;
+    private static readonly Func<CompletionItem, string> DisplayTextOf = static item => item.DisplayText;
 
-    /// <summary>
-    /// 還沒輸入任何字元時的顯示順序。
-    /// </summary>
-    /// <remarks>
-    /// 交進來的順序是候選清單的串接順序——關鍵字與程式碼片段、敘述範圍欄位、
-    /// 資料庫物件——照那個順序顯示，按 Ctrl+Space 會先看到一整排關鍵字，
-    /// 敘述裡的欄位要捲很久才看得到。
-    ///
-    /// 這裡依 <see cref="SuggestionMatcher.ComposeStandingScore"/> 排一次：
-    /// 最近用過的在最前面，接著才是類別偏好。排序是穩定的，因此同一類別內
-    /// 仍是原本的順序（欄位＝資料表定義順序，物件與關鍵字＝名稱順序）。
-    ///
-    /// 只在 session 開始時做一次，之後每一次按鍵拿到的都是這份排好的清單。
-    /// </remarks>
+    private static readonly Func<CompletionItem, SqlSuggestion?> SuggestionOf = static item =>
+        item.Properties.TryGetProperty<SqlSuggestion>(SqlAsyncCompletionSource.SuggestionKey, out var suggestion)
+            ? suggestion
+            : null;
+
+    /// <summary>還沒輸入任何字元時的顯示順序，見 <see cref="SuggestionList.Sort"/>；只在 session 開始時做一次。</summary>
     public Task<CompletionList<CompletionItem>> SortCompletionItemListAsync(
         IAsyncCompletionSession session,
         AsyncCompletionSessionInitialDataSnapshot data,
@@ -74,7 +53,7 @@ internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManage
         return Task.FromResult(
             SqlAssistPlatformGuard.RunPropagatingCancellation(
                 "建議清單排序",
-                () => session.CreateCompletionList(Sort(data.InitialItemList)),
+                () => session.CreateCompletionList(SuggestionList.Sort(data.InitialItemList, SuggestionOf)),
                 fallback: () => data.InitialItemList));
     }
 
@@ -88,34 +67,8 @@ internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManage
         return Task.FromResult(
             SqlAssistPlatformGuard.RunPropagatingCancellation(
                 "建議清單排序",
-                () => Sort(data.InitialItemList).ToImmutableArray(),
+                () => SuggestionList.Sort(data.InitialItemList, SuggestionOf).ToImmutableArray(),
                 fallback: () => data.InitialItemList.ToImmutableArray()));
-    }
-
-    /// <summary>依與輸入無關的那一段分數穩定排序。</summary>
-    private static List<CompletionItem> Sort(CompletionList<CompletionItem> items)
-    {
-        var sorted = new List<CompletionItem>(items.Count);
-
-        foreach (var item in items)
-        {
-            sorted.Add(item);
-        }
-
-        // List.Sort 不穩定，會把同分項目的原順序打散；這裡要的正是「同分維持原序」。
-        return sorted
-            .OrderByDescending(StandingScore)
-            .ToList();
-    }
-
-    /// <summary>項目在沒有輸入前綴時的分數。</summary>
-    private static int StandingScore(CompletionItem item)
-    {
-        return item.Properties.TryGetProperty<SqlSuggestion>(
-            SqlAsyncCompletionSource.SuggestionKey,
-            out var suggestion) && suggestion is not null
-            ? SuggestionMatcher.ComposeStandingScore(suggestion)
-            : 0;
     }
 
     public Task<FilteredCompletionModel?> UpdateCompletionListAsync(
@@ -130,197 +83,108 @@ internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManage
             SqlAssistPlatformGuard.RunPropagatingCancellation(
                 "建議清單篩選",
                 () => Filter(session, data, token),
-                fallback: () => Passthrough(data, GetSelectedFilters(data))));
+                fallback: () => Unfiltered(data)));
     }
 
+    /// <remarks>
+    /// 回傳 null 時平台會關閉 session，只在一項都沒有時這樣做（見 <see cref="SuggestionListView{TItem}.IsEmpty"/>）。
+    /// 選取一律交第 0 項；軟硬選見 <see cref="SelectionHint"/>。
+    /// </remarks>
     private static FilteredCompletionModel? Filter(
         IAsyncCompletionSession session,
         AsyncCompletionSessionDataSnapshot data,
         CancellationToken token)
     {
-        var items = data.InitialSortedItemList;
-        var selected = GetSelectedFilters(data);
-        var pattern = FuzzyMatcher.NormalizePattern(GetTypedText(session, data));
+        var filterBar = session.Properties.TryGetProperty<SqlCompletionFilterBar>(
+            SqlAsyncCompletionSource.FilterBarKey,
+            out var bar)
+            ? bar
+            : null;
 
-        if (pattern.Length == 0)
+        var typedText = GetTypedText(session, data);
+        var view = SuggestionList.Update(
+            data.InitialSortedItemList,
+            DisplayTextOf,
+            SuggestionOf,
+            typedText,
+            filterBar?.Selected(data.SelectedFilters) ?? SuggestionCategorySet.Empty,
+            token);
+
+        if (view.IsEmpty)
         {
-            return Passthrough(data, selected);
+            return null;
         }
 
-        var scored = new List<ScoredItem>(items.Count);
+        var items = view.Items;
+        var builder = ImmutableArray.CreateBuilder<CompletionItemWithHighlight>(items.Count);
 
-        foreach (var item in items)
+        for (var index = 0; index < items.Count; index++)
         {
-            token.ThrowIfCancellationRequested();
-
-            if (!IsIncluded(item, selected))
-            {
-                continue;
-            }
-
-            var match = FuzzyMatcher.MatchNormalized(pattern, item.DisplayText);
-
-            if (!match.IsMatch)
-            {
-                continue;
-            }
-
-            scored.Add(new ScoredItem(item, ComposeScore(item, match, pattern), match.Spans));
+            var entry = items[index];
+            builder.Add(entry.Spans.Count == 0
+                ? new CompletionItemWithHighlight(entry.Item)
+                : new CompletionItemWithHighlight(entry.Item, ToSpans(entry.Spans)));
         }
 
-        if (scored.Count == 0)
-        {
-            // 一個都沒中時回傳 null，平台會關閉 session，
-            // 而不是留一份空清單擋在游標旁邊。
-            //
-            // 但被分類篩選器篩空時不能關：篩選列會跟著消失，
-            // 使用者連取消剛才按下的那顆都做不到。留一份空清單等他再按一次。
-            return selected.Count == 0
-                ? null
-                : new FilteredCompletionModel(
-                    ImmutableArray<CompletionItemWithHighlight>.Empty,
-                    0,
-                    SqlCompletionFilters.Sort(data.SelectedFilters));
-        }
+        // 平台只負責畫按鈕與記住按下的狀態；過濾是上面做的。沒有篩選列的清單（只有一類、
+        // 或設定關掉）照平台交來的狀態原樣交回，而那份是空的。
+        var filters = filterBar is null
+            ? data.SelectedFilters
+            : filterBar.States(view.Applied, view.Matched);
 
-        // 同分時保留原順序（排序是穩定的），不改成字母序：交進來的清單已經是
-        // 排好的——欄位是資料表定義順序，物件與關鍵字是名稱順序。
-        var filtered = scored
-            .OrderByDescending(entry => entry.Score)
-            .Take(MaximumItems)
-            .Select(entry => new CompletionItemWithHighlight(entry.Item, ToSpans(entry.Spans)))
-            .ToImmutableArray();
-
-        // 每一次重新篩選都把選取拉回第一筆：這裡的順序就是最終名次，而清單每換一個
-        // 字元就重排一次，留著舊索引的話它會被夾在一個與名次無關的位置上——
-        // 症狀是打了一串字之後順手按 Enter，帶出來的不是排最前面的那一個。
-        //
-        // 一定要用 Selected 而不是 SoftSelected：平台的定義是軟選取「只用 Tab 或滑鼠
-        // 提交」，按 Enter 不算，而 Enter 正是這裡要接的那條路。Selected 是正式選取，
-        // Tab、滑鼠、Enter 與提交字元都算。
-        //
-        // 這不會讓打字被改寫：平台本來就預設選取第一筆——「打了 a 順手按 Enter 就被
-        // 換成 ALTER PROCEDURE」那個現象（見 docs/completion.md）正是它造成的，
-        // 而打字當時文字並沒有被動過。這裡只是把那個選取固定在第 0 筆，不再讓它停在
-        // 上一次篩選夾住的位置。
-        //
-        // 使用者自己按 ↑↓ 挑的那一筆不受影響：移動選取不會重新觸發這條篩選路徑，
-        // 只有文字或分類篩選變動才會。
         return new FilteredCompletionModel(
-            filtered,
+            builder.MoveToImmutable(),
             0,
-            SqlCompletionFilters.Sort(data.SelectedFilters),
-            UpdateSelectionHint.Selected,
-            // 選取的那一筆置中，與平台原本的行為一致。六個參數的建構式沒有預設值，
-            // 因此連這個也要明講。
+            filters,
+            SelectionHint(session, typedText),
             centerSelection: true,
-            // 「唯一命中就提交」不在這裡用：清單列得出好幾筆時該不該提交由名次決定，
-            // 而名次已經由選取表達；再給一個 uniqueItem 只會讓兩者說法不一致。
             uniqueItem: null);
     }
 
     /// <summary>
-    /// 還沒輸入任何字元時的清單：只套用分類篩選，順序原樣保留。
+    /// 規則要的軟硬選換邊時才送選取提示，其餘不動（NoChange）。
     /// </summary>
     /// <remarks>
-    /// 不走上面的評分路徑，是因為空前綴時所有分數相同，一排序就會被
-    /// <c>ThenBy(DisplayText)</c> 重排，敘述範圍內的欄位優先這件事就沒了。
+    /// 規則在 <see cref="SqlCompletionPolicy.UsesSoftSelection(SqlCompletionSlot, string)"/>：空白、逗號
+    /// 自己開出來的清單軟選，打了第一個字就轉硬選，Enter 才提交得到篩出來的第一項。
+    /// 每一輪都送的話，使用者按 ↓ 轉成的硬選下一個字就被蓋回軟選。
+    /// 刪回空前綴時換回軟選，與開清單當下同一條。
     /// </remarks>
-    private static FilteredCompletionModel Passthrough(
-        AsyncCompletionSessionDataSnapshot data,
-        List<CompletionFilter> selected)
+    private static UpdateSelectionHint SelectionHint(IAsyncCompletionSession session, string typedText)
+    {
+        if (!session.Properties.TryGetProperty<SqlCompletionSlot>(SqlAsyncCompletionSource.SlotKey, out var slot) ||
+            !session.Properties.TryGetProperty<bool>(SqlAsyncCompletionSource.SoftSelectionKey, out var wasSoft))
+        {
+            return UpdateSelectionHint.NoChange;
+        }
+
+        var soft = SqlCompletionPolicy.UsesSoftSelection(slot, typedText);
+
+        if (soft == wasSoft)
+        {
+            return UpdateSelectionHint.NoChange;
+        }
+
+        session.Properties[SqlAsyncCompletionSource.SoftSelectionKey] = soft;
+        return soft ? UpdateSelectionHint.SoftSelected : UpdateSelectionHint.Selected;
+    }
+
+    /// <summary>篩選失敗時的替代值：整份清單原樣交出，按鈕狀態原封不動。</summary>
+    private static FilteredCompletionModel Unfiltered(AsyncCompletionSessionDataSnapshot data)
     {
         var builder = ImmutableArray.CreateBuilder<CompletionItemWithHighlight>(data.InitialSortedItemList.Count);
 
         foreach (var item in data.InitialSortedItemList)
         {
-            if (IsIncluded(item, selected) && !IsDestructiveWithoutPrefix(item, selected))
-            {
-                builder.Add(new CompletionItemWithHighlight(item));
-            }
+            builder.Add(new CompletionItemWithHighlight(item));
         }
 
-        return new FilteredCompletionModel(
-            builder.ToImmutable(),
-            0,
-            SqlCompletionFilters.Sort(data.SelectedFilters));
-    }
-
-    private static bool IsDestructiveWithoutPrefix(
-        CompletionItem item,
-        IReadOnlyCollection<CompletionFilter> selected)
-    {
-        // 使用者主動按了分類篩選鈕時照樣列出；只有 Ctrl+Space 的「全部」首頁隱藏。
-        return item.Properties.TryGetProperty<SqlSuggestion>(
-                   SqlAsyncCompletionSource.SuggestionKey,
-                   out var suggestion) &&
-               suggestion is not null &&
-               !SuggestionMatcher.IsVisibleWithoutPrefix(
-                   suggestion,
-                   categorySelected: selected.Count > 0);
-    }
-
-    /// <summary>使用者按下的分類篩選鈕。</summary>
-    /// <remarks>
-    /// 平台只負責畫這排按鈕與記住按下的狀態；過濾要自己做。
-    /// 清單由這個 item manager 產出，不讀這份狀態的話，按鈕會按得下去卻沒有作用。
-    /// </remarks>
-    private static List<CompletionFilter> GetSelectedFilters(AsyncCompletionSessionDataSnapshot data)
-    {
-        var selected = new List<CompletionFilter>(data.SelectedFilters.Length);
-
-        foreach (var state in data.SelectedFilters)
-        {
-            if (state.IsSelected)
-            {
-                selected.Add(state.Filter);
-            }
-        }
-
-        return selected;
+        return new FilteredCompletionModel(builder.MoveToImmutable(), 0, data.SelectedFilters);
     }
 
     /// <summary>
-    /// 這一項通過分類篩選了嗎。
+    /// 使用者在建議範圍內已經輸入的文字；片段欄位的樣板預設值不算，見 <see cref="SuggestionList.TypedText"/>。
     /// </summary>
-    /// <remarks>
-    /// 沒按任何一顆＝全部，因此不必另外做一顆「全部」。
-    ///
-    /// 沒有分類的項目一律列出。這是防呆而不是設計：
-    /// <see cref="SqlCompletionFilters.For"/> 會把每一種建議都歸到一顆篩選鈕上
-    /// （歸不了的收在「其他」），所以掛著篩選列時走不到這條。真的走到了——
-    /// 例如日後多出一種沒對應到的項目——寧可讓它照樣出現，也不要無聲消失。
-    /// </remarks>
-    private static bool IsIncluded(CompletionItem item, List<CompletionFilter> selected)
-    {
-        if (selected.Count == 0 || item.Filters.IsDefaultOrEmpty)
-        {
-            return true;
-        }
-
-        foreach (var filter in item.Filters)
-        {
-            if (selected.Contains(filter))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// 取得使用者在建議範圍內已經輸入的文字。
-    /// </summary>
-    /// <remarks>
-    /// 原生 Snippet 欄位剛進去時，整格是<b>樣板填的預設值</b>而不是使用者打的字。
-    /// 拿它當篩選前綴會把清單濾光——<c>dbo.TargetTable</c> 比不中任何一個資料表
-    /// 名稱，而 <see cref="Filter"/> 一個都沒中就回 null，平台會把我們剛開的
-    /// session 直接關掉，看起來就是「Tab 進去沒有清單，打了字才有」。
-    ///
-    /// 比對的是<b>當下</b>的文字，不是一個記在 session 上的旗標：使用者一打字，
-    /// 格子內容就不再等於預設值，這裡自然恢復正常比對，不必有人去清狀態。
-    /// </remarks>
     private static string GetTypedText(IAsyncCompletionSession session, AsyncCompletionSessionDataSnapshot data)
     {
         var span = session.ApplicableToSpan;
@@ -330,62 +194,24 @@ internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManage
             return string.Empty;
         }
 
-        var text = span.GetText(data.Snapshot);
+        var fieldDefault = session.Properties.TryGetProperty<string>(
+            SqlAsyncCompletionSource.FieldDefaultKey,
+            out var value)
+            ? value
+            : null;
 
-        return session.Properties.TryGetProperty<string>(
-                   SqlAsyncCompletionSource.FieldDefaultKey,
-                   out var fieldDefault) &&
-               string.Equals(text, fieldDefault, StringComparison.Ordinal)
-            ? string.Empty
-            : text;
-    }
-
-    /// <summary>
-    /// 合成最終排名分數。
-    /// </summary>
-    /// <remarks>
-    /// 與自製清單共用 <see cref="SuggestionMatcher.ComposeScore"/>，
-    /// 讓兩種引擎的排序結果一致。
-    /// </remarks>
-    private static int ComposeScore(CompletionItem item, FuzzyMatchResult match, string pattern)
-    {
-        return item.Properties.TryGetProperty<SqlSuggestion>(
-            SqlAsyncCompletionSource.SuggestionKey,
-            out var suggestion) && suggestion is not null
-            ? SuggestionMatcher.ComposeScore(suggestion, match, pattern)
-            : match.Score * 128;
+        return SuggestionList.TypedText(span.GetText(data.Snapshot), fieldDefault);
     }
 
     private static ImmutableArray<Span> ToSpans(IReadOnlyList<MatchSpan> spans)
     {
-        if (spans.Count == 0)
-        {
-            return ImmutableArray<Span>.Empty;
-        }
-
         var builder = ImmutableArray.CreateBuilder<Span>(spans.Count);
 
-        foreach (var span in spans)
+        for (var index = 0; index < spans.Count; index++)
         {
-            builder.Add(new Span(span.Start, span.Length));
+            builder.Add(new Span(spans[index].Start, spans[index].Length));
         }
 
         return builder.MoveToImmutable();
-    }
-
-    private readonly struct ScoredItem
-    {
-        public ScoredItem(CompletionItem item, int score, IReadOnlyList<MatchSpan> spans)
-        {
-            Item = item;
-            Score = score;
-            Spans = spans;
-        }
-
-        public CompletionItem Item { get; }
-
-        public int Score { get; }
-
-        public IReadOnlyList<MatchSpan> Spans { get; }
     }
 }

@@ -275,16 +275,6 @@ public static class SqlAssistDiagnosticReport
         };
     }
 
-    public static string FormatPreviewPlacement(SqlPreviewPlacement placement)
-    {
-        return placement switch
-        {
-            SqlPreviewPlacement.Stacked => "建議清單的上方或下方",
-            SqlPreviewPlacement.Beside => "建議清單的側邊",
-            _ => placement.ToString()
-        };
-    }
-
     public static string FormatActivity(SqlAssistActivity activity)
     {
         if (!activity.HasValue)
@@ -305,9 +295,6 @@ public static class SqlAssistDiagnosticReport
             SqlAssistActivityKind.DefinitionOpened => "在新查詢視窗開啟定義",
             SqlAssistActivityKind.ResultGridScripted => "從查詢結果產生指令碼",
             SqlAssistActivityKind.SqlMemoryOpened => "已從 SQL Memory 開啟 SQL",
-            SqlAssistActivityKind.PastedValues => WithCount("貼上值清單", activity, "筆值"),
-            SqlAssistActivityKind.SchemaQualified => WithCount("補齊物件結構描述", activity, "處"),
-            SqlAssistActivityKind.TopParenthesized => WithCount("補上 TOP 括號", activity, "處"),
             _ => "未知活動"
         };
 

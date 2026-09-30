@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using Microsoft.VisualStudio.Language.StandardClassification;
 using Microsoft.VisualStudio.Text.Adornments;
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Keywords;
 using SqlAssist.Core.Localization;
 using SqlAssist.Core.Parsing;
+using SqlAssist.Core.Snippets;
 using SqlAssist.Metadata.Formatting;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Ssms22.UI;
@@ -210,10 +212,12 @@ internal static class SqlQuickInfoContentBuilder
             body.Add(summary);
         }
 
-        if (doc.Example.Length > 0)
+        // 只印第一段：其餘段落與對照表留給浮動預覽（SqlStructurePanel.ShowBuiltIn），
+        // 「開啟完整說明」值不值得出現由 SqlBuiltInDoc.HasExpandedContent 判斷。
+        if (doc.Examples.Count > 0)
         {
             var runs = new List<ClassifiedTextRun> { Comment(CommonText.Example + "  ") };
-            runs.AddRange(BuildCodeRuns(doc.Example));
+            runs.AddRange(BuildCodeRuns(doc.Examples[0].Sql));
             body.Add(new ClassifiedTextElement(runs));
         }
 
@@ -257,6 +261,33 @@ internal static class SqlQuickInfoContentBuilder
         }
 
         return Sections(elements);
+    }
+
+    /// <summary>
+    /// 片段在建議清單說明面板裡的內容：標題與用途。
+    /// </summary>
+    /// <remarks>
+    /// 程式碼一律交給浮動預覽（<see cref="SqlSnippetPreview"/>），與物件的定義本文同一條分工。
+    /// 平台的說明面板字寬不等、行距調不了，<c>-- ====</c> 這類分隔線在裡面畫出來是參差的一團；
+    /// 以前依行數分兩邊畫，同一類項目在清單上移動時一下是面板、一下是預覽，也看不出規則。
+    /// </remarks>
+    public static ContainerElement BuildSnippet(SqlSnippet snippet)
+    {
+        var caption = new List<object>
+        {
+            new ContainerElement(
+                ContainerElementStyle.Wrapped,
+                SqlIcons.GetImageElement(SuggestionKind.Snippet),
+                Line(Title(snippet.Title))),
+                Line(Comment(SqlKindText.Snippet))
+        };
+
+        if (BuildDescription(snippet.Description) is { } description)
+        {
+            caption.Add(description);
+        }
+
+        return Sections(new object[] { new ContainerElement(ContainerElementStyle.Stacked, caption) });
     }
 
     /// <summary>
@@ -503,6 +534,30 @@ internal static class SqlQuickInfoContentBuilder
 
             yield return new ClassifiedTextElement(runs);
         }
+    }
+
+    /// <summary>
+    /// 在建議清單的說明面板最上方加上列尾標記的說明，一個標記一行。
+    /// </summary>
+    /// <remarks>
+    /// 平台的清單範本只把列尾圖示的名稱接到朗讀，不給工具提示，所以圖示的意思只能寫在
+    /// 這裡——IntelliCode 的星號也是這樣交代的。文字就是圖示的朗讀名稱，兩處不各寫一份。
+    /// </remarks>
+    public static object WithMarks(object content, ImmutableArray<ImageElement> marks)
+    {
+        if (marks.IsDefaultOrEmpty)
+        {
+            return content;
+        }
+
+        var lines = new List<object>(marks.Length);
+
+        foreach (var mark in marks)
+        {
+            lines.Add(new ContainerElement(ContainerElementStyle.Wrapped, mark, Line(Text(mark.AutomationName ?? string.Empty))));
+        }
+
+        return Sections(new object[] { new ContainerElement(ContainerElementStyle.Stacked, lines), content });
     }
 
     private static ClassifiedTextElement Line(ClassifiedTextRun run) => new(run);

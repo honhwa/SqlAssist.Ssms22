@@ -1,3 +1,4 @@
+using System.Linq;
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
@@ -15,16 +16,14 @@ namespace SqlAssist.Core.Tests.Completion;
 /// </remarks>
 public sealed class SqlInsertionTextTests
 {
-    // 這幾份是「物件名要怎麼寫」的固定裝置：資料來源別名是另一件事，
-    // 預設開著會把每一條預期的字串都拖下水。關掉它，讓各測試只測自己那件事。
     private static readonly SqlAssistSettings Qualified =
-        new() { QualifyObjectNames = true, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
+        new() { QualifyObjectNames = true, UseSquareBrackets = false };
 
     private static readonly SqlAssistSettings Unqualified =
-        new() { QualifyObjectNames = false, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
+        new() { QualifyObjectNames = false, UseSquareBrackets = false };
 
     private static readonly SqlAssistSettings Bracketed =
-        new() { QualifyObjectNames = true, UseSquareBrackets = true, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
+        new() { QualifyObjectNames = true, UseSquareBrackets = true };
 
     private static SqlSuggestion Table(string name, string? schema = "dbo") =>
         new(name, name, "Table", name, SuggestionKind.Table, schemaName: schema);
@@ -197,99 +196,125 @@ public sealed class SqlInsertionTextTests
         Assert.Equal(expected, SqlInsertionText.Quote(name, settings));
     }
 
-    /// <remarks>
-    /// 別名含前後各一個空格，接著游標要打的是條件而不是黏在名稱上。
-    /// 取名規則在 <c>SqlAutoAlias</c>：分段取首字母小寫（<c>Lib_Reader</c> → <c>lr</c>）。
-    /// </remarks>
-    [Theory]
-    [InlineData(SqlTableSourceAliasStyle.None, "dbo.Lib_Reader lr ")]
-    [InlineData(SqlTableSourceAliasStyle.As, "dbo.Lib_Reader AS lr ")]
-    public void 資料來源位置會自動補上別名(SqlTableSourceAliasStyle style, string expected)
-    {
-        var settings = new SqlAssistSettings
-        {
-            QualifyObjectNames = true,
-            UseSquareBrackets = false,
-            TableSourceAliasStyle = style,
-        };
+    private const string TableVariable = "DECLARE @Loan TABLE (Id INT, CopyNo NVARCHAR(20));\r\n";
 
-        Assert.Equal(expected, Build(Table("Lib_Reader"), "SELECT * FROM |", settings));
+    /// <summary>從 <c>@</c> 之後的清單裡挑出那個資料表變數，照那一格的上下文算插入文字。</summary>
+    private static string BuildVariable(string sqlWithCaret, string name = "@Loan")
+    {
+        var input = SqlWithCaret.Parse(sqlWithCaret);
+        var context = SqlCompletionContextAnalyzer.Analyze(input.Text, input.Caret);
+        var suggestion = context.ScriptSources.Single(item => item.DisplayText == name);
+
+        return SqlInsertionText.Build(suggestion, context, Unqualified);
     }
 
     /// <remarks>
-    /// 這幾個位置一樣列資料表，文法上卻不接受別名——補上去是一句語法錯誤。
-    /// 判斷不在 <c>Target</c> 上，見 <c>SqlCompletionContext.MayAppendTableAlias</c>。
+    /// 資料表變數在純量位置唯一能做的事是限定欄位，而那裡只能寫 <c>[@Loan]</c>：
+    /// <c>SELECT @Loan.Id</c> 會被讀成純量變數，執行起來是「必須宣告純量變數」。
     /// </remarks>
     [Theory]
-    [InlineData("INSERT INTO |")]
-    [InlineData("DROP TABLE |")]
-    [InlineData("ALTER TABLE |")]
-    public void 不接受別名的位置不補(string sqlWithCaret)
+    [InlineData(TableVariable + "SELECT @| FROM @Loan")]
+    [InlineData(TableVariable + "SELECT Id, @| FROM @Loan")]
+    [InlineData(TableVariable + "SELECT * FROM @Loan WHERE @|")]
+    [InlineData(TableVariable + "SELECT * FROM dbo.Copy c JOIN @Loan ON c.CopyNo = @|")]
+    [InlineData(TableVariable + "SELECT COUNT(@| FROM @Loan")]
+    [InlineData(TableVariable + "SELECT * FROM @Loan ORDER BY @|")]
+    [InlineData(TableVariable + "UPDATE dbo.Copy SET CopyNo = @| FROM @Loan")]
+    public void 純量位置的資料表變數寫成限定字(string sqlWithCaret)
     {
-        var settings = new SqlAssistSettings
-        {
-            QualifyObjectNames = true,
-            UseSquareBrackets = false,
-            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
-        };
-
-        Assert.Equal("dbo.Loan", Build(Table("Loan"), sqlWithCaret, settings));
+        Assert.Equal("[@Loan]", BuildVariable(sqlWithCaret));
     }
 
     /// <remarks>
-    /// 逗號續列仍然是資料來源位置；撞名時往後加序號，否則 <c>FROM A a, B a</c>
-    /// 兩張表會共用同一個別名，欄位限定字從此指到錯的那一張。
+    /// 反過來的一半：整張資料表放得進來的位置只能寫 <c>@Loan</c>，
+    /// <c>FROM [@Loan]</c> 指到的是一張叫 <c>@Loan</c> 的資料表。
+    /// 模組的引數也在這裡——那可能是資料表值參數。
     /// </remarks>
+    [Theory]
+    [InlineData(TableVariable + "SELECT * FROM @|")]
+    [InlineData(TableVariable + "SELECT * FROM dbo.Copy c JOIN @|")]
+    [InlineData(TableVariable + "SELECT * FROM dbo.Copy c, @|")]
+    [InlineData(TableVariable + "INSERT INTO @|")]
+    [InlineData(TableVariable + "INSERT @|")]
+    [InlineData(TableVariable + "DELETE @|")]
+    [InlineData(TableVariable + "DELETE FROM @|")]
+    [InlineData(TableVariable + "UPDATE @|")]
+    [InlineData(TableVariable + "MERGE @|")]
+    [InlineData(TableVariable + "MERGE dbo.Copy AS t USING @|")]
+    [InlineData(TableVariable + "DELETE dbo.Copy OUTPUT deleted.CopyNo INTO @|")]
+    [InlineData(TableVariable + "EXEC dbo.usp_Renew @|")]
+    [InlineData(TableVariable + "EXEC dbo.usp_Renew @Copies = @|")]
+    [InlineData(TableVariable + "SELECT * FROM dbo.fn_LoansByCopy(@|")]
+    [InlineData(TableVariable + "SELECT dbo.fn_LoanCount(@|")]
+    public void 資料來源與引數的資料表變數照原樣寫(string sqlWithCaret)
+    {
+        Assert.Equal("@Loan", BuildVariable(sqlWithCaret));
+    }
+
     [Fact]
-    public void 逗號續列也補別名而撞名加序號()
+    public void 純量變數在純量位置照原樣寫()
     {
-        var settings = new SqlAssistSettings
-        {
-            QualifyObjectNames = true,
-            UseSquareBrackets = false,
-            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
-        };
-
-        // 兩張表都取得到 lr：Lib_Reader 與 Loan_Record 的分段首字母相同。
         Assert.Equal(
-            "dbo.Loan_Record lr2 ",
-            Build(Table("Loan_Record"), "SELECT * FROM Lib_Reader lr, |", settings));
+            "@readerId",
+            BuildVariable("DECLARE @readerId INT;\r\nSELECT @|", "@readerId"));
     }
 
     /// <remarks>
-    /// 資料表值函式的別名要接在右括號<b>之後</b>，而那個位置不在這裡——這一段文字
-    /// 之後還要補括號。三條路徑各接各的，由模式一分為三：不補括號接在名稱後面
-    /// （就是本則第二個斷言）；只補空括號由提交那一次編輯接在右括號後面；
-    /// 連引數一起補由展開器接在引數清單後面。這裡釘住的是後兩者不在插入文字裡。
+    /// 井號不需要：<c>#Loan.CopyNo</c> 是合法的限定。資料表變數則不論設定都要包。
+    /// </remarks>
+    [Theory]
+    [InlineData("@Loan", false, "[@Loan]")]
+    [InlineData("@Loan", true, "[@Loan]")]
+    [InlineData("#Loan", true, "#Loan")]
+    [InlineData("lr", false, "lr")]
+    [InlineData("lr", true, "[lr]")]
+    [InlineData("User", false, "[User]")]
+    public void 限定字只有資料表變數一定要包(string name, bool useSquareBrackets, string expected)
+    {
+        var settings = new SqlAssistSettings { UseSquareBrackets = useSquareBrackets };
+
+        Assert.Equal(expected, SqlInsertionText.QuoteQualifier(name, settings));
+    }
+
+    [Theory]
+    [InlineData(null, "CopyNo")]
+    [InlineData("lr", "lr.CopyNo")]
+    [InlineData("@Loan", "[@Loan].CopyNo")]
+    public void 欄位的限定字照限定字的規則包(string? qualifier, string expected)
+    {
+        Assert.Equal(expected, SqlInsertionText.Column("CopyNo", qualifier, Unqualified));
+    }
+
+    private static string? RewriteQualifier(string sqlWithCaret, SuggestionKind kind = SuggestionKind.Column)
+    {
+        var input = SqlWithCaret.Parse(sqlWithCaret);
+
+        // 提交那一端只分析游標前文，這裡照同一條走。
+        var context = SqlCompletionContextAnalyzer.Analyze(input.BeforeCaret);
+        var written = input.BeforeCaret.Substring(context.QualifierStart, context.TokenStart - context.QualifierStart);
+        var suggestion = new SqlSuggestion("CopyNo", "CopyNo", "", "", kind);
+
+        return SqlInsertionText.RewriteWrittenQualifier(suggestion, context, written);
+    }
+
+    /// <remarks>
+    /// 使用者自己打的 <c>@Loan.</c> 之後照樣列得出欄位，提交時連限定字一起換成
+    /// <c>[@Loan].</c>；否則提交完的那一行執行不了。
     /// </remarks>
     [Fact]
-    public void 資料表值函式的別名交給展開那條路()
+    public void 沒加方括號的資料表變數限定字在提交時改寫()
     {
-        var suggestion = new SqlSuggestion(
-            "LoanDetail", "LoanDetail", "", "", SuggestionKind.TableFunction, schemaName: "dbo");
+        Assert.Equal("[@Loan].", RewriteQualifier(TableVariable + "SELECT @Loan.|"));
+        Assert.Equal("[@Loan].", RewriteQualifier(TableVariable + "SELECT @Loan.Co|"));
+    }
 
-        var expanded = new SqlAssistSettings
-        {
-            QualifyObjectNames = true,
-            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
-            ExpandFunctionCall = true,
-        };
-        var expandedWithArguments = new SqlAssistSettings
-        {
-            QualifyObjectNames = true,
-            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
-            ExpandFunctionCall = true,
-            ExpandFunctionArguments = true,
-        };
-        var notExpanded = new SqlAssistSettings
-        {
-            QualifyObjectNames = true,
-            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
-            ExpandFunctionCall = false,
-        };
-
-        Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expanded));
-        Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expandedWithArguments));
-        Assert.Equal("dbo.LoanDetail ld ", Build(suggestion, "SELECT * FROM |", notExpanded));
+    [Theory]
+    [InlineData(TableVariable + "SELECT [@Loan].|", SuggestionKind.Column)]
+    [InlineData(TableVariable + "SELECT l.| FROM @Loan l", SuggestionKind.Column)]
+    [InlineData("SELECT dbo.| FROM dbo.Loan", SuggestionKind.Column)]
+    [InlineData(TableVariable + "SELECT @Loan.|", SuggestionKind.Table)]
+    public void 本來就成立的限定字不改寫(string sqlWithCaret, SuggestionKind kind)
+    {
+        Assert.Null(RewriteQualifier(sqlWithCaret, kind));
     }
 }

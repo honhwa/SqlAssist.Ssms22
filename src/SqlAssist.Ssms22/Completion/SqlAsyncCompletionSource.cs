@@ -11,7 +11,6 @@ using System.Windows.Threading;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion.Data;
 using Microsoft.VisualStudio.Text;
-using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Keywords;
@@ -41,12 +40,20 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     /// <summary>把建議項原始資料掛回 <see cref="CompletionItem"/> 的鍵。</summary>
     internal const string SuggestionKey = "SqlAssist.Suggestion";
 
-    /// <summary>展開函式呼叫時要接在右括號之後的別名，掛在項目上。</summary>
+    /// <summary>
+    /// 這一份清單的關鍵字候選要接在哪一段文字之後判斷是不是語句（<see cref="SqlStatementCandidates"/>）。
+    /// </summary>
     /// <remarks>
-    /// 與 <see cref="SuggestionKey"/> 一樣掛在項目而不是 session：同一次清單裡的
-    /// 每一筆建議各帶各的別名，掛在 session 上的話會互相蓋掉。
+    /// 清單建立時才知道正在打的字從哪裡開始，之後換選取只拿得到 session；掛在 session 上，
+    /// 清單換掉時跟著一起丟。
     /// </remarks>
-    internal const string TableSourceAliasKey = "SqlAssist.TableSourceAlias";
+    private const string StatementCandidatesKey = "SqlAssist.StatementCandidates";
+
+    /// <summary>清單建立時記下的語句候選；還沒建過清單時是 null，關鍵字就不對到語句說明。</summary>
+    internal static SqlStatementCandidates? StatementCandidatesOf(IAsyncCompletionSession session) =>
+        session.Properties.TryGetProperty<SqlStatementCandidates>(StatementCandidatesKey, out var candidates)
+            ? candidates
+            : null;
 
     /// <summary>這一次的適用範圍是原生 Snippet 欄位時，樣板為它填的預設值。</summary>
     /// <remarks>
@@ -67,8 +74,29 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     /// </remarks>
     internal const string QualifierSlotKey = "SqlAssist.QualifierSlot";
 
+    /// <summary>這份清單的分類篩選列（<see cref="SqlCompletionFilterBar"/>）。</summary>
+    /// <remarks>
+    /// 與 <see cref="FieldDefaultKey"/> 同理放在 session 上：按鈕的數字照這份清單的畫面位置編，
+    /// 排名器要拿同一組實體才認得平台交回來的是哪一顆。
+    /// </remarks>
+    internal const string FilterBarKey = "SqlAssist.FilterBar";
+
+    /// <summary>這份清單那一格的分類（<see cref="SqlCompletionSlot"/>）。</summary>
+    /// <remarks>
+    /// 軟硬選要隨使用者打的字換：空前綴軟選、打了字硬選，可能是名字的那一格一直軟選
+    /// （<see cref="SqlCompletionPolicy.UsesSoftSelection(SqlCompletionSlot, string)"/>）。
+    /// 篩選在排名器裡，那裡只拿得到 session。
+    /// </remarks>
+    internal const string SlotKey = "SqlAssist.Slot";
+
+    /// <summary>目前交給平台的是不是軟選；只在它該換邊時才送選取提示。</summary>
+    internal const string SoftSelectionKey = "SqlAssist.SoftSelection";
+
     /// <summary>建立 <see cref="_builtIn"/> 時所用的那一份 Snippet 清單。</summary>
     private static SqlSnippetLibrary? _builtInSnippets;
+
+    /// <summary>建立 <see cref="_builtIn"/> 時的介面語言；說明文字是當下那個語言的。</summary>
+    private static SqlLanguage? _builtInLanguage;
 
     private static IReadOnlyList<SqlSuggestion> _builtIn = Array.Empty<SqlSuggestion>();
 
@@ -142,14 +170,7 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
                     fieldSpan,
                     triggerLocation.Position)));
 
-        if (!context.IsValid)
-        {
-            return CompletionStartData.DoesNotParticipateInCompletion;
-        }
-
-        if (context.Target == CompletionTarget.Any &&
-            context.QualifierPath is null &&
-            context.Prefix.Length < settings.TriggerAfterCharacters)
+        if (!SqlCompletionPolicy.Participates(context, settings.TriggerAfterCharacters))
         {
             return CompletionStartData.DoesNotParticipateInCompletion;
         }
@@ -236,7 +257,11 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     {
         var total = System.Diagnostics.Stopwatch.StartNew();
         var settings = SqlAssistSettingsStore.Current;
-        var context = Analyze(triggerLocation, applicableToSpan);
+        var text = triggerLocation.Snapshot.GetText();
+        var context = Analyze(text, triggerLocation, applicableToSpan);
+
+        // 關鍵字候選是不是一句的開頭，要把它接在正在打的那個字前面再問（語句說明）。
+        session.Properties[StatementCandidatesKey] = new SqlStatementCandidates(text, applicableToSpan.Start.Position);
 
         // 這一則正是「打開建議清單卻不知道背景在忙什麼」的答案：底下的限定名稱解析與
         // 每一條中繼資料查詢都併進這一列。三軸是 Completion／Typing／Info——每按一次鍵
@@ -296,20 +321,20 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 上下文過濾要在建立清單時做完：平台會快取這份清單，
         // 之後每一次按鍵只重新比對前綴，不會再問來源一次。
-        var suggestions = SuggestionMatcher.Filter(candidates, context);
+        var suggestions = SuggestionContextFilter.Filter(candidates, context);
 
         if (suggestions.Count == 0)
         {
             return CompletionContext.Empty;
         }
 
-        // 分類是否掛得上要看整份清單，不是逐項決定的：只有一種分類時
-        // 篩選列不該出現。
-        var withFilters = settings.ShowCategoryFilters &&
-            SqlCompletionFilters.HasMultipleCategories(suggestions);
+        // 篩選列看整份清單決定，不是逐項決定的：只有一種分類時不該出現。
+        var filterBar = settings.ShowCategoryFilters
+            ? SqlCompletionFilterBar.Create(suggestions)
+            : null;
 
         var items = suggestions
-            .Select(suggestion => CreateItem(suggestion, settings, context, withFilters))
+            .Select(suggestion => CreateItem(suggestion, settings, context))
             .ToImmutableArray();
 
         // 使用者感受到的就是這個數字：從平台要清單，到清單交出去為止。
@@ -323,7 +348,24 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 只有真的產出 SqlAssist items 才取得 ownership；空 context 可能仍由別的來源顯示。
         OwnPreviewSession(session);
-        return new CompletionContext(items);
+
+        // 開清單時的軟硬選在這裡交出，之後只在規則換邊時由排名器改（打了第一個字、刪回空前綴）；
+        // 其餘時候不送選取提示，使用者按 ↓ 轉成的硬選才留得住。不用建議項
+        // （SuggestionItemOptions）表達：有建議項時 Enter 會選中它而不換行，那正是軟選要避免的。
+        var soft = SqlCompletionPolicy.UsesSoftSelection(context);
+        session.Properties[SlotKey] = context.Slot;
+        session.Properties[SoftSelectionKey] = soft;
+        var selection = soft
+            ? InitialSelectionHint.SoftSelection
+            : InitialSelectionHint.RegularSelection;
+
+        if (filterBar is null)
+        {
+            return new CompletionContext(items, null, selection, ImmutableArray<CompletionFilterWithState>.Empty);
+        }
+
+        session.Properties[FilterBarKey] = filterBar;
+        return new CompletionContext(items, null, selection, filterBar.InitialStates);
     }
 
     /// <summary>
@@ -387,34 +429,40 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
             return null;
         }
 
-        var objectInfo = suggestion.Tag as SqlObjectInfo;
-        var mode = SqlAssistSettingsStore.Current.PreviewMode;
+        var statements = StatementCandidatesOf(session);
+        var builtIn = SqlSuggestionTarget.FindBuiltIn(suggestion, statements);
+        var objectInfo = builtIn is null ? suggestion.Tag as SqlObjectInfo : null;
 
         // 平台每換一次選取就問一次說明，這正是「選取換了項目」的信號。
         // 預覽只記下是誰，沒展開就不畫也不查。
-        if (mode != SqlPreviewMode.Off &&
+        if (SqlAssistSettingsStore.Current.PreviewMode != SqlPreviewMode.Off &&
             SqlStructurePreview.Peek(session.TextView) is { } preview)
         {
             preview.ReconcileSelection(session, _metadataService);
 
-            // 預覽已經展開時整份讓給它：兩個視窗同時貼在清單旁邊會互相搶位置。展開狀態
-            // 下它畫得出資料庫物件、指令碼自己宣告的名稱與內建說明，只有其餘的項目才說
-            // 沒有東西可以顯示。
+            // 預覽已經展開、而且這一項畫得出東西時整份讓給它：兩個視窗同時貼在清單旁邊
+            // 會互相搶位置。畫不出東西的項目（一般關鍵字、一般變數）預覽會把視窗收起來，說明面板
+            // 就得照常畫，否則展開之後路過關鍵字時旁邊什麼都沒有。
             //
             // 還沒展開時畫面上根本沒有那個視窗，說明面板照常畫——一併吞掉的症狀是
             // 打開浮動預覽之後，選到 CONVERT 連引數順序那一行都不見了。內建說明沒有跟著
             // 物件一起讓掉，因為這一份正是「一眼看得完」的那一半，而且查表就有；
             // 看不完的對照表才是向右鍵要開的東西。物件先讓掉的理由則是成本：那一條要
             // await 一次 GetDetailAsync，而使用者多半只是按著方向鍵路過。
-            if (preview.IsExpanded || objectInfo is not null)
+            if (objectInfo is not null ||
+                preview.IsBrowsing && SqlSuggestionTarget.Describe(suggestion, statements) is not null)
             {
                 return null;
             }
         }
 
+        // 列尾標記的意思只有這裡寫得下：平台不替那些圖示顯示工具提示。預覽整份接手時
+        // 上面已經回傳 null，不為了幾行說明把面板叫回來和預覽搶位置。
         if (objectInfo is null)
         {
-            return BuildBuiltInDescription(suggestion) ?? (object)suggestion.Preview;
+            return SqlQuickInfoContentBuilder.WithMarks(
+                BuildLocalDescription(suggestion, builtIn),
+                item.AttributeIcons);
         }
 
         using var notification = NotificationCenter.Default.Begin(
@@ -425,31 +473,32 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
             .GetDetailAsync(objectInfo, token, NotificationOrigin.Typing)
             .ConfigureAwait(false);
 
-        return detail is null
-            ? SqlQuickInfoContentBuilder.BuildLoading(objectInfo)
-            : SqlQuickInfoContentBuilder.Build(detail);
+        return SqlQuickInfoContentBuilder.WithMarks(
+            detail is null
+                ? SqlQuickInfoContentBuilder.BuildLoading(objectInfo)
+                : SqlQuickInfoContentBuilder.Build(detail),
+            item.AttributeIcons);
     }
 
     /// <summary>
-    /// 內建名稱在說明面板裡的內容；不是內建名稱或沒有寫過說明時回傳 null。
+    /// 不必查詢就畫得出來的說明：內建名稱、片段，其餘退回建議項自己帶的那一行。
     /// </summary>
     /// <remarks>
-    /// 與滑鼠停留提示同一份資料、同一個建構器，因此清單裡看到的與停在字上看到的
-    /// 是同一段話。說明面板沒有可點擊的地方，線上文件那一行不畫。
-    ///
-    /// 種類已經在建議項上，不必再從文字猜一次——<c>YEAR</c> 在日期部分與內建函式
-    /// 目錄裡各有一筆，猜的話兩邊都說得通。
+    /// 內建名稱與滑鼠停留提示同一份資料、同一個建構器，因此清單裡看到的與停在字上看到的
+    /// 是同一段話；說明面板沒有可點擊的地方，線上文件那一行不畫。系統程序也在這裡：
+    /// 它的說明排在物件之前（<see cref="SqlSuggestionTarget.FindBuiltIn"/>），面板與預覽才不會
+    /// 一邊畫說明、一邊畫一個多半查無定義的擴充預存程序。
     /// </remarks>
-    private static object? BuildBuiltInDescription(SqlSuggestion suggestion)
+    private static object BuildLocalDescription(SqlSuggestion suggestion, SqlBuiltInDoc? builtIn)
     {
-        if (!SqlBuiltInKinds.TryFromSuggestionKind(suggestion.Kind, out var kind))
+        if (builtIn is not null)
         {
-            return null;
+            return SqlQuickInfoContentBuilder.BuildBuiltIn(builtIn);
         }
 
-        return SqlBuiltInDocCatalog.TryGet(suggestion.DisplayText, kind, out var doc)
-            ? SqlQuickInfoContentBuilder.BuildBuiltIn(doc)
-            : null;
+        return suggestion.Kind == SuggestionKind.Snippet && suggestion.Tag is SqlSnippet snippet
+            ? SqlQuickInfoContentBuilder.BuildSnippet(snippet)
+            : suggestion.Preview;
     }
 
     private async Task<IReadOnlyList<SqlSuggestion>> GetCandidatesAsync(
@@ -480,6 +529,14 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
             return parameters.Concat(context.ScriptSources).ToArray();
         }
 
+        // 游標名稱同樣只寫在指令碼裡；FETCH | 還接得了 NEXT、PRIOR 這些方向，由片語給。
+        if (context.Target == CompletionTarget.Cursor)
+        {
+            return context.ClausePhrase is { } cursorPhrase
+                ? context.ScriptSources.Concat(cursorPhrase.Suggestions).ToArray()
+                : context.ScriptSources;
+        }
+
         // 引數與提示是純粹的封閉清單，一次資料庫都不必問。
         switch (context.Target)
         {
@@ -489,54 +546,53 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
                 return SqlArgumentCatalog.TableHints;
             case CompletionTarget.QueryHint:
                 return SqlArgumentCatalog.QueryHints;
+
+            // 封閉片語的字之外還有以那些字開頭的片段（CURSOR FOR 之後的 ssf），由上下文過濾挑。
+            case CompletionTarget.ClauseKeyword:
+                return GetBuiltIn()
+                    .Where(item => item.Kind == SuggestionKind.Snippet && IsBuiltInEnabled(item, settings))
+                    .Concat(context.ClausePhrase?.Suggestions ?? Array.Empty<SqlSuggestion>())
+                    .ToArray();
         }
 
-        // 定序只有伺服器知道，但那個位置不會因為問不到而空掉：DATABASE_DEFAULT
-        // 這兩個字與這份指令碼已經寫過的定序都不必送出查詢。關掉「列出資料庫物件
-        // 與欄位」的人要的是「不要連線」，剩下的正好是這一份。
-        if (context.Target == CompletionTarget.Collation)
+        // 定序、語言與時區的名單只有伺服器知道，但那個位置不會因為問不到而空掉：
+        // 文法上的字（DATABASE_DEFAULT）與這份指令碼已經寫過的值都不必送出查詢。
+        // 關掉「列出資料庫物件與欄位」的人要的是「不要連線」，剩下的正好是這一份。
+        if (SqlInstanceList.For(context.Target) is { } instanceList)
         {
-            var known = SqlCollationCatalog.Defaults.Concat(context.ScriptSources).ToArray();
+            var server = settings.IncludeDatabaseObjects
+                ? await _metadataService.GetInstanceListAsync(instanceList, token).ConfigureAwait(false)
+                : SqlInstanceListData.Empty;
 
-            if (!settings.IncludeDatabaseObjects)
-            {
-                return known;
-            }
-
-            var exclude = new HashSet<string>(
-                known.Select(item => item.DisplayText),
-                StringComparer.OrdinalIgnoreCase);
-
-            var collations = await _metadataService
-                .GetCollationSuggestionsAsync(exclude, token)
-                .ConfigureAwait(false);
-
-            return known.Concat(collations).ToArray();
+            return instanceList.Suggestions(context.ScriptSources, server);
         }
 
         // 內建型別是一份封閉的清單，但使用者自訂的資料表型別在資料庫裡，
-        // DECLARE @t dbo.XType 要的正是後者。
+        // DECLARE @t dbo.XType 要的正是後者。片語的字照接上來：資料行定義的 PERIOD 之後還有 FOR。
         if (context.Target == CompletionTarget.DataType)
         {
-            if (!settings.IncludeDatabaseObjects)
-            {
-                return SqlDataTypeCatalog.All;
-            }
+            var types = settings.IncludeDatabaseObjects
+                ? await _metadataService.GetSuggestionsAsync(context.QualifierPath, token).ConfigureAwait(false)
+                : Array.Empty<SqlSuggestion>();
 
-            var types = await _metadataService
-                .GetSuggestionsAsync(context.QualifierPath, token)
-                .ConfigureAwait(false);
-
-            return SqlDataTypeCatalog.All.Concat(types).ToArray();
+            return SqlDataTypeCatalog.All
+                .Concat(types)
+                .Concat(context.ClausePhrase?.Suggestions ?? Array.Empty<SqlSuggestion>())
+                .ToArray();
         }
 
         if (context.Target == CompletionTarget.Column)
         {
             // 關掉「列出資料庫物件與欄位」等於不對資料庫送出任何查詢，
             // 那時只有欄位名稱寫在指令碼裡的來源（子查詢、CTE）列得出來。
-            return await _metadataService
+            // 片語的字照接上來：DROP COLUMN 之後還有 IF EXISTS。
+            var columns = await _metadataService
                 .GetColumnSuggestionsAsync(context.ColumnSources!, settings.IncludeDatabaseObjects, token)
                 .ConfigureAwait(false);
+
+            return context.ClausePhrase is { } phrase
+                ? columns.Concat(phrase.Suggestions).ToArray()
+                : columns;
         }
 
         // 跨資料庫或跨伺服器的限定字：清單只能來自那個地方。混進本地的物件、
@@ -554,8 +610,11 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         // 指令碼自己宣告的 CTE 與暫存資料表不必對資料庫送出任何查詢，
         // 因此與「列出資料庫物件」的設定無關——關掉那個設定的人要的是
         // 「不要連線」，不是「看不到我上一行才寫的名稱」。
+        // 不封閉的子句片語（SET IDENTITY_INSERT 之後是資料表）把它的字接上來；
+        // 目錄裡的關鍵字在那一格由上下文過濾換成片語的字。
         var builtIn = GetBuiltIn()
             .Where(item => IsBuiltInEnabled(item, settings))
+            .Concat(context.ClausePhrase?.Suggestions ?? Array.Empty<SqlSuggestion>())
             .Concat(context.ScriptSources);
 
         if (!settings.IncludeDatabaseObjects)
@@ -567,7 +626,7 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
 
         // 敘述裡看得到的欄位放在資料庫物件前面：SELECT | FROM PUBLISHER a 這種位置，
         // 使用者要的幾乎都是欄位，而不是整個資料庫的物件清單。
-        var scopeColumns = _metadataService.GetCachedScopeColumns(context);
+        var scopeColumns = _metadataService.GetCachedScopeColumns(context.ScopeSources);
         var candidates = builtIn.Concat(scopeColumns).Concat(database);
 
         // sys.| 與 EXEC | 才把系統物件拉進來：那一份有一兩千筆，混進一般清單的話，
@@ -587,8 +646,7 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     private CompletionItem CreateItem(
         SqlSuggestion suggestion,
         SqlAssistSettings settings,
-        SqlCompletionContext context,
-        bool withFilters)
+        SqlCompletionContext context)
     {
         var item = new CompletionItem(
             displayText: suggestion.DisplayText,
@@ -596,33 +654,18 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
             // 篩選類別與圖示不是同一個問題：同義字歸入資料表那一類，圖示仍須
             // 呈現真正的物件種類，判斷整份在 SqlIcons。
             icon: SqlIcons.GetImageElement(suggestion),
-            filters: withFilters
-                ? SqlCompletionFilters.For(suggestion.Kind)
-                : ImmutableArray<CompletionFilter>.Empty,
+            // 不逐項掛篩選器：篩選列整組由 CompletionContext 交出，排名器從建議項的
+            // 種類認分類。掛在項目上的只會讓平台多推一份順序不對的按鈕。
+            filters: ImmutableArray<CompletionFilter>.Empty,
             suffix: suggestion.Description,
             insertText: SqlInsertionText.Build(suggestion, context, settings),
             sortText: suggestion.DisplayText,
             filterText: suggestion.DisplayText,
             automationText: suggestion.DisplayText,
-            attributeIcons: ImmutableArray<ImageElement>.Empty);
+            attributeIcons: SqlIcons.GetImageElements(SuggestionMarks.Of(suggestion, context)));
 
         // 提交與排名都需要拿回原始建議項；PropertyCollection 是官方提供的掛載點。
         item.Properties.AddProperty(SuggestionKey, suggestion);
-
-        // 資料表值函式的別名要接在右括號之後，而括號與引數都是提交當下才寫出來的，
-        // 所以這裡先把字尾算好掛在項目上，由 SqlAsyncCompletionCommitManager 在括號
-        // 寫完之後接上：補空括號那一條它自己接，連引數一起補那一條轉給展開器。
-        // 掛在 item 而不是 session：同一個 session 裡的每一筆建議各帶各的別名。
-        if (suggestion.Kind == SuggestionKind.TableFunction && settings.ExpandFunctionCall)
-        {
-            var tableSourceAliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
-
-            if (tableSourceAliasSuffix is not null)
-            {
-                item.Properties.AddProperty(TableSourceAliasKey, tableSourceAliasSuffix);
-            }
-        }
-
         return item;
     }
 
@@ -632,20 +675,23 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
     /// <remarks>
     /// 關鍵字是固定的，Snippet 則會被管理介面改掉，因此整份重建，但只在
     /// Snippet 清單真的換過之後才重建——<see cref="SqlSnippetLibrary"/> 不可變，
-    /// 存檔時整份換新，所以比對參考就足夠。
+    /// 存檔時整份換新，所以比對參考就足夠。關鍵字與內建函式的說明跟著介面語言，
+    /// 語言也明寫進判斷：Snippet 目前會隨語言重新合併，但那是它自己的事，不能拿來代替。
     ///
     /// 這個方法在背景執行緒上被呼叫，重建期間要擋住其他人拿到半成品。
     /// </remarks>
     private static IReadOnlyList<SqlSuggestion> GetBuiltIn()
     {
         var snippets = SqlSnippetStore.Current;
+        var language = SqlText.Current;
 
         lock (BuiltInGate)
         {
-            if (!ReferenceEquals(_builtInSnippets, snippets))
+            if (!ReferenceEquals(_builtInSnippets, snippets) || !ReferenceEquals(_builtInLanguage, language))
             {
                 _builtIn = BuiltInSuggestionCatalog.Create(snippets);
                 _builtInSnippets = snippets;
+                _builtInLanguage = language;
             }
 
             return _builtIn;
@@ -669,18 +715,6 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         };
     }
 
-    /// <summary>
-    /// 這一次清單的上下文。
-    /// </summary>
-    /// <remarks>
-    /// 欄位模式下改從<b>這一格的起點</b>分析。不這樣做的話，前綴會是格子裡的
-    /// <c>TargetTable</c>、限定字會是 <c>dbo</c>：前者讓
-    /// <c>SuggestionMatcher</c> 把整份清單濾光，後者讓插入文字退化成不帶結構描述的
-    /// 簡名。兩個症狀都沒有錯誤訊息。
-    ///
-    /// 判斷靠 <see cref="_fieldSpan"/> 而不是重問一次引擎：這個方法在平台的背景
-    /// 執行緒上，那個查詢是 COM，只能在 UI 執行緒做。
-    /// </remarks>
     /// <summary>這一次清單在找什麼；通知的主體。</summary>
     /// <remarks>
     /// switch 回常數而不是 <c>ToString()</c>：這一段每按一次鍵都走一次，而
@@ -693,8 +727,6 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         CompletionTarget.Function => SqlKindText.Function,
         CompletionTarget.TableFunction => SqlKindText.TableFunction,
         CompletionTarget.Column => SqlKindText.Column,
-        // dev 獨有：游標停在 ON／WHERE／HAVING 或 AND／OR 正後方時的目標。
-        CompletionTarget.Predicate => SqlKindText.Predicate,
         CompletionTarget.Database => SqlKindText.Database,
         CompletionTarget.GlobalVariable => SqlKindText.GlobalVariable,
         CompletionTarget.Variable => SqlKindText.Variable,
@@ -702,14 +734,29 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
         CompletionTarget.View => SqlKindText.View,
         CompletionTarget.Trigger => SqlKindText.Trigger,
         CompletionTarget.Sequence => SqlKindText.Sequence,
+        CompletionTarget.Cursor => SqlKindText.Cursor,
         CompletionTarget.DatePart => SqlKindText.DatePart,
         CompletionTarget.TableHint => SqlKindText.TableHint,
         CompletionTarget.QueryHint => SqlKindText.QueryHint,
         CompletionTarget.Collation => SqlKindText.Collation,
+        CompletionTarget.Language => SqlKindText.Language,
+        CompletionTarget.TimeZone => SqlKindText.TimeZone,
+        CompletionTarget.ClauseKeyword => SqlKindText.Keyword,
         _ => "",
     };
 
-    private SqlCompletionContext Analyze(SnapshotPoint triggerLocation, SnapshotSpan applicableToSpan)
+    /// <summary>
+    /// 這一次清單的上下文。
+    /// </summary>
+    /// <remarks>
+    /// 欄位模式下改從<b>這一格的起點</b>分析。不這樣做的話，前綴會是格子裡的
+    /// <c>TargetTable</c>、限定字會是 <c>dbo</c>：前者讓前綴比對把整份清單濾光，
+    /// 後者讓插入文字退化成不帶結構描述的簡名。兩個症狀都沒有錯誤訊息。
+    ///
+    /// 判斷靠 <see cref="_fieldSpan"/> 而不是重問一次引擎：這個方法在平台的背景
+    /// 執行緒上，那個查詢是 COM，只能在 UI 執行緒做。
+    /// </remarks>
+    private SqlCompletionContext Analyze(string text, SnapshotPoint triggerLocation, SnapshotSpan applicableToSpan)
     {
         // 只有「整格還是樣板填的預設值」那一次要當它不存在；使用者打過字之後，
         // 那幾個字就是前綴，照一般方式分析到游標為止。判斷與
@@ -720,6 +767,6 @@ internal sealed class SqlAsyncCompletionSource : IAsyncCompletionSource
             ? applicableToSpan.Start.Position
             : triggerLocation.Position;
 
-        return SqlCompletionContextAnalyzer.Analyze(triggerLocation.Snapshot.GetText(), caret);
+        return SqlCompletionContextAnalyzer.Analyze(text, caret);
     }
 }

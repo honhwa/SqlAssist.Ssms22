@@ -62,7 +62,16 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
     /// 點號本來就會讓分析器重新判斷上下文並開新的 session（別名接欄位、
     /// 結構描述接物件），不需要靠提交來達成。
     /// </remarks>
-    public IEnumerable<char> PotentialCommitCharacters { get; } = Array.Empty<char>();
+    public IEnumerable<char> PotentialCommitCharacters => CommitCharacters;
+
+    private static readonly char[] CommitCharacters = Array.Empty<char>();
+
+    /// <summary>清單開著時輸入 <paramref name="typedChar"/> 會不會提交。</summary>
+    /// <remarks>
+    /// 按鍵路徑上其他功能要問的是同一件事（自動配對要知道那一次按鍵能不能動），
+    /// 所以答案只從 <see cref="CommitCharacters"/> 這一份推出來。
+    /// </remarks>
+    public static bool CommitsOn(char typedChar) => Array.IndexOf(CommitCharacters, typedChar) >= 0;
 
     public bool ShouldCommitCompletion(
         IAsyncCompletionSession session,
@@ -70,7 +79,7 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
         char typedChar,
         CancellationToken token)
     {
-        return false;
+        return CommitsOn(typedChar);
     }
 
     public CommitResult TryCommit(
@@ -182,6 +191,24 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             context = context.WithQualifierPath(realigned);
         }
 
+        // 方括號名稱的右半邊（自動配對補上的 ]，或游標停在名稱中間時右邊那一截）
+        // 要一起換掉，否則提交的 [Lib_Reader] 後面還跟著原本那個 ]。平台只換得掉
+        // 適用範圍，而範圍刻意只到游標為止——包進右方括號的話，使用者自己打出 ]
+        // 時篩選字還比得中，清單就關不掉——所以這一種要自己接手。
+        // 上面的分析必須在延伸之前做：分析到右方括號之後，方括號就已經關上了。
+        var closing = context.Bracketed
+            ? SqlIdentifier.MeasureClosingBracket(
+                snapshot.GetText(
+                    span.End.Position,
+                    Math.Min(SqlIdentifier.MaximumLength + 1, snapshot.Length - span.End.Position)),
+                0)
+            : 0;
+
+        if (closing > 0)
+        {
+            span = new SnapshotSpan(snapshot, span.Start, span.Length + closing);
+        }
+
         // Tab 在欄位裡有兩件事要做：提交這一格，然後走到下一格。平台的 Tab 只做
         // 得了第一件，所以第二件排在這一輪命令之後自己做——不靠
         // CommitBehavior.RaiseFurtherReturnKeyAndTabKeyCommandHandlers 把命令鏈接
@@ -240,32 +267,14 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
         var nameStart = context.QualifierStart >= 0 && context.QualifierStart <= insertionStart
             ? context.QualifierStart
             : insertionStart;
-        var writtenName = snapshot.GetText(nameStart, insertionStart - nameStart) + insertionText;
+        var writtenQualifier = snapshot.GetText(nameStart, insertionStart - nameStart);
+        var writtenName = writtenQualifier + insertionText;
         var expansion = SqlCommitExpander.Resolve(
             suggestion,
             context,
             span.End,
             settings,
             writtenName);
-
-        // 自動別名在建立清單時就算好了，掛在項目上。它要接在右括號之後，而右括號
-        // 是下面那一段才寫進去的，所以先取出來放在手上。
-        //
-        // 接的位置有三處，由 SqlFunctionCallInsertion 的模式一分為三，誰也接不到
-        // 兩次：「不補括號」在 SqlInsertionText 就接在名稱後面；「只補空括號」接在
-        // 下面那段寫完的右括號後面；「連引數一起補」換掉的是名稱與括號那一整段，
-        // 接在插入文字上會被它蓋掉，所以轉交給展開器在引數清單後面接。
-        var tableSourceAliasSuffix = item.Properties.TryGetProperty<string>(
-            SqlAsyncCompletionSource.TableSourceAliasKey,
-            out var aliasSuffix)
-            ? aliasSuffix
-            : null;
-
-        if (expansion is SqlFunctionCallExpansion functionCallExpansion &&
-            tableSourceAliasSuffix is not null)
-        {
-            functionCallExpansion.TableSourceAliasSuffix = tableSourceAliasSuffix;
-        }
 
         // 使用者自訂函式：「補上括號」開著時，這一次要寫的是名稱加一對空括號，
         // 游標停在中間。補到哪一步由 SqlFunctionCallInsertion 回答，展開那一端
@@ -294,18 +303,6 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
                 Array.Empty<SqlStatementParameter>(),
                 out caretOffset);
             insertedClose = ')';
-
-            // 資料表值函式的自動別名剩下這一條路可以接。這也正是預設設定走的那一條
-            // ——「補上括號」開著、「填入引數預留值」關著——少了這一段，
-            // FROM dbo.fn_LoansByReader(…) 就沒有別名：名稱後面已經被上面那一行
-            // 寫上右括號了，而展開那一條只在補引數時才會跑。
-            //
-            // 游標停在括號之間，接在尾巴不影響 caretOffset。
-            if (functionCall == SqlFunctionCallInsertionMode.Parentheses &&
-                tableSourceAliasSuffix is not null)
-            {
-                insertionText += tableSourceAliasSuffix;
-            }
         }
         else
         {
@@ -329,8 +326,34 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             }
         }
 
+        // 使用者自己打的 @rows. 寫在欄位前面不成立，提交時連限定字一起換成
+        // [@rows].，同一次編輯裡完成，Ctrl+Z 一次就整個退回。平台只換得掉
+        // 適用範圍（點號之後那一段），所以這一種要自己接手。
+        var rewrittenQualifier = expansion is null
+            ? SqlInsertionText.RewriteWrittenQualifier(suggestion, context, writtenQualifier)
+            : null;
+
+        if (rewrittenQualifier is not null)
+        {
+            span = new SnapshotSpan(snapshot, Span.FromBounds(nameStart, span.End.Position));
+            insertionText = rewrittenQualifier + insertionText;
+            insertionStart = nameStart;
+
+            if (caretOffset >= 0)
+            {
+                caretOffset += rewrittenQualifier.Length;
+            }
+        }
+
+        // 換掉的範圍越過了游標，游標要明示擺回名稱結尾；留給編輯器的話它停在哪裡
+        // 取決於追蹤方向，而那不是這裡該賭的事。
+        if (closing > 0 && caretOffset < 0)
+        {
+            caretOffset = insertionText.Length;
+        }
+
         // 一般項目讓平台自己插入，行為與其他語言一致。
-        if (expansion is null && !suggestion.TriggerFollowUp && caretOffset < 0)
+        if (expansion is null && rewrittenQualifier is null && !suggestion.TriggerFollowUp && caretOffset < 0)
         {
             return CommitResult.Unhandled;
         }
@@ -386,12 +409,11 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             //
             // 引數預留值那一種不叫：值馬上就會蓋上來，而參數資訊講的正是那幾格。
             //
-            // 純量函式那一格 SSMS 一律不給（見 SqlSignatureHelp），所以兩邊都叫：
-            // 各自認得的名稱不重疊，先把兩份都請出來，浮得出來的只會有一份。
+            // 純量函式那一格 SSMS 一律不給（見 SqlSignatureHelp），所以兩份一起請，
+            // 續接那一邊也因此知道這一輪已經請過。
             if (inserted == ')' && expansion is null)
             {
-                SqlShellParameterInfo.Request();
-                _signatureHelp?.Request();
+                SqlParameterHintKeeper.Summon(session.TextView, _signatureHelp);
             }
         }
 

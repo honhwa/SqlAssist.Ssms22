@@ -27,12 +27,14 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\Snippets\SqlSnippetSurroundPanel.cs" Link="Product\Snippets\SqlSnippetSurroundPanel.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Completion\SqlSuggestionTarget.cs" Link="Product\Completion\SqlSuggestionTarget.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Editor\SqlClickGestures.cs" Link="Product\Editor\SqlClickGestures.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\Editor\SqlBuiltInObjectResolution.cs" Link="Product\Editor\SqlBuiltInObjectResolution.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Preview\SqlPreviewSubject.cs" Link="Product\Preview\SqlPreviewSubject.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemeResourceSet.cs" Link="Product\UI\ThemeResourceSet.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemeColorMath.cs" Link="Product\UI\ThemeColorMath.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\TextMarkColors.cs" Link="Product\UI\TextMarkColors.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\MatchPalette.cs" Link="Product\UI\MatchPalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ThemePalette.cs" Link="Product\UI\ThemePalette.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\TextSelectionColors.cs" Link="Product\UI\TextSelectionColors.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\ScriptPalette.cs" Link="Product\UI\ScriptPalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\BlockPalette.cs" Link="Product\UI\BlockPalette.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\EditorFormatChanges.cs" Link="Product\UI\EditorFormatChanges.cs" />
@@ -85,6 +87,7 @@
     <!-- SqlSearchPreview 現在要 SSMS 的中繼資料服務與唯讀檢視，不再是純 WPF；可測的部分在 SqlSearchDefinition。 -->
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchDefinition.cs" Link="Product\Search\SqlSearchDefinition.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchBrowserModel.cs" Link="Product\Search\SqlSearchBrowserModel.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchCoverage.cs" Link="Product\Search\SqlSearchCoverage.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchScopeDatabases.cs" Link="Product\Search\SqlSearchScopeDatabases.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchProviders.cs" Link="Product\Search\SqlSearchProviders.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchConnection.cs" Link="Product\Search\SqlSearchConnection.cs" />
@@ -101,16 +104,19 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlTextEditor.cs" Link="Product\UI\SqlTextEditor.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Blocks.cs" Link="Product\UI\SqlAssistChrome.Blocks.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Notifications.cs" Link="Product\UI\SqlAssistChrome.Notifications.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SqlAssistChrome.Surfaces.cs" Link="Product\UI\SqlAssistChrome.Surfaces.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\IsExternalInit.cs" Link="Product\IsExternalInit.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationActivityItem.cs" Link="Product\UI\NotificationActivityItem.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationRow.cs" Link="Product\UI\NotificationRow.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationMotion.cs" Link="Product\UI\NotificationMotion.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SpringMotion.cs" Link="Product\UI\SpringMotion.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SurfaceMotion.cs" Link="Product\UI\SurfaceMotion.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationPromptItem.cs" Link="Product\UI\NotificationPromptItem.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationPromptView.cs" Link="Product\UI\NotificationPromptView.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationIsland.cs" Link="Product\UI\NotificationIsland.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationLayout.cs" Link="Product\UI\NotificationLayout.cs" />
-    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationStatusIcon.cs" Link="Product\UI\NotificationStatusIcon.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SurfaceStatusIcon.cs" Link="Product\UI\SurfaceStatusIcon.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\UI\SurfaceCapsule.cs" Link="Product\UI\SurfaceCapsule.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationTicker.cs" Link="Product\UI\NotificationTicker.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\NotificationActivityStrip.cs" Link="Product\UI\NotificationActivityStrip.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\UI\OverlayScrollCues.cs" Link="Product\UI\OverlayScrollCues.cs" />

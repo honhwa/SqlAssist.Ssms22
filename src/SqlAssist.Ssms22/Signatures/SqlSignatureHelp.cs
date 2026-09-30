@@ -46,6 +46,15 @@ internal sealed class SqlSignatureHelp
     /// </remarks>
     private PendingSignature? _pending;
 
+    /// <summary>
+    /// 最新一次 <see cref="Request"/> 的序號；只有最新的那一次查完才顯示。
+    /// </summary>
+    /// <remarks>
+    /// 同一個呼叫可能從兩條路各請一次（打左括號、停手之後的續接），兩次查詢先後回來的話
+    /// 會各開一次 session，第二次把第一次收掉重畫。
+    /// </remarks>
+    private int _generation;
+
     private SqlSignatureHelp(
         ITextView textView,
         SqlMetadataService metadataService,
@@ -117,6 +126,15 @@ internal sealed class SqlSignatureHelp
             pending.Documentation));
     }
 
+    /// <summary>這個呼叫可不可能是純量函式，值不值得問中繼資料。</summary>
+    /// <remarks>
+    /// 純量函式在 T-SQL 裡一定要寫結構描述，沒有限定字的名稱（<c>COUNT(</c>、
+    /// <c>ISNULL(</c>）不可能是。放它們過去的代價不只一次白查：物件定位找不到候選時
+    /// 會把整條敘述的資料來源明細補齊再找一次，打一個左括號就可能真的查資料庫。
+    /// 續接器決定要不要連這一份一起請也問這一句，兩邊不各寫一份。
+    /// </remarks>
+    public static bool Covers(SqlCallSignatureContext site) => site.IsQualified;
+
     /// <summary>
     /// 依游標目前的位置決定要不要顯示，該顯示就備好內容並叫平台開 session。
     /// </summary>
@@ -124,6 +142,9 @@ internal sealed class SqlSignatureHelp
     /// 呼叫端一律是按鍵路徑（打了左括號、打了逗號、提交完一個函式），所以整段跑在
     /// 背景：詞法分析要掃過游標之前的整份文字，參數還可能要查一次資料庫。
     /// 這一輪來不及就這一輪不顯示，下一個逗號就有了。
+    ///
+    /// 不開通知：多半的結論是「不是純量函式，什麼都不做」。真的浮出來時由
+    /// <see cref="Show"/> 回報，查詢本身由中繼資料那一層回報。
     /// </remarks>
     public void Request()
     {
@@ -144,13 +165,11 @@ internal sealed class SqlSignatureHelp
 
         var text = snapshot.GetText();
         var position = caret.Position;
+        var generation = Interlocked.Increment(ref _generation);
 
-        // 打字時每一個左括號與逗號都會走一次，因此是 Typing／Debug。
-        SqlAssistPlatformGuard.Begin(
-            NotificationCatalog.ShowingSignatureHelp,
-            () => RequestAsync(snapshot, text, position),
-            NotificationKind.Completion, NotificationOrigin.Typing, NotificationLevel.Debug,
-            ActiveSqlEditor.GetDocumentName(_textView));
+        _ = SqlAssistPlatformGuard.RunAsync(
+            "準備函式參數提示",
+            () => RequestAsync(snapshot, text, position, generation));
     }
 
     /// <summary>
@@ -165,14 +184,45 @@ internal sealed class SqlSignatureHelp
         TextViewDispatch.AfterCurrentCommand(_textView, "顯示函式參數提示", _ => Request());
     }
 
-    /// <summary>這個編輯器上現在有沒有開著的簽章提示。</summary>
-    public bool IsActive => !_textView.IsClosed && _broker.IsSignatureHelpActive(_textView);
+    /// <summary>這個編輯器上現在有沒有開著<b>自己這一份</b>簽章提示。</summary>
+    /// <remarks>
+    /// 不能只問 <c>IsSignatureHelpActive</c>：SSMS 的參數資訊經過轉接層也是 broker 上的
+    /// session，只問那一句的話，外層內建函式的提示開著時，裡面的純量函式就永遠請不出來。
+    /// </remarks>
+    public bool IsActive
+    {
+        get
+        {
+            if (_textView.IsClosed)
+            {
+                return false;
+            }
 
-    private async Task RequestAsync(ITextSnapshot snapshot, string text, int caret)
+            foreach (var session in _broker.GetSessions(_textView))
+            {
+                if (session.IsDismissed)
+                {
+                    continue;
+                }
+
+                foreach (var signature in session.Signatures)
+                {
+                    if (signature is SqlFunctionSignature)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private async Task RequestAsync(ITextSnapshot snapshot, string text, int caret, int generation)
     {
         var site = await Task.Run(() => SqlCallSignature.Resolve(text, caret)).ConfigureAwait(false);
 
-        if (site is null)
+        if (site is null || !Covers(site))
         {
             return;
         }
@@ -202,7 +252,12 @@ internal sealed class SqlSignatureHelp
 
         // 這裡開始碰編輯器：範圍、游標與 broker 都只在 UI 執行緒上有效。
         TextViewDispatch.AfterCurrentCommand(_textView, "開啟函式參數提示", _ =>
-            Show(snapshot, site, signature, detail.Description ?? string.Empty));
+        {
+            if (generation == Volatile.Read(ref _generation))
+            {
+                Show(snapshot, site, signature, detail.Description ?? string.Empty);
+            }
+        });
     }
 
     /// <summary>
@@ -260,9 +315,9 @@ internal sealed class SqlSignatureHelp
         // 而舊的那一個要嘛自己收掉了、要嘛講的是別的函式。
         //
         // 建議清單那一邊禁止用 DismissAllSessions 搶 session（見平台護欄），
-        // 這裡不同：那一條擋的是「別人開的清單被我們收掉」，而簽章這個表面上
-        // 唯一會開 session 的就是這裡——SSMS 自己的參數資訊走的是舊版語言服務的
-        // MethodTip，根本不是 ISignatureHelpSession。
+        // 這裡刻意連 SSMS 那一份一起收：它經過轉接層也是這裡的 session，而游標此刻
+        // 站在純量函式自己的引數裡，外層內建函式的提示講的是另一個函式，
+        // 留著就是兩份簽章疊在一起。
         _broker.DismissAllSessions(_textView);
 
         _pending = new PendingSignature(
@@ -281,6 +336,20 @@ internal sealed class SqlSignatureHelp
             _textView,
             snapshot.CreateTrackingPoint(site.OpenParenthesis + 1, PointTrackingMode.Negative),
             trackCaret: false);
+
+        // 平台同步組好 session；沒拿到這一份（被別的 session 搶先、編輯器剛好失焦）
+        // 就不說「已顯示」。
+        if (!IsActive)
+        {
+            return;
+        }
+
+        // 已經發生、沒有執行期間的事，所以是 Post；打字時反覆出現，因此是 Typing／Debug。
+        NotificationCenter.Default.Post(
+            NotificationCatalog.ShowingSignatureHelp,
+            NotificationKind.Completion, NotificationOrigin.Typing, NotificationLevel.Debug,
+            NotificationStatus.Succeeded,
+            document: ActiveSqlEditor.GetDocumentName(_textView));
 
         SqlAssistDiagnostics.Write($"已顯示參數提示：{text.Content}", _textView);
     }

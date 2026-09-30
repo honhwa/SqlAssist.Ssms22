@@ -27,15 +27,8 @@ namespace SqlAssist.Ssms22.UI;
 /// </remarks>
 internal sealed class NotificationIsland : Grid
 {
-    public const double CapsuleHeight = 32;
-    public const double CapsuleRadius = 16;
-    public const double CapsuleMinWidth = 160;
-    public const double CapsuleMaxWidth = 320;
     public const double PanelWidth = 320;
     public const double PanelRadius = 14;
-
-    /// <summary>出現時從這麼大的圓點長出來，消失時縮回它再淡掉。</summary>
-    public const double DotSize = 12;
 
     public const double DetailMaxHeight = 240;
 
@@ -53,18 +46,11 @@ internal sealed class NotificationIsland : Grid
     /// </remarks>
     public static readonly Size MaxExtent = new(PanelWidth, 352);
 
-    /// <summary>膠囊：左距、圖示與文字之間、右距。</summary>
-    private const double CapsulePadding = 12;
-    private const double CapsuleGap = 8;
-    private const double CapsuleEnd = 14;
-
     /// <summary>清單的下距；最後一列自己還有 6 DIP 的內距。</summary>
     private const double ListBottom = 6;
 
     /// <summary>進度條的高度；全部結束後收成 1 DIP 的分隔線。</summary>
     private const double TrackHeight = 3;
-
-    private const string Cross = "M1,1 L11,11 M11,1 L1,11";
 
     private readonly Grid _island = new() { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom };
     private readonly Border _surface;
@@ -77,11 +63,11 @@ internal sealed class NotificationIsland : Grid
     private readonly SpringMotion _radius;
 
     private readonly Grid _capsule;
-    private readonly NotificationStatusIcon _capsuleIcon = new() { Margin = new Thickness(CapsulePadding, 0, 0, 0) };
+    private readonly SurfaceStatusIcon _capsuleIcon = new();
     private readonly NotificationTicker _capsuleText;
 
     private readonly Grid _list;
-    private readonly NotificationStatusIcon _listIcon = new() { Margin = NotificationLayout.StatusIconInset };
+    private readonly SurfaceStatusIcon _listIcon = new() { Margin = NotificationLayout.StatusIconInset };
     private readonly NotificationTicker _listSummary;
     private readonly Grid _failureChip;
     private readonly TextBlock _failureText;
@@ -145,7 +131,7 @@ internal sealed class NotificationIsland : Grid
         _island.Children.Add(_viewport);
         Children.Add(_island);
 
-        DismissButton = SqlAssistChrome.CreateNotificationButton(NotificationCatalog.DismissActivities, Cross);
+        DismissButton = SqlAssistChrome.CreateNotificationButton(NotificationCatalog.DismissActivities, SqlAssistChrome.CrossGlyph);
         DismissButton.VerticalAlignment = VerticalAlignment.Center;
         DismissButton.Click += (_, _) => DismissRequested?.Invoke(this, EventArgs.Empty);
         _capsuleText = new NotificationTicker(() =>
@@ -166,7 +152,7 @@ internal sealed class NotificationIsland : Grid
         _progressFill = new Border
         {
             CornerRadius = new CornerRadius(TrackHeight / 2), RenderTransformOrigin = new Point(0, 0.5), RenderTransform = _progress,
-        }.WithThemeKey(Border.BackgroundProperty, ThemeResourceSet.NotificationSpinnerKey);
+        }.WithThemeKey(Border.BackgroundProperty, ThemeResourceSet.SurfaceSpinnerKey);
         _divider = new Border { Opacity = 0 }.WithTheme(Border.BackgroundProperty, ThemeBrush.Hairline);
         _details = new ScrollViewer
         {
@@ -192,11 +178,11 @@ internal sealed class NotificationIsland : Grid
             _viewport.Children.Add(view);
         }
 
-        _width = new SpringMotion(DotSize, value => { SetWidth(value); UpdateClip(); });
-        _height = new SpringMotion(DotSize, value => { SetHeight(value); UpdateClip(); });
-        _radius = new SpringMotion(DotSize / 2, value => { SetRadius(value); UpdateClip(); });
+        _width = new SpringMotion(SurfaceCapsule.DotSize, value => { SetWidth(value); UpdateClip(); });
+        _height = new SpringMotion(SurfaceCapsule.DotSize, value => { SetHeight(value); UpdateClip(); });
+        _radius = new SpringMotion(SurfaceCapsule.DotSize / 2, value => { SetRadius(value); UpdateClip(); });
         _width.Settled += OnShapeSettled;
-        SetWidth(DotSize); SetHeight(DotSize); SetRadius(DotSize / 2); UpdateClip();
+        SetWidth(SurfaceCapsule.DotSize); SetHeight(SurfaceCapsule.DotSize); SetRadius(SurfaceCapsule.DotSize / 2); UpdateClip();
         SetOptions(glass: true, highContrast: SystemParameters.HighContrast);
     }
 
@@ -236,7 +222,7 @@ internal sealed class NotificationIsland : Grid
     internal NotificationTicker ListSummary => _listSummary;
     internal UIElement FailureChip => _failureChip;
     internal NotificationActivityStrip ListFooter => _footer;
-    internal NotificationStatusIcon ListIcon => _listIcon;
+    internal SurfaceStatusIcon ListIcon => _listIcon;
     internal ScaleTransform Progress => _progress;
 
     /// <summary>進度條已經收成分隔線。</summary>
@@ -301,7 +287,7 @@ internal sealed class NotificationIsland : Grid
             case NotificationIslandShape.Compact:
             case NotificationIslandShape.Done:
                 UpdateCapsule(content, motion);
-                target = new Size(CapsuleWidth(content.Summary), CapsuleHeight);
+                target = new Size(SurfaceCapsule.Width(content.Summary), SurfaceCapsule.Height);
                 next = _capsule;
                 break;
             case NotificationIslandShape.Expanded:
@@ -324,17 +310,17 @@ internal sealed class NotificationIsland : Grid
         }
 
         FitTo(next, target);
-        var radius = Shape is NotificationIslandShape.Compact or NotificationIslandShape.Done ? CapsuleRadius : PanelRadius;
+        var radius = Shape is NotificationIslandShape.Compact or NotificationIslandShape.Done ? SurfaceCapsule.Radius : PanelRadius;
         var layers = Shape == NotificationIslandShape.PromptStack ? Math.Min(_layers.Length, content.Prompts.Count - 1) : 0;
         for (var index = 0; index < _layers.Length; index++)
             _layers[index].Visibility = index < layers ? Visibility.Visible : Visibility.Collapsed;
 
         if (appearing)
         {
-            _width.Jump(motion ? DotSize : target.Width);
-            _height.Jump(motion ? DotSize : target.Height);
-            _radius.Jump(motion ? DotSize / 2 : radius);
-            if (motion) _island.BeginAnimation(OpacityProperty, NotificationMotion.Ease(0, 1, NotificationMotion.ContentFadeOut));
+            _width.Jump(motion ? SurfaceCapsule.DotSize : target.Width);
+            _height.Jump(motion ? SurfaceCapsule.DotSize : target.Height);
+            _radius.Jump(motion ? SurfaceCapsule.DotSize / 2 : radius);
+            if (motion) _island.BeginAnimation(OpacityProperty, NotificationMotion.Ease(0, 1, SurfaceMotion.ContentFadeOut));
         }
 
         _width.AnimateTo(target.Width, motion);
@@ -387,7 +373,7 @@ internal sealed class NotificationIsland : Grid
     public void Reset()
     {
         _shown = false; _hiding = false;
-        TargetSize = new Size(DotSize, DotSize);
+        TargetSize = new Size(SurfaceCapsule.DotSize, SurfaceCapsule.DotSize);
         StopMotion();
         Visibility = Visibility.Collapsed;
     }
@@ -395,7 +381,7 @@ internal sealed class NotificationIsland : Grid
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
-        SqlAssistChrome.UpdateNotificationShadowCache(_surface);
+        SqlAssistChrome.UpdateSurfaceShadowCache(_surface);
     }
 
     /// <summary>清單列的寬度：文字欄再往左右各延伸停駐底色的量。</summary>
@@ -407,7 +393,7 @@ internal sealed class NotificationIsland : Grid
         _shown = false;
         _capsuleIcon.Spin(false); _listIcon.Spin(false);
         foreach (var view in _prompts) view.ActivityStrip.Icon.Spin(false);
-        TargetSize = new Size(DotSize, DotSize);
+        TargetSize = new Size(SurfaceCapsule.DotSize, SurfaceCapsule.DotSize);
         if (!motion)
         {
             StopMotion();
@@ -418,10 +404,10 @@ internal sealed class NotificationIsland : Grid
 
         // 先縮回圓點，停下來之後才淡掉（OnShapeSettled）；內容先淡出，縮的過程中不露出被裁的半行字。
         _hiding = true;
-        if (_current is { } current) current.BeginAnimation(OpacityProperty, NotificationMotion.Ease(current.Opacity, 0, NotificationMotion.ContentFadeOut));
-        _width.AnimateTo(DotSize, motion: true);
-        _height.AnimateTo(DotSize, motion: true);
-        _radius.AnimateTo(DotSize / 2, motion: true);
+        if (_current is { } current) SurfaceMotion.ExitContent(current);
+        _width.AnimateTo(SurfaceCapsule.DotSize, motion: true);
+        _height.AnimateTo(SurfaceCapsule.DotSize, motion: true);
+        _radius.AnimateTo(SurfaceCapsule.DotSize / 2, motion: true);
         if (!_width.IsActive) OnShapeSettled(this, EventArgs.Empty);
     }
 
@@ -455,7 +441,7 @@ internal sealed class NotificationIsland : Grid
             // 被換走的那一份基底值仍是 1、只有動畫在往 0 走；正在淡入的那一份基底值是 0，不去打斷它。
             if (next.Opacity < 1 && !motion) { next.BeginAnimation(OpacityProperty, null); next.Opacity = 1; }
             else if (next.Opacity < 1 && next.GetAnimationBaseValue(OpacityProperty) is double baseline && baseline >= 1)
-                next.BeginAnimation(OpacityProperty, NotificationMotion.Ease(next.Opacity, 1, NotificationMotion.ContentFadeIn));
+                next.BeginAnimation(OpacityProperty, NotificationMotion.Ease(next.Opacity, 1, SurfaceMotion.ContentFadeIn));
             return;
         }
 
@@ -464,7 +450,7 @@ internal sealed class NotificationIsland : Grid
             if (motion)
             {
                 // 從目前畫面上的透明度接續；先清動畫會退回基底值，淡入到一半的那一份會先閃一下。
-                var fade = NotificationMotion.Ease(old.Opacity, 0, NotificationMotion.ContentFadeOut);
+                var fade = NotificationMotion.Ease(old.Opacity, 0, SurfaceMotion.ContentFadeOut);
                 fade.Completed += (_, _) => { if (!ReferenceEquals(old, _current)) old.Visibility = Visibility.Collapsed; };
                 old.BeginAnimation(OpacityProperty, fade);
             }
@@ -477,23 +463,11 @@ internal sealed class NotificationIsland : Grid
         shift?.BeginAnimation(TranslateTransform.YProperty, null);
         if (!motion) { next.Opacity = 1; return; }
 
-        var delay = NotificationMotion.Duration(NotificationMotion.ContentDelay);
-        var appear = NotificationMotion.Ease(0, 1, NotificationMotion.ContentFadeIn);
-        appear.BeginTime = delay;
-        next.Opacity = 0;
-        next.BeginAnimation(OpacityProperty, appear);
-        if (scale is not null)
-        {
-            var grow = NotificationMotion.Ease(NotificationMotion.ContentScaleFrom, 1, NotificationMotion.ContentFadeIn);
-            grow.BeginTime = delay; grow.FillBehavior = FillBehavior.Stop;
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-        }
-
+        SurfaceMotion.EnterContent(next, scale);
         if (slide && shift is not null)
         {
-            var rise = NotificationMotion.Ease(StackPeek * 2, 0, NotificationMotion.ContentFadeIn);
-            rise.BeginTime = delay; rise.FillBehavior = FillBehavior.Stop;
+            var rise = NotificationMotion.Ease(StackPeek * 2, 0, SurfaceMotion.ContentFadeIn);
+            rise.BeginTime = SurfaceMotion.Duration(SurfaceMotion.ContentDelay); rise.FillBehavior = FillBehavior.Stop;
             shift.BeginAnimation(TranslateTransform.YProperty, rise);
         }
     }
@@ -651,7 +625,7 @@ internal sealed class NotificationIsland : Grid
         var from = (double)target.GetValue(property);
         target.SetValue(property, to);
         ((IAnimatable)target).BeginAnimation(property, motion
-            ? NotificationMotion.Delayed(from, to, delay, NotificationMotion.ProgressSettle)
+            ? SurfaceMotion.Delayed(from, to, delay, NotificationMotion.ProgressSettle)
             : null);
     }
 
@@ -718,14 +692,6 @@ internal sealed class NotificationIsland : Grid
         _announced = name;
     }
 
-    private static double CapsuleWidth(string text)
-    {
-        var probe = new TextBlock { Text = text, FontFamily = SqlAssistChrome.InterfaceFont, FontSize = 12 };
-        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var chrome = CapsulePadding + NotificationStatusIcon.Size + CapsuleGap + CapsuleEnd;
-        return Math.Ceiling(Math.Max(CapsuleMinWidth, Math.Min(CapsuleMaxWidth, chrome + probe.DesiredSize.Width)));
-    }
-
     private static double Measure(FrameworkElement content)
     {
         // 收起來的元素量出來是 0；換上的內容本來就要顯示，先打開再量。
@@ -774,19 +740,12 @@ internal sealed class NotificationIsland : Grid
 
     private Grid CreateCapsule()
     {
-        var capsule = new Grid
-        {
-            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-            Visibility = Visibility.Collapsed, RenderTransformOrigin = new Point(1, 0),
-            RenderTransform = Group(new ScaleTransform(1, 1), new TranslateTransform()),
-        };
-        capsule.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(CapsulePadding + NotificationStatusIcon.Size + CapsuleGap) });
-        capsule.ColumnDefinitions.Add(new ColumnDefinition());
-        capsule.Children.Add(_capsuleIcon);
-        _capsuleText.Margin = new Thickness(0, 0, CapsuleEnd, 0);
-        _capsuleText.VerticalAlignment = VerticalAlignment.Center;
-        SetColumn(_capsuleText, 1);
-        capsule.Children.Add(_capsuleText);
+        var capsule = SurfaceCapsule.CreateLayout(_capsuleIcon, _capsuleText);
+        capsule.HorizontalAlignment = HorizontalAlignment.Right;
+        capsule.VerticalAlignment = VerticalAlignment.Top;
+        capsule.Visibility = Visibility.Collapsed;
+        capsule.RenderTransformOrigin = new Point(1, 0);
+        capsule.RenderTransform = Group(new ScaleTransform(1, 1), new TranslateTransform());
         AutomationProperties.SetLiveSetting(capsule, AutomationLiveSetting.Polite);
         return capsule;
     }
@@ -866,7 +825,7 @@ internal sealed class NotificationIsland : Grid
         chip.Children.Add(new Border { CornerRadius = new CornerRadius(9), Opacity = 0.12 }
             .WithTheme(Border.BackgroundProperty, ThemeBrush.NotificationFailure));
         var content = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(5, 0, 7, 0) };
-        var icon = new NotificationStatusIcon();
+        var icon = new SurfaceStatusIcon();
         icon.SetStatus(NotificationVisualStatus.Failed, feedback: false);
         content.Children.Add(icon);
         text = SqlAssistChrome.CreateLabel("", SqlAssistChrome.DefaultMetrics);

@@ -78,10 +78,6 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.AutoPairDelimiters,
                 defaults.AutoPairDelimiters),
-            AutoPairBlocks = Value(
-                source,
-                SqlAssistMonikers.AutoPairBlocks,
-                defaults.AutoPairBlocks),
             CheckForUpdates = Value(source, SqlAssistMonikers.CheckForUpdates, defaults.CheckForUpdates),
             Animations = Value(source, SqlAssistMonikers.Animations, defaults.Animations),
             IgnoreWindowsAnimationSetting = Value(
@@ -118,9 +114,6 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.UseSquareBrackets,
                 defaults.UseSquareBrackets),
-            TableSourceAliasStyle = ParseTableSourceAliasStyle(
-                Value(source, SqlAssistMonikers.TableSourceAliasStyle, string.Empty),
-                defaults.TableSourceAliasStyle),
             ExpandWildcardOnTab = Value(
                 source,
                 SqlAssistMonikers.ExpandWildcardOnTab,
@@ -175,9 +168,6 @@ public static class SqlAssistSettingsReader
                 defaults.PreviewMode),
             PreviewDelayMilliseconds = SqlAssistLimits.ClampPreviewDelay(
                 Value(source, SqlAssistMonikers.PreviewDelay, defaults.PreviewDelayMilliseconds)),
-            PreviewPlacement = ParsePlacement(
-                Value(source, SqlAssistMonikers.PreviewPlacement, string.Empty),
-                defaults.PreviewPlacement),
             PreviewFontSize = SqlAssistLimits.ClampPreviewFontSize(
                 Value(source, SqlAssistMonikers.PreviewFontSize, (int)defaults.PreviewFontSize)),
 
@@ -320,43 +310,14 @@ public static class SqlAssistSettingsReader
         };
     }
 
-    /// <summary>
-    /// <c>tableSourceAliasStyle</c> 的三個字面值，認不出來時回退到預設值。
-    /// </summary>
-    /// <remarks>
-    /// 與其他列舉一樣不拿第一位成員當備援：<c>none</c> 會替每一次提交補上別名，
-    /// 押錯的那一邊使用者看得見，而猜成 <c>off</c> 是整個功能安靜地不見。
-    /// </remarks>
-    private static SqlTableSourceAliasStyle ParseTableSourceAliasStyle(
-        string value,
-        SqlTableSourceAliasStyle fallback)
+    private static SqlMemoryStorageLimit ParseStorageLimit(string value, SqlMemoryStorageLimit fallback)
     {
-        return value switch
-        {
-            "none" => SqlTableSourceAliasStyle.None,
-            "as" => SqlTableSourceAliasStyle.As,
-            "off" => SqlTableSourceAliasStyle.Off,
-            _ => fallback
-        };
-    }
-
-    private static SqlMemoryStorageLimit ParseStorageLimit(string value, SqlMemoryStorageLimit fallback)    {
         return value switch
         {
             "mb256" => SqlMemoryStorageLimit.Megabytes256,
             "mb512" => SqlMemoryStorageLimit.Megabytes512,
             "gb1" => SqlMemoryStorageLimit.Gigabytes1,
             "unlimited" => SqlMemoryStorageLimit.Unlimited,
-            _ => fallback
-        };
-    }
-
-    private static SqlPreviewPlacement ParsePlacement(string value, SqlPreviewPlacement fallback)
-    {
-        return value switch
-        {
-            "beside" => SqlPreviewPlacement.Beside,
-            "stacked" => SqlPreviewPlacement.Stacked,
             _ => fallback
         };
     }

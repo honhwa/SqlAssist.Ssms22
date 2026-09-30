@@ -1,0 +1,2204 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using Microsoft.VisualStudio.Imaging;
+using Microsoft.VisualStudio.PlatformUI;
+using Microsoft.VisualStudio.Text.Editor;
+using SqlAssist.Core.Completion;
+using SqlAssist.Core.Keywords;
+using SqlAssist.Core.Localization;
+using SqlAssist.Core.Matching;
+using SqlAssist.Core.Notifications;
+using SqlAssist.Core.Snippets;
+using SqlAssist.Metadata.Formatting;
+using SqlAssist.Metadata.Model;
+using SqlAssist.Ssms22;
+using SqlAssist.Ssms22.Editor;
+using SqlAssist.Ssms22.Settings;
+using SqlAssist.Ssms22.UI;
+
+namespace SqlAssist.Ssms22.Preview;
+
+/// <summary>
+/// 結構預覽的內容：抬頭、分頁、搜尋與複製。
+/// </summary>
+/// <remarks>
+/// 浮在編輯器上的預覽（外殼是 <see cref="PreviewSurface"/>）與停靠的工具視窗
+/// （<see cref="SqlStructureToolWindow"/>）用的是同一份；圓角、柔影、握把、進出場與
+/// 「這扇窗怎麼收」都屬於宿主，這裡一概不知道。
+///
+/// 所有分頁都是一般的 WPF 控制項，選取、複製與焦點都是原生行為。
+/// 這一點是刻意的：內嵌真正的編輯器雖然可以拿到免費的語法著色，
+/// 但它會把鍵盤焦點搬進另一個呈現來源，編輯器因此判定自己失去聚合焦點，
+/// 整個浮動視窗會在使用者點下去的那一刻被平台收掉。
+/// 著色改由共用的 <see cref="SqlReadOnlyViewer"/> 自己排，顏色仍向編輯器借。
+///
+/// 複製一律走明確的處理常式與標題列按鈕，不依賴
+/// <see cref="ApplicationCommands.Copy"/> 的繞送：浮動視窗裡的鍵盤焦點
+/// 未必落在預期的元素上，命令繞送不到就會變成「選得起來但複製不了」。
+/// </remarks>
+internal sealed class SqlStructurePanel : UserControl, IShellKeyTarget, IDisposable
+{
+    /// <summary>
+    /// 內建對照表的一列。
+    /// </summary>
+    /// <remarks>
+    /// 四個具名屬性而不是索引子：資料格的複製與空欄收合都靠繫結路徑反射屬性，
+    /// <c>[0]</c> 這種路徑在那條路上讀不出來，症狀是整張表複製出來一片空白。
+    /// </remarks>
+    private sealed class ReferenceRow
+    {
+        public ReferenceRow(IReadOnlyList<string> cells)
+        {
+            Cell1 = Cell(cells, 0);
+            Cell2 = Cell(cells, 1);
+            Cell3 = Cell(cells, 2);
+            Cell4 = Cell(cells, 3);
+        }
+
+        public string Cell1 { get; }
+
+        public string Cell2 { get; }
+
+        public string Cell3 { get; }
+
+        public string Cell4 { get; }
+
+        private static string Cell(IReadOnlyList<string> cells, int index) =>
+            index < cells.Count ? cells[index] : string.Empty;
+    }
+
+    /// <summary>
+    /// 一張內建對照表的分頁。
+    /// </summary>
+    /// <remarks>
+    /// 重複使用而不是每次顯示都建一組新的：建立資料格會連帶建立一份內容選單，
+    /// 而那份選單會被登記到 <c>_contextMenus</c> 裡跟著視窗一輩子。
+    /// 欄位標題與可見性每次重設，欄數上限是四。
+    /// </remarks>
+    private sealed class ReferenceTab
+    {
+        public ReferenceTab(TabItem item, SqlTabHeader header, DataGrid grid)
+        {
+            Item = item;
+            Header = header;
+            Grid = grid;
+        }
+
+        public TabItem Item { get; }
+
+        public SqlTabHeader Header { get; }
+
+        public DataGrid Grid { get; }
+    }
+
+    /// <summary>
+    /// 手上就有的一份說明：內建名稱或片段。
+    /// </summary>
+    /// <remarks>
+    /// 兩者畫法一樣——名稱、種類、寫法、用途、一份 SQL 與幾張對照表——只差來源。各寫一支
+    /// 的話，收掉對照表、換回指令碼標題與複製訊息這幾處都要各長一份，漏一份的症狀是畫面
+    /// 停在上一種內容的樣子。
+    /// </remarks>
+    private sealed class DocumentView
+    {
+        public DocumentView(
+            string title,
+            SuggestionKind kind,
+            string kindName,
+            string signature,
+            string summary,
+            string sql,
+            string sqlLabel,
+            IReadOnlyList<SqlBuiltInReference> references,
+            string copiedMessage)
+        {
+            Title = title;
+            Kind = kind;
+            KindName = kindName;
+            Signature = signature;
+            Summary = summary;
+            Sql = sql;
+            SqlLabel = sqlLabel;
+            References = references;
+            CopiedMessage = copiedMessage;
+        }
+
+        public string Title { get; }
+
+        /// <summary>圖示；與建議清單、滑鼠停留提示同一份對照。</summary>
+        public SuggestionKind Kind { get; }
+
+        public string KindName { get; }
+
+        public string Signature { get; }
+
+        public string Summary { get; }
+
+        public string Sql { get; }
+
+        /// <summary>SQL 那一頁的標籤：內建名稱是範例，片段是指令碼。</summary>
+        public string SqlLabel { get; }
+
+        public IReadOnlyList<SqlBuiltInReference> References { get; }
+
+        /// <summary>沒有選取時按複製，狀態列說複製了什麼。</summary>
+        public string CopiedMessage { get; }
+    }
+
+    private sealed class ColumnRow
+    {
+        public ColumnRow(SqlColumnInfo column)
+        {
+            Ordinal = column.Ordinal;
+            Name = column.Name;
+            DataType = column.DataType;
+            FlagList = PreviewChrome.BuildFlags(column);
+            Flags = string.Join(" ", FlagList);
+            Description = SqlDescriptionText.Collapse(column.Description) ?? string.Empty;
+            Computed = DescribeComputed(column);
+            Default = column.DefaultDefinition ?? string.Empty;
+        }
+
+        public int Ordinal { get; }
+
+        public string Name { get; }
+
+        public string DataType { get; }
+
+        /// <summary>畫成一列膠囊徽章的旗標。</summary>
+        public IReadOnlyList<string> FlagList { get; }
+
+        /// <summary>複製時用的純文字版本；徽章欄不是文字欄，複製要有東西可以讀。</summary>
+        public string Flags { get; }
+
+        /// <summary>資料行的 <c>MS_Description</c>；收斂成單行，全文留在 Tooltip 裡。</summary>
+        public string Description { get; }
+
+        public string Computed { get; }
+
+        public string Default { get; }
+
+        /// <remarks>
+        /// <c>PERSISTED</c> 併進運算式那一欄，不另給徽章：T-SQL 自己就把它寫在
+        /// 運算式後面（<c>AS (…) PERSISTED</c>），而它只對計算資料行有意義——
+        /// 開一整欄給一個九成九是空的旗標，是那一欄自己不划算。
+        /// </remarks>
+        private static string DescribeComputed(SqlColumnInfo column)
+        {
+            if (!column.IsComputed)
+            {
+                return string.Empty;
+            }
+
+            var expression = column.ComputedDefinition ?? "COMPUTED";
+
+            return column.Script.IsPersisted ? expression + " PERSISTED" : expression;
+        }
+    }
+
+    private sealed class IndexRow
+    {
+        public IndexRow(SqlIndexInfo index)
+        {
+            Name = index.Name;
+            Kind = index.DescribeKind();
+            KeyColumns = index.DescribeKeyColumns();
+            IncludedColumns = index.DescribeIncludedColumns();
+            Filter = index.FilterDefinition ?? string.Empty;
+            Options = DescribeOptions(index);
+            Location = index.DataSpace?.ToString() ?? string.Empty;
+        }
+
+        public string Name { get; }
+
+        public string Kind { get; }
+
+        public string KeyColumns { get; }
+
+        public string IncludedColumns { get; }
+
+        public string Filter { get; }
+
+        /// <summary>停用狀態，以及與預設值不同的那幾個 <c>WITH</c> 選項。</summary>
+        public string Options { get; }
+
+        /// <summary>檔案群組，或分割配置加上分割資料行。</summary>
+        public string Location { get; }
+
+        /// <remarks>
+        /// 停用與選項擺同一欄：兩者都在回答「這個索引跟預設的不一樣在哪裡」，
+        /// 分成兩欄的話那兩欄有九成的列都是空的。哪些算預設值由
+        /// <see cref="SqlIndexOptions.DescribeNonDefaults"/> 回答，這裡不再判斷一次。
+        ///
+        /// 停用寫在最前面：它不是一個選項，是「這個索引現在沒有資料」。
+        /// </remarks>
+        private static string DescribeOptions(SqlIndexInfo index)
+        {
+            var options = index.Options.DescribeNonDefaults();
+
+            if (!index.Options.IsDisabled)
+            {
+                return string.Join(", ", options);
+            }
+
+            return options.Count == 0
+                ? DisabledText
+                : DisabledText + PreviewText.PartSeparator + string.Join(", ", options);
+        }
+    }
+
+    private sealed class ForeignKeyRow
+    {
+        public ForeignKeyRow(SqlForeignKeyInfo foreignKey)
+        {
+            Name = foreignKey.Name;
+            Columns = foreignKey.DescribeColumns();
+            Actions = foreignKey.DescribeActions();
+        }
+
+        public string Name { get; }
+
+        public string Columns { get; }
+
+        public string Actions { get; }
+    }
+
+    private sealed class ParameterRow
+    {
+        public ParameterRow(SqlParameterInfo parameter)
+        {
+            Ordinal = parameter.Ordinal;
+            Name = parameter.Name;
+            DataType = parameter.DataType;
+            Direction = parameter.IsOutput ? "OUTPUT" : string.Empty;
+        }
+
+        /// <summary>參數的順序；照位置傳引數時要的正是這個號碼。</summary>
+        public int Ordinal { get; }
+
+        public string Name { get; }
+
+        public string DataType { get; }
+
+        public string Direction { get; }
+    }
+
+    private sealed class CheckRow
+    {
+        public CheckRow(SqlCheckConstraint constraint)
+        {
+            Name = constraint.Name;
+            Column = constraint.ColumnName ?? string.Empty;
+            Definition = constraint.Definition;
+            State = DescribeState(constraint);
+        }
+
+        public string Name { get; }
+
+        /// <summary>寫在單一資料行上的條件約束；寫在資料表層級時是空的。</summary>
+        public string Column { get; }
+
+        public string Definition { get; }
+
+        public string State { get; }
+
+        /// <remarks>
+        /// 停用一定要標。看的人多半正在問「為什麼這筆資料進得來」，
+        /// 而一個停用的 <c>CHECK</c> 在清單上與啟用的長得一模一樣。
+        /// 系統命名也一起標：那種名字每建一次就換一個，照著它寫指令碼會讓
+        /// 同一張表在兩個資料庫裡對不起來。
+        /// </remarks>
+        private static string DescribeState(SqlCheckConstraint constraint)
+        {
+            var parts = new List<string>(3);
+
+            if (constraint.IsDisabled)
+            {
+                parts.Add(DisabledText);
+            }
+
+            if (constraint.IsNotForReplication)
+            {
+                parts.Add("NOT FOR REPLICATION");
+            }
+
+            if (constraint.IsSystemNamed)
+            {
+                parts.Add(PreviewText.SystemNamed);
+            }
+
+            return string.Join(PreviewText.PartSeparator, parts);
+        }
+    }
+
+    private sealed class TriggerRow
+    {
+        public TriggerRow(SqlTriggerInfo trigger)
+        {
+            Name = trigger.Name;
+            State = DescribeState(trigger);
+        }
+
+        public string Name { get; }
+
+        public string State { get; }
+
+        /// <remarks>
+        /// 取不到定義要寫出來，不能只是留白：那一句是「這個觸發程序仍然會執行，
+        /// 只是這裡看不到它做什麼」，而空白會被讀成「它沒做什麼」。
+        /// </remarks>
+        private static string DescribeState(SqlTriggerInfo trigger)
+        {
+            var parts = new List<string>(2);
+
+            if (trigger.IsDisabled)
+            {
+                parts.Add(DisabledText);
+            }
+
+            if (!trigger.CanScript)
+            {
+                parts.Add(PreviewText.TriggerDefinitionUnavailable);
+            }
+
+            return string.Join(PreviewText.PartSeparator, parts);
+        }
+    }
+
+    /// <summary>索引、條件約束與觸發程序共用的停用字樣。</summary>
+    private static string DisabledText => CommonText.Disabled;
+
+    /// <summary>
+    /// 一個資料格分頁的完整宣告。
+    /// </summary>
+    /// <remarks>
+    /// 可見性、內容與「這一頁要不要等第四層」寫在同一個地方。分散成三段
+    /// if-else 的症狀是新增一個分頁時漏掉其中一段——漏可見性是空分頁留在畫面上，
+    /// 漏填入是切過去一片空白，而兩者都不會編譯失敗。
+    ///
+    /// 數量與資料列分成兩個委派：可見性與分頁上的數字在每一次換物件時都要問，
+    /// 而資料列只有使用者真的切過去（或搜尋要數命中）才建。
+    /// </remarks>
+    private sealed class GridTab
+    {
+        public GridTab(
+            string header,
+            SqlIcon icon,
+            DataGrid grid,
+            bool requiresStructure,
+            Func<SqlObjectStructure, int> count,
+            Func<SqlObjectStructure, System.Collections.IEnumerable> rows)
+        {
+            Header = new SqlTabHeader(header, icon);
+            Item = SqlAssistChrome.CreateTab(Header, grid);
+            Grid = grid;
+            RequiresStructure = requiresStructure;
+            Count = count;
+            Rows = rows;
+        }
+
+        public TabItem Item { get; }
+
+        public SqlTabHeader Header { get; }
+
+        public DataGrid Grid { get; }
+
+        /// <summary>第四層還沒到齊時，空清單不是答案而是「還沒問到」。</summary>
+        public bool RequiresStructure { get; }
+
+        public Func<SqlObjectStructure, int> Count { get; }
+
+        public Func<SqlObjectStructure, System.Collections.IEnumerable> Rows { get; }
+    }
+
+    /// <summary>
+    /// 資料格的一欄。
+    /// </summary>
+    /// <remarks>
+    /// 兩件事只有欄自己知道，因此寫在宣告裡而不是散在建立資料格的迴圈裡：
+    ///
+    /// 自由文字欄（說明、運算式、篩選條件、條件約束定義）不能讓一段兩百字的說明把它
+    /// 後面的每一欄都推出視窗外。每張表最長的那一欄吃剩餘寬度（<see cref="Fill"/>），
+    /// 其餘自由文字欄設寬度上限；只設上限的那一版在寬視窗裡照樣把說明截斷，而右邊
+    /// 明明還空著一大片。名稱與型別不設上限——那幾欄本來就短。
+    ///
+    /// 有些欄整張表都是空的（沒有計算資料行、沒有掛說明、沒有篩選索引）。那一欄
+    /// 仍佔著標題與內距而一個字都沒有，所以整欄收掉。
+    /// </remarks>
+    private readonly struct GridColumn
+    {
+        /// <summary>自由文字欄的寬度上限，以預設預覽寬度（620）估的。</summary>
+        public const double TextWidth = 260;
+
+        /// <summary>吃剩餘寬度的那一欄再窄也保留的寬度；再窄就一個詞都讀不完。</summary>
+        public const double FillMinimumWidth = 160;
+
+        public GridColumn(string header, string path, double maximumWidth = 0, bool optional = false, bool fill = false)
+        {
+            Header = header;
+            Path = path;
+            MaximumWidth = maximumWidth;
+            Optional = optional;
+            Fill = fill;
+        }
+
+        public string Header { get; }
+
+        public string Path { get; }
+
+        /// <summary>0 代表不設上限。</summary>
+        public double MaximumWidth { get; }
+
+        /// <summary>這一次的資料裡整欄都是空的時候收掉。</summary>
+        public bool Optional { get; }
+
+        /// <summary>吃剩餘寬度；一張表只給最長的那一欄。</summary>
+        public bool Fill { get; }
+
+        /// <summary>會長到讀不完的那幾欄；換行開關只作用在它們身上。</summary>
+        public bool IsFreeText => Fill || MaximumWidth > 0;
+
+        public static implicit operator GridColumn((string Header, string Path) column) =>
+            new(column.Header, column.Path);
+    }
+
+    /// <summary>
+    /// 分頁列右側工具的字級。
+    /// </summary>
+    /// <remarks>
+    /// 刻意不跟著「預覽視窗的字級」那個設定走：那個設定調的是內容的可讀性，
+    /// 工具是視窗外框的一部分，跟著放大只會把分頁擠掉。
+    /// </remarks>
+    private static readonly SqlAssistChrome.Metrics ToolMetrics = new(12);
+
+    /// <summary>搜尋框的寬度；夠打一個欄名，又不把分頁擠出這一列。</summary>
+    private const double SearchWidth = 168;
+
+    private readonly TextBlock _title;
+    private readonly CrispImage _kindIcon;
+    private readonly SqlPill _kindPill;
+    private readonly SqlPill _keyPill;
+    private readonly SqlPill _pendingPill;
+    private readonly SqlPill _failurePill;
+    private readonly TextBlock _signature;
+    private readonly TextBlock _description;
+
+    /// <summary>名稱底下那幾行的展開箭頭；有東西收著才出現。</summary>
+    private readonly Button _leadToggle;
+
+    /// <summary>
+    /// 寫法與說明要不要整段攤開；所有預覽共用，這次開過下次還是開著。
+    /// </summary>
+    /// <remarks>
+    /// 跟著人走而不是跟著內容走：看 MERGE 時攤開的人，換到 CONVERT 多半也要看完整寫法；
+    /// 每換一項就收回去，等於每一次都要再按一次。
+    /// </remarks>
+    private static bool _leadExpanded;
+
+    /// <summary>完整的寫法；收著時畫面上只有第一行。</summary>
+    private string _signatureText = string.Empty;
+    private readonly TextBlock _status;
+    private readonly TabControl _tabs;
+
+    /// <summary>資料格分頁，順序就是畫面上的順序。</summary>
+    private readonly GridTab[] _gridTabs;
+
+    private readonly TabItem _scriptTab;
+    private readonly SqlTabHeader _scriptHeader;
+    private readonly SqlReadOnlyViewer _script;
+    private readonly SqlMatchNavigation _scriptMatches;
+    private readonly StackPanel _scriptNavigation;
+    private readonly TextBox _search;
+    private readonly Border _searchBar;
+    private readonly Button _clearSearch;
+    private readonly ToggleButton _wrap;
+    private readonly DispatcherTimer _searchDelay;
+    private readonly DataGridTemplateColumn _flags;
+
+    /// <summary>抬頭：名稱、摘要與宿主的工具。</summary>
+    private readonly DockPanel _header;
+
+    /// <summary>抬頭右上角留給宿主的那一格。</summary>
+    private readonly ContentControl _headerTools;
+
+    /// <summary>目前套用的字級；相同就不重建樣式。</summary>
+    private SqlAssistChrome.Metrics _metrics;
+
+    private double _fontSize;
+
+    /// <summary>自由文字欄的兩種儲存格樣式；換行開關換的是這一份，不重建資料格。</summary>
+    private readonly Style _cellLine;
+
+    private readonly Style _cellWrapped;
+
+    private int _openContextMenuCount;
+
+    /// <summary>已經填過內容的分頁；換了物件就整批清掉。</summary>
+    private readonly HashSet<TabItem> _populated = new();
+
+    /// <summary>已經建好的資料列；填入與搜尋數命中共用，換了物件就整批清掉。</summary>
+    private readonly Dictionary<GridTab, System.Collections.IEnumerable> _rows = new();
+
+    /// <summary>每張資料格看得見的欄的文字；每打一個字只比對字串，換了物件就整批清掉。</summary>
+    private readonly Dictionary<DataGrid, SqlDataGridText.SearchIndex> _searchIndexes = new();
+
+    /// <summary>這一輪搜尋字在每張資料格上符合的列；列篩選與分頁數字讀同一份，不比兩次。</summary>
+    private readonly Dictionary<DataGrid, HashSet<object>> _hits = new();
+
+    /// <summary>這一輪搜尋字在指令碼上的命中；分頁數字與畫面上的高亮讀同一份。</summary>
+    private MatchHighlightSet? _scriptHits;
+
+    /// <summary>整欄都空就收掉的那些欄；每次填完資料重新判斷一次。</summary>
+    private readonly HashSet<DataGridColumn> _optionalColumns = new();
+
+    /// <summary>會長到讀不完的那幾欄；換行開關只換它們的樣板。</summary>
+    private readonly List<DataGridTemplateColumn> _freeTextColumns = new();
+
+    private readonly List<ContextMenu> _contextMenus = new();
+
+    /// <summary>內建對照表的分頁，依需要長出來之後就留著重複使用。</summary>
+    private readonly List<ReferenceTab> _referenceTabs = new();
+
+    /// <summary>目前畫的是手上就有的一份說明（內建名稱或片段），而不是資料庫物件。</summary>
+    private DocumentView? _document;
+
+    /// <summary>目前顯示的結構；分頁按需填內容時要回頭讀它。</summary>
+    private SqlObjectStructure? _structure;
+
+    /// <summary>第四層還沒到齊；靠它的分頁與指令碼都還不能出現。</summary>
+    private bool _partial;
+
+    /// <summary>指令碼只組一次；複製與顯示都用同一份。</summary>
+    private string? _scriptText;
+
+    /// <summary>搜尋框裡目前生效的比對器；沒有搜尋字時 null。</summary>
+    private TextMatcher? _matcher;
+
+    /// <summary>浮動預覽貼著的編輯器；停靠在工具視窗時沒有。</summary>
+    private readonly ITextView? _textView;
+
+    /// <param name="textView">
+    /// 浮在這個編輯器上時傳入：搜尋框握著鍵盤的期間，殼層照這個查詢視窗解析的按鍵要交還回來。
+    /// 停靠的工具視窗傳 null，殼層本來就照它自己派送。
+    /// </param>
+    public SqlStructurePanel(ITextView? textView)
+    {
+        _textView = textView;
+        VsThemeBrushes.Apply(this);
+        _metrics = SqlAssistChrome.DefaultMetrics;
+
+        _title = new TextBlock
+        {
+            FontFamily = SqlAssistChrome.InterfaceFont,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
+        }.WithTheme(TextBlock.ForegroundProperty, ThemeBrush.ListForeground);
+        _title.SetBinding(ToolTipProperty,
+            new Binding(nameof(TextBlock.Text)) { Source = _title });
+
+        // 抬頭只有一列：名稱後面接幾顆膠囊，順序與 SQL Search 清單列相同（名稱 → 種類 →
+        // 次要標記）。種類、主索引鍵與載入狀態原本是名稱底下一整行淡色字，而規模數字
+        // 已經寫在分頁標籤上——那一行留著只是把同一件事說兩次，還多佔一列。
+        _kindIcon = PreviewChrome.CreateObjectIcon();
+        _kindPill = new SqlPill(_kindIcon);
+
+        // 主索引鍵是這個視窗唯一的強調色：它回答「這張表靠什麼認一筆」，而且只列欄名，
+        // 排序方向要看的人到索引分頁去看——總覽裡的 ASC 是每一次都在的雜訊。
+        _keyPill = new SqlPill(SqlIcon.PrimaryKey);
+
+        _pendingPill = new SqlPill();
+
+        // 第四層查詢失敗時底下每一頁都會說謊：沒有索引、沒有外來鍵、「沒有主索引鍵」
+        // ——那全是空清單，不是答案。這一顆同時是使用者唯一看得到的線索。
+        _failurePill = new SqlPill(SqlIcon.Warning)
+        {
+            Text = PreviewText.LoadFailedPill,
+            ToolTip = PreviewText.LoadFailedToolTip
+        };
+
+        var pills = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(SqlAssistChrome.Spacing.Group, 0, 0, 0)
+        };
+
+        foreach (var pill in new[] { _kindPill, _keyPill, _pendingPill, _failurePill })
+        {
+            pill.Margin = new Thickness(0, 0, SqlAssistChrome.Spacing.Tight, 0);
+            pill.MaxWidth = 280;
+            pill.Visibility = Visibility.Collapsed;
+            pills.Children.Add(pill);
+        }
+
+        // 靠左而且膠囊先停：整列只量自己的寬度，放得下時膠囊緊跟在名稱後面；
+        // 放不下時讓的是可以省略的名稱，膠囊不被擠出這一列。
+        var titleRow = new DockPanel { HorizontalAlignment = HorizontalAlignment.Left };
+        DockPanel.SetDock(pills, Dock.Right);
+        titleRow.Children.Add(pills);
+        titleRow.Children.Add(_title);
+
+        // 內建名稱的簽章自己一行：那是使用者開這個視窗時第一個要看的東西。
+        _signature = SqlAssistChrome.CreateMetadataText(string.Empty, SqlAssistChrome.DefaultMetrics);
+        _signature.Margin = new Thickness(0, 4, 0, 0);
+        _signature.Visibility = Visibility.Collapsed;
+
+        // 資料表描述排在名稱底下：那是使用者自己寫的一句話，膠囊說不出來。
+        // 沒有掛說明時整列收掉，不留一條空白撐高標題。
+        _description = SqlAssistChrome.CreateMetadataText(string.Empty, SqlAssistChrome.DefaultMetrics);
+        _description.Margin = new Thickness(0, 3, 0, 0);
+        _description.Visibility = Visibility.Collapsed;
+
+        // 一個「更多／收起」管寫法與說明兩段：MERGE 的寫法有七行，平常攤開就把分頁擠到視窗下半。
+        // 收著時每段一行、全文在 Tooltip，要讀的人按一下攤開。它貼在這兩段最後一行的尾端，就是字被
+        // 截斷的地方；兩段各一個的話，抬頭多兩個按鈕卻只是同一件事。
+        _leadToggle = SqlAssistChrome.CreateLinkButton(PreviewText.LeadMore);
+        _leadToggle.Focusable = false;
+        _leadToggle.VerticalAlignment = VerticalAlignment.Bottom;
+        _leadToggle.Margin = new Thickness(SqlAssistChrome.Spacing.Tight, 0, 0, 0);
+        _leadToggle.Visibility = Visibility.Collapsed;
+        _leadToggle.Click += (_, _) => SqlAssistPlatformGuard.Run("切換預覽抬頭的展開", () =>
+        {
+            _leadExpanded = !_leadExpanded;
+            ApplyLead();
+        });
+
+        _status = SqlAssistChrome.CreateStatusText(SqlAssistChrome.DefaultMetrics);
+        _status.Margin = new Thickness(24, 0, 24, 6);
+
+        _cellLine = CreateCellStyle(wrap: false);
+        _cellWrapped = CreateCellStyle(wrap: true);
+
+        var columns = CreateGrid(
+            ("#", nameof(ColumnRow.Ordinal)),
+            (SqlKindText.Column, nameof(ColumnRow.Name)),
+            (CommonText.Type, nameof(ColumnRow.DataType)),
+            new GridColumn(CommonText.Description, nameof(ColumnRow.Description), optional: true, fill: true),
+            new GridColumn(PreviewText.HeaderComputed, nameof(ColumnRow.Computed), GridColumn.TextWidth, optional: true),
+            new GridColumn(PreviewText.HeaderDefault, nameof(ColumnRow.Default), GridColumn.TextWidth, optional: true));
+
+        // NULL、PK、IDENTITY 三個文字欄收成一欄膠囊，插在型別後面。
+        // 它與文字欄一樣可收：一張全部可為 NULL、又沒有主索引鍵的表一個徽章都沒有。
+        _flags = CreateFlagsColumn();
+        columns.Columns.Insert(3, _flags);
+        _optionalColumns.Add(_flags);
+
+        var indexes = CreateGrid(
+            (PreviewText.HeaderIndex, nameof(IndexRow.Name)),
+            (CommonText.Kind, nameof(IndexRow.Kind)),
+            (PreviewText.HeaderKeyColumns, nameof(IndexRow.KeyColumns)),
+            new GridColumn("INCLUDE", nameof(IndexRow.IncludedColumns), optional: true),
+            new GridColumn(PreviewText.HeaderFilter, nameof(IndexRow.Filter), GridColumn.TextWidth, optional: true),
+            new GridColumn(PreviewText.HeaderOptions, nameof(IndexRow.Options), optional: true),
+            new GridColumn(PreviewText.HeaderLocation, nameof(IndexRow.Location), optional: true));
+
+        var foreignKeys = CreateGrid(
+            (PreviewText.HeaderForeignKey, nameof(ForeignKeyRow.Name)),
+            new GridColumn(PreviewText.HeaderReferences, nameof(ForeignKeyRow.Columns), fill: true),
+            new GridColumn(PreviewText.HeaderActions, nameof(ForeignKeyRow.Actions), optional: true));
+
+        var checks = CreateGrid(
+            (SqlKindText.Constraint, nameof(CheckRow.Name)),
+            new GridColumn(SqlKindText.Column, nameof(CheckRow.Column), optional: true),
+            new GridColumn(CommonText.Definition, nameof(CheckRow.Definition), fill: true),
+            new GridColumn(CommonText.Status, nameof(CheckRow.State), optional: true));
+
+        var triggers = CreateGrid(
+            (SqlKindText.Trigger, nameof(TriggerRow.Name)),
+            new GridColumn(CommonText.Status, nameof(TriggerRow.State), optional: true));
+
+        var parameters = CreateGrid(
+            ("#", nameof(ParameterRow.Ordinal)),
+            (SqlKindText.Parameter, nameof(ParameterRow.Name)),
+            (CommonText.Type, nameof(ParameterRow.DataType)),
+            new GridColumn(PreviewText.HeaderDirection, nameof(ParameterRow.Direction), optional: true));
+
+        // 順序照使用者要問的次序：這張表有什麼（欄位）、它怎麼被找到（索引）、
+        // 它跟誰有關（外來鍵）、什麼資料進得來（條件約束）、寫進去之後還會發生
+        // 什麼（觸發程序）。參數只有模組有，與上面五個互斥。
+        _gridTabs = new[]
+        {
+            new GridTab(
+                SqlKindText.Columns,
+                SqlIcon.Column,
+                columns,
+                requiresStructure: false,
+                structure => structure.Columns.Count,
+                structure => Map(structure.Columns, column => new ColumnRow(column))),
+            new GridTab(
+                PreviewText.TabIndexes,
+                SqlIcon.Index,
+                indexes,
+                requiresStructure: true,
+                structure => structure.Indexes.Count,
+                structure => Map(structure.Indexes, index => new IndexRow(index))),
+            new GridTab(
+                PreviewText.TabForeignKeys,
+                SqlIcon.ForeignKey,
+                foreignKeys,
+                requiresStructure: true,
+                structure => structure.ForeignKeys.Count,
+                structure => Map(structure.ForeignKeys, key => new ForeignKeyRow(key))),
+            new GridTab(
+                SqlKindText.Constraints,
+                SqlIcon.CheckConstraint,
+                checks,
+                requiresStructure: true,
+                structure => structure.CheckConstraints.Count,
+                structure => Map(structure.CheckConstraints, check => new CheckRow(check))),
+            new GridTab(
+                SqlKindText.Triggers,
+                SqlIcon.Trigger,
+                triggers,
+                requiresStructure: true,
+                structure => structure.Triggers.Count,
+                structure => Map(structure.Triggers, trigger => new TriggerRow(trigger))),
+            new GridTab(
+                SqlKindText.Parameters,
+                SqlIcon.Parameter,
+                parameters,
+                requiresStructure: false,
+                structure => structure.Parameters.Count,
+                structure => Map(structure.Parameters, parameter => new ParameterRow(parameter)))
+        };
+
+        // 指令碼走共用的唯讀 SQL 檢視：著色、原文複製與命中導覽與 SQL Search／Memory 的
+        // 預覽是同一份，這裡不再自己養一個 RichTextBox。
+        _script = new SqlReadOnlyViewer(embedded: true) { ReportError = message => _status.Text = message };
+        TrackContextMenu(_script.Menu);
+        _scriptMatches = new SqlMatchNavigation(_script);
+        _scriptHeader = new SqlTabHeader(PreviewText.TabScript, SqlIcon.Script);
+        _scriptTab = SqlAssistChrome.CreateTab(_scriptHeader, _script);
+
+        _tabs = new TabControl
+        {
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            FontFamily = SqlAssistChrome.InterfaceFont,
+            Template = SqlAssistChrome.CreateTabControlTemplate()
+        }.WithTheme(TabControl.BackgroundProperty, ThemeBrush.ListBackground);
+
+        foreach (var tab in _gridTabs)
+        {
+            _tabs.Items.Add(tab.Item);
+        }
+
+        _tabs.Items.Add(_scriptTab);
+        _tabs.SelectionChanged += OnTabSelectionChanged;
+
+        _search = SqlAssistChrome.CreateTextBox(ToolMetrics);
+        _search.ToolTip = PreviewText.SearchToolTip;
+        AutomationProperties.SetName(_search, PreviewText.SearchName);
+        _search.TextChanged += (_, _) => SqlAssistPlatformGuard.Run("輸入結構預覽搜尋", OnSearchTextChanged);
+        _search.IsKeyboardFocusWithinChanged += (_, _) => SqlAssistPlatformGuard.Run("交接預覽搜尋的按鍵", OnSearchFocusChanged);
+
+        _clearSearch = SqlAssistChrome.CreateIconButton(SqlIcon.Clear, CommonText.ClearSearch);
+        _clearSearch.IsEnabled = false;
+        _clearSearch.Focusable = false;
+        _clearSearch.Click += (_, _) => SqlAssistPlatformGuard.Run("清除結構預覽搜尋", () => ResetSearch(keepFocus: true));
+
+        _searchBar = SqlAssistChrome.CreateInputBar(SqlIcon.Search, _search, _clearSearch);
+        _searchBar.Width = SearchWidth;
+
+        _searchDelay = new DispatcherTimer(DispatcherPriority.Input, Dispatcher) { Interval = SqlAssistChrome.Debounce.Search };
+        _searchDelay.Tick += (_, _) => SqlAssistPlatformGuard.Run("套用結構預覽搜尋", () =>
+        {
+            _searchDelay.Stop();
+            ApplySearch();
+        });
+
+        // 導覽只屬於指令碼分頁：資料格的命中是用篩選看的，一列一列走沒有意義。
+        _scriptNavigation = new StackPanel { Orientation = Orientation.Horizontal, Visibility = Visibility.Collapsed };
+        foreach (var item in _scriptMatches.ToolbarItems)
+        {
+            _scriptNavigation.Children.Add(item);
+        }
+
+        // 換行是一個維持著的狀態不是一次動作，所以是開關不是按鈕。
+        _wrap = SqlAssistChrome.CreateIconToggle(SqlIcon.Wrap, PreviewText.WrapToggle);
+        _wrap.Focusable = false;
+        _wrap.Checked += (_, _) => SqlAssistPlatformGuard.Run("預覽換行", () => ApplyWrap(true));
+        _wrap.Unchecked += (_, _) => SqlAssistPlatformGuard.Run("預覽取消換行", () => ApplyWrap(false));
+
+        // 一顆複製：有選取就複製選取，沒有就是完整的 CREATE 指令碼——那是按下去的人多半要的；
+        // 「整個表格」這種少用的留在右鍵選單。
+        var copy = SqlAssistChrome.CreateIconButton(SqlIcon.Copy, PreviewText.CopyButton);
+        copy.Focusable = false;
+        copy.Click += (_, _) => SqlAssistPlatformGuard.Run("複製結構預覽", CopyCurrent);
+
+        // 搜尋｜導覽｜換行與複製：搜尋改變「看哪些」，後面那一群改變「怎麼看、拿去哪」。
+        var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        tools.Children.Add(_searchBar);
+        tools.Children.Add(SqlAssistChrome.CreateGroupDivider());
+        tools.Children.Add(_scriptNavigation);
+        tools.Children.Add(_wrap);
+        tools.Children.Add(copy);
+        SqlAssistChrome.SetTabStripTrailing(_tabs, tools);
+
+        // 寫法與說明疊成一欄，「更多／收起」自成一欄靠底：不論收著或攤開，它都接在最後一行後面，
+        // 而字讓出它的寬度，截斷的省略號不會壓在它底下。
+        var leadText = new StackPanel();
+        leadText.Children.Add(_signature);
+        leadText.Children.Add(_description);
+        var lead = new Grid();
+        lead.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        lead.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(_leadToggle, 1);
+        lead.Children.Add(leadText);
+        lead.Children.Add(_leadToggle);
+
+        // 放不放得下一行要看這一欄的寬度：視窗縮放、連結出現或收掉時都重新判斷一次。
+        leadText.SizeChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.WidthChanged)
+            {
+                SqlAssistPlatformGuard.Run("重新判斷預覽抬頭是否收著內容", UpdateLeadToggle);
+            }
+        };
+
+        var headerText = new StackPanel();
+        headerText.Children.Add(titleRow);
+        headerText.Children.Add(lead);
+
+        // 抬頭右側留一格給宿主：浮動預覽放圖釘、移到工具視窗與關閉，工具視窗什麼都不放。
+        // 按鈕不在這裡建，因為那幾顆回答的是「這扇窗怎麼收」，而那只有宿主知道。
+        _headerTools = new ContentControl
+        {
+            Focusable = false,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(SqlAssistChrome.Spacing.Group, -4, 0, 0)
+        };
+
+        // 透明底色：抬頭的空白處也要接得到按下，浮動預覽靠它拖抬頭搬動。
+        _header = new DockPanel
+        {
+            Margin = new Thickness(16, 12, 10, 10),
+            LastChildFill = true,
+            Background = Brushes.Transparent
+        };
+        DockPanel.SetDock(_headerTools, Dock.Right);
+        _header.Children.Add(_headerTools);
+        _header.Children.Add(headerText);
+
+        var footer = new Grid();
+        footer.Children.Add(_status);
+
+        var layout = new Grid();
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(_header, 0);
+        Grid.SetRow(_tabs, 1);
+        Grid.SetRow(footer, 2);
+        layout.Children.Add(_header);
+        layout.Children.Add(_tabs);
+        layout.Children.Add(footer);
+        layout.WithTheme(Panel.BackgroundProperty, ThemeBrush.WindowBackground);
+
+        // 原生圖示依實際底色轉換，避免深色與高對比主題出現不相容的光暈。
+        layout.SetBinding(ImageThemingUtilities.ImageBackgroundColorProperty, new Binding(nameof(Panel.Background))
+        {
+            Source = layout,
+            Converter = new BrushToColorConverter()
+        });
+
+        // 版面計算的模式交給排版而不是像素對齊：字距在小字級下才不會忽寬忽窄。
+        TextOptions.SetTextFormattingMode(layout, TextFormattingMode.Ideal);
+
+        // 整組字級都從設定推導，這裡沒有任何寫死的數字可以跟設定不同步。
+        ApplyFontSize(SqlAssistSettingsStore.Current.PreviewFontSize);
+
+        Content = layout;
+
+        // 顯示時不主動搶焦點：使用者還在打字，游標必須留在編輯器裡。
+        // 點進來才接受焦點，那時才需要能夠拉選文字或輸入搜尋字。
+        Focusable = false;
+
+        // 看不見時不再握著鍵盤：切到別的分頁時浮動預覽整個藏起來，搜尋框卻還記著自己在交還按鍵。
+        IsVisibleChanged += (_, _) => SqlAssistPlatformGuard.Run("放開結構預覽搜尋的按鍵", () =>
+        {
+            if (!IsVisible)
+            {
+                ShellKeyCapture.End(this);
+            }
+        });
+    }
+
+    /// <summary>右鍵選單是另一個 Popup，Agent 要把它一起算進聚合焦點。</summary>
+    public event EventHandler? InteractionFocusGained;
+
+    public event EventHandler? InteractionFocusLost;
+
+    /// <summary>使用者在內容裡按下 Esc（搜尋框沒有字時）；收不收由宿主決定。</summary>
+    public event EventHandler? CloseRequested;
+
+    /// <summary>抬頭那一列；浮動預覽在這裡接「拖抬頭搬動」。</summary>
+    public FrameworkElement Header => _header;
+
+    /// <summary>抬頭右上角的宿主工具（圖釘、移到工具視窗、關閉）；null 是不放。</summary>
+    public UIElement? HeaderTools
+    {
+        get => _headerTools.Content as UIElement;
+        set => _headerTools.Content = value;
+    }
+
+    /// <summary>
+    /// 頁尾狀態列的左右內距；浮動預覽讓開角落握把，停靠時不必。
+    /// </summary>
+    public double StatusInset
+    {
+        set => _status.Margin = new Thickness(value, 0, value, 6);
+    }
+
+    public bool HasOpenContextMenu => _openContextMenuCount > 0;
+
+    // 只有浮動預覽會登記到 ShellKeyCapture，而它一定有編輯器；停靠的那一份殼層照工具視窗派送按鍵。
+    ITextView IShellKeyTarget.View => _textView ?? throw new InvalidOperationException();
+
+    UIElement IShellKeyTarget.Scope => _searchBar;
+
+    IInputElement IShellKeyTarget.FocusTarget => _search;
+
+    void IShellKeyTarget.Cancel() => HandleEscape();
+
+    public void CloseTransientPopups()
+    {
+        foreach (var menu in _contextMenus)
+        {
+            menu.IsOpen = false;
+        }
+
+        _openContextMenuCount = 0;
+    }
+
+    /// <summary>
+    /// 收起來就是這一次看完了：清掉搜尋字。
+    /// </summary>
+    /// <remarks>
+    /// 下一次打開是另一件事，留著上一次的搜尋字只會讓使用者以為那張表少了幾欄。由宿主在
+    /// 真的收起時呼叫，不掛在「看不見」上：切到別的分頁再回來、停靠的工具視窗換到後面，
+    /// 都還是同一次在看。
+    /// </remarks>
+    public void ClearSearch() => ResetSearch(keepFocus: false);
+
+    public void FocusSearch() => _search.Focus();
+
+    /// <summary>頁尾那一句；宿主的操作結果（例如重設尺寸）也寫在這裡，不另開一條訊息。</summary>
+    public void ShowStatus(string text) => _status.Text = text;
+
+    /// <summary>換一個物件：標題先出來，內容等資料到齊。</summary>
+    public void SetTarget(SqlObjectInfo objectInfo)
+    {
+        _structure = null;
+        _partial = false;
+        _scriptText = null;
+        ResetContent();
+        LeaveDocument();
+        SetTitle(objectInfo);
+        ShowPills(pending: CommonText.Loading);
+        SetDescription(null);
+        _status.Text = string.Empty;
+        ClearTabs();
+    }
+
+    /// <summary>
+    /// 標題永遠寫在填內容的同一條路上。
+    /// </summary>
+    /// <remarks>
+    /// 只在 <see cref="SetTarget"/> 裡寫標題是不夠的：那條路只有快取沒命中時才走。
+    /// 命中第四層時呼叫端會直接 <see cref="Populate(SqlObjectStructure)"/>，
+    /// 標題就會停在上一個物件上——畫面出現「標題是同義字、內容是資料表」。
+    /// </remarks>
+    private void SetTitle(SqlObjectInfo objectInfo)
+    {
+        SetKind(SqlIcons.GetMoniker(objectInfo.Kind), objectInfo.Kind.ToDisplayName(),
+            SqlIcons.GetImageElement(objectInfo.Kind).AutomationName);
+
+        _title.Inlines.Clear();
+
+        // 指令碼自己宣告的名稱沒有結構描述，那時整段前綴都不寫：[].[#TempTest]
+        // 宣稱有一個叫空字串的結構描述，而 [dbo].[@rows] 連文法都不成立。
+        if (objectInfo.SchemaPrefix is { Length: > 0 } prefix)
+        {
+            _title.Inlines.Add(new Run(prefix)
+                .WithTheme(Run.ForegroundProperty, ThemeBrush.DimForeground));
+        }
+
+        _title.Inlines.Add(new Run(objectInfo.QuotedName)
+        {
+            FontWeight = FontWeights.SemiBold
+        });
+    }
+
+    /// <summary>種類膠囊：圖示與種類文字一起出現，辨識不只靠圖示。</summary>
+    private void SetKind(Microsoft.VisualStudio.Imaging.Interop.ImageMoniker moniker, string name, string? automationName)
+    {
+        _kindIcon.Moniker = moniker;
+        AutomationProperties.SetName(_kindIcon, automationName ?? name);
+        _kindPill.Text = name;
+        _kindPill.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// 種類以外的那幾顆膠囊。
+    /// </summary>
+    /// <param name="primaryKey">主索引鍵的欄名；null 表示這一次不談主索引鍵。</param>
+    /// <param name="noPrimaryKey">資料表確定沒有主索引鍵；那是一件值得說的事（堆積表）。</param>
+    /// <param name="pending">還在載入的那一段；null 表示沒有東西在等。</param>
+    private void ShowPills(string? primaryKey = null, bool noPrimaryKey = false, string? pending = null, bool failed = false)
+    {
+        if (primaryKey is not null)
+        {
+            _keyPill.Text = primaryKey;
+            _keyPill.ToolTip = PreviewText.PrimaryKeyToolTip(primaryKey);
+            _keyPill.Tone = SqlPillTone.Accent;
+        }
+        else if (noPrimaryKey)
+        {
+            _keyPill.Text = PreviewText.NoPrimaryKey;
+            _keyPill.ToolTip = null;
+            _keyPill.Tone = SqlPillTone.Neutral;
+        }
+
+        _keyPill.Visibility = Visible(primaryKey is not null || noPrimaryKey);
+        _pendingPill.Text = pending ?? string.Empty;
+        _pendingPill.Visibility = Visible(pending is not null);
+        _failurePill.Visibility = Visible(failed);
+    }
+
+    /// <summary>
+    /// 顯示一個內建名稱的完整說明：簽章、用途、範例，以及各引數的對照表。
+    /// </summary>
+    /// <remarks>
+    /// 與物件結構共用同一個視窗殼層、同一套擺放、縮放與複製。內容則完全不同：
+    /// 沒有查詢也沒有分層載入，資料是隨組件發布的一份，因此直接填完。範例沿用指令碼分頁：
+    /// 那是同一個唯讀的著色檢視，換一個標題就是了。
+    /// </remarks>
+    public void ShowBuiltIn(SqlBuiltInDoc doc) => ShowDocument(new DocumentView(
+        doc.Name,
+        doc.Kind.ToSuggestionKind(),
+        doc.Kind.GetDisplayName(),
+        doc.Signature,
+        doc.Summary,
+        // 多段範例接成一份的組法只看資料就決定得了，放在 Core（SqlBuiltInExampleText）。
+        SqlBuiltInExampleText.Combine(doc.Examples),
+        CommonText.Example,
+        doc.References,
+        PreviewText.CopiedExample));
+
+    /// <summary>顯示一個片段選下去之後實際插入的文字；片段的程式碼只畫在這裡。</summary>
+    public void ShowSnippet(SqlSnippet snippet) => ShowDocument(new DocumentView(
+        snippet.Title,
+        SuggestionKind.Snippet,
+        SqlKindText.Snippet,
+        string.Empty,
+        snippet.Description,
+        SqlSnippetPreview.Text(snippet),
+        PreviewText.TabScript,
+        Array.Empty<SqlBuiltInReference>(),
+        PreviewText.CopiedFullScript));
+
+    /// <summary>
+    /// 畫一份手上就有的說明。
+    /// </summary>
+    /// <remarks>
+    /// 不走「只填看得見的分頁」那條路：那條路省的是查詢與版面計算，而這裡兩者都沒有。
+    /// </remarks>
+    private void ShowDocument(DocumentView document)
+    {
+        _structure = null;
+        _partial = false;
+        _document = document;
+        ResetContent();
+        ClearTabs();
+
+        // 圖示與種類文字與滑鼠停留提示共用同一份對照（SqlBuiltInKinds、SqlIcons）：
+        // 兩個表面畫的是同一個名稱，分成兩份的症狀是改了一邊另一邊沒改。
+        SetKind(SqlIcons.GetMoniker(document.Kind), document.KindName, SqlIcons.GetImageElement(document.Kind).AutomationName);
+        ShowPills();
+
+        _title.Inlines.Clear();
+        _title.Inlines.Add(new Run(document.Title) { FontWeight = FontWeights.SemiBold });
+
+        _signatureText = document.Signature;
+        SetDescription(document.Summary);
+        _status.Text = string.Empty;
+
+        foreach (var tab in _gridTabs)
+        {
+            tab.Item.Visibility = Visibility.Collapsed;
+        }
+
+        _scriptText = document.Sql;
+        _scriptHeader.Label = document.SqlLabel;
+        _scriptTab.Visibility = Visible(document.Sql.Length > 0);
+
+        for (var index = 0; index < _referenceTabs.Count || index < document.References.Count; index++)
+        {
+            var tab = EnsureReferenceTab(index);
+
+            if (index >= document.References.Count)
+            {
+                tab.Item.Visibility = Visibility.Collapsed;
+                tab.Grid.ItemsSource = null;
+                continue;
+            }
+
+            FillReference(tab, document.References[index]);
+        }
+
+        // 落在對照表而不是範例：使用者是從提示點進來的，那段範例他剛剛才看過，
+        // 而他要的是「style 到底有哪些」。沒有對照表時才退回範例。
+        _tabs.SelectedItem = document.References.Count > 0
+            ? _referenceTabs[0].Item
+            : FirstVisibleTab();
+
+        PopulateSelectedTab();
+        UpdateSearchResults();
+    }
+
+    private void FillReference(ReferenceTab tab, SqlBuiltInReference reference)
+    {
+        tab.Header.Label = reference.Title;
+        tab.Item.Visibility = Visibility.Visible;
+
+        for (var column = 0; column < tab.Grid.Columns.Count; column++)
+        {
+            var used = column < reference.Columns.Count;
+            tab.Grid.Columns[column].Header = used ? reference.Columns[column] : string.Empty;
+            tab.Grid.Columns[column].Visibility = Visible(used);
+        }
+
+        var rows = new List<ReferenceRow>(reference.Rows.Count);
+
+        foreach (var row in reference.Rows)
+        {
+            rows.Add(new ReferenceRow(row));
+        }
+
+        tab.Grid.ItemsSource = rows;
+        tab.Header.ShowTotal(rows.Count);
+        ApplyFilter(tab.Grid);
+    }
+
+    private ReferenceTab EnsureReferenceTab(int index)
+    {
+        if (index < _referenceTabs.Count)
+        {
+            return _referenceTabs[index];
+        }
+
+        var grid = CreateGrid(
+            (string.Empty, nameof(ReferenceRow.Cell1)),
+            new GridColumn(string.Empty, nameof(ReferenceRow.Cell2), GridColumn.TextWidth),
+            new GridColumn(string.Empty, nameof(ReferenceRow.Cell3), GridColumn.TextWidth),
+            new GridColumn(string.Empty, nameof(ReferenceRow.Cell4), GridColumn.TextWidth));
+        ApplyGridMetrics(grid, SqlAssistChrome.CreateColumnHeaderStyle(_metrics));
+
+        var header = new SqlTabHeader(string.Empty, SqlIcon.Reference);
+        var item = SqlAssistChrome.CreateTab(header, grid);
+        item.Visibility = Visibility.Collapsed;
+
+        _tabs.Items.Add(item);
+        var tab = new ReferenceTab(item, header, grid);
+        _referenceTabs.Add(tab);
+        return tab;
+    }
+
+    /// <summary>顯示一段訊息取代內容，例如沒有連線或這一項沒有結構。</summary>
+    public void ShowMessage(string title, string message)
+    {
+        _structure = null;
+        _partial = false;
+        _scriptText = null;
+        ResetContent();
+        LeaveDocument();
+
+        // 沒有物件語意的訊息不顯示種類膠囊，避免誤認為未知種類的物件。
+        _kindPill.Visibility = Visibility.Collapsed;
+        ShowPills();
+        _title.Inlines.Clear();
+        _title.Inlines.Add(new Run(title));
+        SetDescription(message);
+        _status.Text = string.Empty;
+        ClearTabs();
+    }
+
+    /// <summary>
+    /// 先用第二層的欄位把畫面填起來。
+    /// </summary>
+    /// <remarks>
+    /// 建議清單走過的物件，欄位早就在快取裡了。索引與外來鍵還要一次查詢，
+    /// 但沒有理由讓已經拿得到的欄位陪著等——先畫欄位，其餘到齊再補。
+    /// </remarks>
+    public void PopulatePartial(SqlObjectDetail detail)
+    {
+        Populate(new SqlObjectStructure(detail, structurePending: true), partial: true);
+    }
+
+    public void Populate(SqlObjectStructure structure)
+    {
+        Populate(structure, partial: false);
+    }
+
+    private void Populate(SqlObjectStructure structure, bool partial)
+    {
+        _structure = structure;
+        _partial = partial;
+        _scriptText = null;
+        ResetContent();
+        LeaveDocument();
+        SetTitle(structure.Object);
+        // 切頁可能同步回報顯示失敗，不能在填入之後再把那句訊息清掉。
+        _status.Text = string.Empty;
+
+        // 空的分頁留在畫面上只會讓人多點一次才知道沒東西。第四層還沒到齊時，
+        // 靠它的那幾頁一律不顯示——空清單在那個時候不是答案。
+        foreach (var tab in _gridTabs)
+        {
+            var count = tab.Count(structure);
+            tab.Item.Visibility = Visible((!partial || !tab.RequiresStructure) && count > 0);
+            tab.Header.ShowTotal(count);
+        }
+
+        _scriptTab.Visibility = Visible(!partial);
+
+        if (_tabs.SelectedItem is not TabItem selected || selected.Visibility != Visibility.Visible)
+        {
+            _tabs.SelectedItem = FirstVisibleTab();
+        }
+
+        PopulateSelectedTab();
+        UpdateSearchResults();
+        ShowStructurePills(structure, partial);
+        SetDescription(structure.Description);
+    }
+
+    private void ShowStructurePills(SqlObjectStructure structure, bool partial)
+    {
+        if (partial)
+        {
+            ShowPills(pending: PreviewText.IndexesLoading);
+        }
+        else if (structure.IsStructureUnavailable)
+        {
+            ShowPills(failed: true);
+        }
+        else if (structure.PrimaryKey is { } primaryKey)
+        {
+            ShowPills(primaryKey: primaryKey.DescribeKeyColumnNames());
+        }
+        else
+        {
+            ShowPills(noPrimaryKey: structure.Object.Kind == SqlObjectKind.Table);
+        }
+    }
+
+    private TabItem? FirstVisibleTab()
+    {
+        foreach (TabItem tab in _tabs.Items)
+        {
+            if (tab.Visibility == Visibility.Visible)
+            {
+                return tab;
+            }
+        }
+
+        return null;
+    }
+
+    private void OnTabSelectionChanged(object sender, SelectionChangedEventArgs eventArgs)
+    {
+        // 分頁裡的 DataGrid 換選取列時也會冒泡到這裡，那不是換分頁。
+        if (!ReferenceEquals(eventArgs.OriginalSource, _tabs))
+        {
+            return;
+        }
+
+        PopulateSelectedTab();
+        _scriptNavigation.Visibility = Visible(ReferenceEquals(_tabs.SelectedItem, _scriptTab));
+    }
+
+    /// <summary>
+    /// 只填目前看得見的分頁。
+    /// </summary>
+    /// <remarks>
+    /// 五個分頁一起填，等於每換一個物件就建立五份資料列與五次版面計算，
+    /// 而使用者一次只看得到一個。切過去時再填，成本就落在他真的要看的那一次。
+    /// </remarks>
+    private void PopulateSelectedTab()
+    {
+        if (_tabs.SelectedItem is not TabItem tab)
+        {
+            return;
+        }
+
+        _scriptNavigation.Visibility = Visible(ReferenceEquals(tab, _scriptTab));
+
+        if (_structure is null && _document is null)
+        {
+            return;
+        }
+
+        if (!_populated.Add(tab))
+        {
+            return;
+        }
+
+        try
+        {
+            if (ReferenceEquals(tab, _scriptTab))
+            {
+                ShowScript();
+            }
+            else if (FindGridTab(tab) is { } grid && _structure is { } structure)
+            {
+                grid.Grid.ItemsSource = GetRows(grid, structure);
+                ApplyFilter(grid.Grid);
+            }
+        }
+        catch (Exception exception)
+        {
+            // 不走 SqlAssistPlatformGuard：使用者是自己切到這個分頁的，
+            // 一片空白而沒有任何說明會被當成資料真的是空的。
+            _populated.Remove(tab);
+            SqlAssistDiagnostics.WriteAlways($"填入預覽分頁失敗：{exception}");
+            _status.Text = PreviewText.DisplayFailed(exception.Message);
+        }
+    }
+
+    /// <summary>指令碼連同命中一起換上；有命中就停在第一處。</summary>
+    private void ShowScript()
+    {
+        var highlights = ScriptHits();
+        _scriptMatches.Show(GetScript(), highlights);
+
+        // 少標了一定要說，否則使用者按到最後一處就以為看完了。
+        if (highlights.IsTruncated)
+        {
+            _status.Text = MatchHighlights.TruncatedNotice;
+        }
+    }
+
+    /// <summary>
+    /// 這一頁的資料列；第一次建出來時順便照這份資料收好空欄。
+    /// </summary>
+    /// <remarks>
+    /// 收欄跟著資料列只做一次：填入與搜尋數命中都從這裡拿列，而還沒切過去的分頁，欄的收合
+    /// 還停在上一個物件——上一張表沒有說明、這一張有的話，說明裡的命中就數不到。
+    /// </remarks>
+    private System.Collections.IEnumerable GetRows(GridTab tab, SqlObjectStructure structure)
+    {
+        if (!_rows.TryGetValue(tab, out var rows))
+        {
+            rows = tab.Rows(structure);
+            _rows.Add(tab, rows);
+            UpdateOptionalColumns(tab.Grid, rows);
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// 把這一次整欄都是空的那些欄收掉。
+    /// </summary>
+    /// <remarks>
+    /// 只在填入之後做一次，成本落在使用者真的切過去的那一個分頁上。讀不出繫結
+    /// 路徑或那個屬性時一律保留整欄——把看不懂的東西藏起來，症狀會是「資料明明
+    /// 查到了卻不見了」，那比多一個空欄糟得多。
+    /// </remarks>
+    private void UpdateOptionalColumns(DataGrid grid, System.Collections.IEnumerable rows)
+    {
+        foreach (var column in grid.Columns)
+        {
+            if (_optionalColumns.Contains(column))
+            {
+                column.Visibility = Visible(SqlDataGridText.HasAnyValue(column, rows));
+            }
+        }
+    }
+
+    private GridTab? FindGridTab(TabItem item)
+    {
+        foreach (var tab in _gridTabs)
+        {
+            if (ReferenceEquals(tab.Item, item))
+            {
+                return tab;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>標題底下那一行說明；沒有掛說明時整列收掉。每一條換內容的路最後都走這裡。</summary>
+    /// <remarks>
+    /// 收斂空白走 <see cref="SqlDescriptionText"/>：說明是使用者自己打進
+    /// <c>sp_addextendedproperty</c> 的字串，帶換行的那一段會把這一行撐成好幾行，
+    /// 而標題列的高度是浮動視窗量出來的。要讀全文的人攤開（<see cref="ApplyLead"/>）或看 Tooltip。
+    /// </remarks>
+    private void SetDescription(string? description)
+    {
+        var text = SqlDescriptionText.Collapse(description);
+        _description.Text = text ?? string.Empty;
+        _description.Visibility = Visible(text is not null);
+        ApplyLead();
+    }
+
+    /// <summary>
+    /// 照目前的展開狀態畫寫法與說明：收著時每段一行、全文在 Tooltip，攤開時整段換行顯示。
+    /// </summary>
+    private void ApplyLead()
+    {
+        var expanded = _leadExpanded;
+        var newline = _signatureText.IndexOf('\n');
+
+        // 收著時寫法只留第一行，後面接省略號說還有：第一行本身放得下時，裁切的省略號不會出現。
+        _signature.Text = expanded || newline < 0
+            ? _signatureText
+            : _signatureText.Substring(0, newline).TrimEnd('\r') + " …";
+        _signature.Visibility = Visible(_signatureText.Length > 0);
+
+        foreach (var (block, full) in new[] { (_signature, _signatureText), (_description, _description.Text) })
+        {
+            block.TextWrapping = expanded ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            block.TextTrimming = expanded ? TextTrimming.None : TextTrimming.CharacterEllipsis;
+            block.ToolTip = expanded || full.Length == 0 ? null : full;
+        }
+
+        var text = expanded ? PreviewText.LeadLess : PreviewText.LeadMore;
+        var help = expanded ? PreviewText.LeadCollapse : PreviewText.LeadExpand;
+        _leadToggle.Content = text;
+        _leadToggle.ToolTip = help;
+        AutomationProperties.SetName(_leadToggle, text);
+        AutomationProperties.SetHelpText(_leadToggle, help);
+        UpdateLeadToggle();
+    }
+
+    /// <summary>
+    /// 「更多／收起」只在有東西收著時出現：寫法不只一行，或寫法、說明有一段放不進一行。
+    /// </summary>
+    /// <remarks>
+    /// 一律顯示的話，一行就寫完的 <c>smallint</c> 後面也跟著一個按了沒反應的「更多」。放不放得下看的是
+    /// 單行寬度，與目前收著還是攤開無關，所以攤開之後「收起」還在。量的是扣掉連結之後的欄寬：
+    /// 連結出現讓欄變窄只會更放不下，收掉讓欄變寬的前提是本來就放得下，所以不會出現一顯一藏的來回。
+    /// </remarks>
+    private void UpdateLeadToggle()
+    {
+        var hidden = _signatureText.IndexOf('\n') >= 0 ||
+            Overflows(_signature, _signatureText) ||
+            Overflows(_description, _description.Text);
+        _leadToggle.Visibility = Visible(hidden);
+    }
+
+    /// <summary>這段文字排成一行時比這一格寬；還沒排過版（寬度 0）時先當作放得下，排好之後會再問一次。</summary>
+    private static bool Overflows(TextBlock block, string text)
+    {
+        if (text.Length == 0 || block.Visibility != Visibility.Visible || block.ActualWidth <= 0)
+        {
+            return false;
+        }
+
+        var formatted = new FormattedText(
+            text,
+            CultureInfo.CurrentUICulture,
+            block.FlowDirection,
+            new Typeface(block.FontFamily, block.FontStyle, block.FontWeight, block.FontStretch),
+            block.FontSize,
+            Brushes.Black,
+            VisualTreeHelper.GetDpi(block).PixelsPerDip);
+
+        return formatted.WidthIncludingTrailingWhitespace > block.ActualWidth + 0.5;
+    }
+
+    private static List<TRow> Map<TSource, TRow>(IReadOnlyList<TSource> source, Func<TSource, TRow> convert)
+    {
+        var rows = new List<TRow>(source.Count);
+
+        foreach (var item in source)
+        {
+            rows.Add(convert(item));
+        }
+
+        return rows;
+    }
+
+    /// <summary>換一份內容之前丟掉上一份留下的東西：填過的分頁、建好的資料列與簽章。</summary>
+    private void ResetContent()
+    {
+        _populated.Clear();
+        _rows.Clear();
+        _searchIndexes.Clear();
+        _hits.Clear();
+        _scriptHits = null;
+        _signatureText = string.Empty;
+    }
+
+    private void ClearTabs()
+    {
+        foreach (var tab in _gridTabs)
+        {
+            tab.Grid.ItemsSource = null;
+            tab.Header.ShowTotal(null);
+        }
+
+        _scriptHeader.ShowTotal(null);
+        _scriptMatches.Clear();
+    }
+
+    /// <summary>
+    /// 換回資料庫物件那一組內容。
+    /// </summary>
+    /// <remarks>
+    /// 對照表分頁收掉、指令碼分頁的標題換回來。少了這一步的症狀是看過一次
+    /// <c>CONVERT</c> 之後，接下來每一個資料表都帶著一個「style（日期時間）」分頁。
+    /// </remarks>
+    private void LeaveDocument()
+    {
+        if (_document is null)
+        {
+            return;
+        }
+
+        _document = null;
+        _scriptHeader.Label = PreviewText.TabScript;
+
+        foreach (var tab in _referenceTabs)
+        {
+            tab.Item.Visibility = Visibility.Collapsed;
+            tab.Grid.ItemsSource = null;
+        }
+    }
+
+    private string GetScript()
+    {
+        if (_scriptText is not null || _structure is null)
+        {
+            return _scriptText ?? string.Empty;
+        }
+
+        // 使用者切到指令碼分頁、按下複製或搜尋才會走到這裡，因此是 User。裡面還有一則
+        // 「執行結構健檢」——那一段才是真正花時間的部分。
+        using var notification = NotificationCenter.Default.Begin(NotificationCatalog.GeneratingObjectScript,
+            NotificationKind.Preview, NotificationOrigin.User, NotificationLevel.Info,
+            _structure.Object.QualifiedName);
+        return _scriptText = _structure.BuildScript(
+            SqlScriptPreferences.Create(Environment.NewLine, _structure.Object));
+    }
+
+    private void OnSearchTextChanged()
+    {
+        _clearSearch.IsEnabled = _search.Text.Length > 0;
+        _searchDelay.Stop();
+        _searchDelay.Start();
+    }
+
+    /// <summary>
+    /// 搜尋框握著鍵盤的期間，殼層解析成編輯器命令的按鍵交還給它。
+    /// </summary>
+    /// <remarks>
+    /// Backspace、Delete、方向鍵與 Enter 在「文字編輯器」範圍都有繫結，殼層照作用中的
+    /// 查詢視窗把它們送進命令鏈；不接回來的話，在搜尋框裡按 Backspace 刪的是後面那份 SQL。
+    /// </remarks>
+    private void OnSearchFocusChanged()
+    {
+        if (_search.IsKeyboardFocusWithin && _textView is not null)
+        {
+            ShellKeyCapture.Begin(this);
+        }
+        else
+        {
+            ShellKeyCapture.End(this);
+        }
+    }
+
+    /// <summary>清掉搜尋字，立刻還原所有分頁；不等去彈跳。</summary>
+    private void ResetSearch(bool keepFocus)
+    {
+        _searchDelay.Stop();
+
+        if (_search.Text.Length > 0)
+        {
+            _search.Clear();
+            _searchDelay.Stop();
+        }
+
+        if (_matcher is not null)
+        {
+            ApplySearch();
+        }
+
+        if (keepFocus)
+        {
+            _search.Focus();
+        }
+    }
+
+    /// <summary>
+    /// 套用搜尋字：資料格只留符合的列並標出命中，指令碼標出每一處，分頁換成命中數。
+    /// </summary>
+    /// <remarks>
+    /// 資料格用篩選不用導覽：一百多欄的表只標出命中而不篩，使用者照樣要一路捲下去找。
+    /// 指令碼反過來，篩掉幾行就讀不懂了，所以是高亮加上一處一處走。
+    /// 比對走 <see cref="TextMatcher"/> 的字面比對、不分大小寫，與 SQL Search 的本文同一套。
+    /// </remarks>
+    private void ApplySearch()
+    {
+        var pattern = _search.Text.Trim();
+
+        // 只差在頭尾空白的那一次不重做：篩選、數字與高亮都會是同一份結果。
+        if (pattern == (_matcher?.Pattern ?? string.Empty))
+        {
+            return;
+        }
+
+        _matcher = pattern.Length == 0 ? null : new TextMatcher(pattern, TextMatchOptions.None);
+        _hits.Clear();
+        _scriptHits = null;
+
+        foreach (var grid in SearchableGrids())
+        {
+            if (grid.ItemsSource is not null)
+            {
+                ApplyFilter(grid);
+            }
+        }
+
+        // 儲存格裡的高亮讀的是繼承下去的比對器，換一個值看得見的格子一起重畫。放在篩選之後：
+        // 篩選已經把舊的列收掉，先換比對器的話那些馬上要丟掉的格子會白白重畫一次。
+        SqlHighlightText.SetMatcher(_tabs, _matcher);
+
+        // 指令碼只在眼前時重排：整份重新著色是這條路上最貴的一步，看不到的那一份等切過去再排。
+        if (ReferenceEquals(_tabs.SelectedItem, _scriptTab) && _populated.Contains(_scriptTab))
+        {
+            _status.Text = string.Empty;
+            ShowScript();
+        }
+        else
+        {
+            _populated.Remove(_scriptTab);
+        }
+
+        UpdateSearchResults();
+    }
+
+    private void ApplyFilter(DataGrid grid)
+    {
+        grid.Items.Filter = grid.ItemsSource is { } rows && FindHits(grid, rows) is { } hits
+            ? new Predicate<object>(hits.Contains)
+            : null;
+    }
+
+    /// <summary>
+    /// 這一輪搜尋字在一張資料格上符合的列；沒有搜尋字時 null。
+    /// </summary>
+    /// <remarks>
+    /// 索引跟著資料列與欄的收合走，一個物件建一次；比對結果跟著搜尋字走，一個字比一次，
+    /// 列篩選與分頁上的數字都從這裡拿。還沒切過去的分頁沒有綁上資料列，由呼叫端交進來。
+    /// </remarks>
+    private HashSet<object>? FindHits(DataGrid grid, System.Collections.IEnumerable rows)
+    {
+        if (_matcher is not { } matcher)
+        {
+            return null;
+        }
+
+        if (!_hits.TryGetValue(grid, out var hits))
+        {
+            if (!_searchIndexes.TryGetValue(grid, out var index))
+            {
+                index = SqlDataGridText.CreateSearchIndex(grid, rows);
+                _searchIndexes.Add(grid, index);
+            }
+
+            hits = index.Match(matcher);
+            _hits.Add(grid, hits);
+        }
+
+        return hits;
+    }
+
+    private MatchHighlightSet ScriptHits() => _scriptHits ??= MatchHighlights.Locate(_matcher, GetScript());
+
+    /// <summary>
+    /// 分頁上的數字：沒有搜尋時是總數，有搜尋時是命中數。
+    /// </summary>
+    /// <remarks>
+    /// 還沒切過去的分頁也要數：命中落在哪一頁正是使用者要從分頁上讀到的事。資料列建一次
+    /// 就留著給填入用；指令碼只在搜尋時才組，那時使用者本來就在找東西。
+    /// </remarks>
+    private void UpdateSearchResults()
+    {
+        if (_matcher is null)
+        {
+            RestoreTotals();
+            return;
+        }
+
+        foreach (var tab in _gridTabs)
+        {
+            if (tab.Item.Visibility == Visibility.Visible && _structure is { } structure)
+            {
+                tab.Header.ShowHits(FindHits(tab.Grid, GetRows(tab, structure))?.Count ?? 0);
+            }
+        }
+
+        foreach (var tab in _referenceTabs)
+        {
+            if (tab.Item.Visibility == Visibility.Visible && tab.Grid.ItemsSource is { } rows)
+            {
+                tab.Header.ShowHits(FindHits(tab.Grid, rows)?.Count ?? 0);
+            }
+        }
+
+        if (_scriptTab.Visibility == Visibility.Visible)
+        {
+            _scriptHeader.ShowHits(ScriptHits().Count);
+        }
+    }
+
+    private void RestoreTotals()
+    {
+        if (_structure is { } structure)
+        {
+            foreach (var tab in _gridTabs)
+            {
+                tab.Header.ShowTotal(tab.Count(structure));
+            }
+        }
+
+        foreach (var tab in _referenceTabs)
+        {
+            tab.Header.ShowTotal(tab.Grid.ItemsSource is ICollection<ReferenceRow> rows ? rows.Count : null);
+        }
+
+        _scriptHeader.ShowTotal(null);
+    }
+
+    private IEnumerable<DataGrid> SearchableGrids()
+    {
+        foreach (var tab in _gridTabs)
+        {
+            yield return tab.Grid;
+        }
+
+        foreach (var tab in _referenceTabs)
+        {
+            yield return tab.Grid;
+        }
+    }
+
+    /// <summary>
+    /// 換行開關：自由文字欄折成多行、列高跟著內容長，指令碼一起換行。
+    /// </summary>
+    /// <remarks>
+    /// 只換儲存格樣板與列高，不重建資料格：選取、捲動位置與收起的空欄都留著。
+    /// 名稱與型別不跟著換行——那幾欄折起來只會讓一列變成三行而讀不出是同一列。
+    /// </remarks>
+    private void ApplyWrap(bool wrap)
+    {
+        foreach (var column in _freeTextColumns)
+        {
+            column.CellTemplate = CreateCellTemplate(column.SortMemberPath, wrap ? _cellWrapped : _cellLine);
+        }
+
+        foreach (var grid in SearchableGrids())
+        {
+            ApplyRowHeight(grid);
+        }
+
+        _script.SetWrap(wrap);
+    }
+
+    private void ApplyRowHeight(DataGrid grid)
+    {
+        grid.MinRowHeight = _metrics.RowHeight;
+        grid.RowHeight = _wrap.IsChecked == true ? double.NaN : _metrics.RowHeight;
+    }
+
+    /// <summary>Esc：搜尋框裡有字時先清字，第二次才關視窗。</summary>
+    private void HandleEscape()
+    {
+        if (_search.IsKeyboardFocusWithin && _search.Text.Length > 0)
+        {
+            ResetSearch(keepFocus: true);
+            return;
+        }
+
+        CloseRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 複製目前分頁的選取內容。
+    /// </summary>
+    /// <remarks>
+    /// 指令碼分頁沒有選取時複製整份，資料格沒有選取時什麼都不做——
+    /// 資料格的「全部」是表格，使用者要的多半是指令碼，不該偷偷換一份東西給他。
+    /// </remarks>
+    public void CopySelection()
+    {
+        if (_tabs.SelectedItem is not TabItem tab)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(tab, _scriptTab))
+        {
+            var selected = _script.SelectedSql;
+            Copy(
+                selected.Length == 0 ? GetScript() : selected,
+                selected.Length == 0 ? PreviewText.CopiedFullScriptNoSelection : PreviewText.CopiedSelectedScript);
+            return;
+        }
+
+        if (tab.Content is DataGrid grid)
+        {
+            var text = SqlDataGridText.Build(grid, selectedOnly: true);
+
+            if (string.IsNullOrEmpty(text))
+            {
+                _status.Text = PreviewText.SelectCellsFirst;
+                return;
+            }
+
+            Copy(text, PreviewText.CopiedSelectedCells);
+        }
+    }
+
+    /// <summary>分頁列上那一顆複製：有選取複製選取，沒有就是完整指令碼。</summary>
+    private void CopyCurrent()
+    {
+        if (HasSelection())
+        {
+            CopySelection();
+        }
+        else
+        {
+            CopyAll();
+        }
+    }
+
+    /// <summary>複製整份指令碼，與目前在哪個分頁無關。</summary>
+    /// <remarks>
+    /// 內建說明停在對照表上時，「全部」指的是目前這張表——十六列 style
+    /// 正是使用者會想貼到別處留著的東西。
+    /// </remarks>
+    public void CopyAll()
+    {
+        if (_document is { } document)
+        {
+            if (_tabs.SelectedItem is TabItem { Content: DataGrid })
+            {
+                CopyGridAll();
+                return;
+            }
+
+            Copy(GetScript(), document.CopiedMessage);
+            return;
+        }
+
+        Copy(GetScript(), _structure is { CanBuildExecutableScript: true }
+            ? PreviewText.CopiedFullScript
+            : PreviewText.CopiedStructureSummary);
+    }
+
+    private void CopyGridAll()
+    {
+        if (_tabs.SelectedItem is TabItem { Content: DataGrid grid })
+        {
+            Copy(SqlDataGridText.Build(grid, selectedOnly: false), PreviewText.CopiedWholeGrid);
+        }
+    }
+
+    private void Copy(string text, string successMessage)
+    {
+        if (!string.IsNullOrEmpty(text))
+        {
+            _ = CopyAsync(text, successMessage);
+        }
+    }
+
+    private async Task CopyAsync(string text, string successMessage)
+    {
+        // 剪貼簿被鎖住由 SqlClipboard 重試並回報；這裡只接其他例外，不值得中斷預覽。
+        try
+        {
+            _status.Text = await SqlClipboard.WriteTextAsync(text).ConfigureAwait(true) ?? successMessage;
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"複製預覽內容失敗：{exception.Message}");
+            _status.Text = CommonText.CopyFailed(exception.Message);
+        }
+    }
+
+    private ContextMenu CreateGridMenu()
+    {
+        var menu = new ContextMenu();
+        VsThemeBrushes.Apply(menu);
+        var copy = new MenuItem { Header = PreviewText.MenuCopySelectedCells };
+        copy.Click += (_, _) => CopySelection();
+        var copyAll = new MenuItem { Header = PreviewText.MenuCopyWholeGrid };
+        copyAll.Click += (_, _) => CopyGridAll();
+        var copyScript = new MenuItem { Header = PreviewText.MenuCopyFullScript };
+        copyScript.Click += (_, _) => CopyAll();
+        menu.Items.Add(copy);
+        menu.Items.Add(copyAll);
+        menu.Items.Add(copyScript);
+        TrackContextMenu(menu);
+        return menu;
+    }
+
+    private void TrackContextMenu(ContextMenu menu)
+    {
+        _contextMenus.Add(menu);
+        menu.Opened += (_, _) =>
+        {
+            _openContextMenuCount++;
+            InteractionFocusGained?.Invoke(this, EventArgs.Empty);
+        };
+        menu.Closed += (_, _) =>
+        {
+            _openContextMenuCount = Math.Max(0, _openContextMenuCount - 1);
+            InteractionFocusLost?.Invoke(this, EventArgs.Empty);
+        };
+    }
+
+    /// <summary>目前分頁有沒有選取的內容；決定 Ctrl+C 該不該由預覽接手。</summary>
+    public bool HasSelection()
+    {
+        if (_tabs.SelectedItem is not TabItem tab)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(tab, _scriptTab))
+        {
+            return _script.HasSelection;
+        }
+
+        return tab.Content is DataGrid grid && grid.SelectedCells.Count > 0;
+    }
+
+    protected override void OnPreviewKeyDown(KeyEventArgs eventArgs)
+    {
+        // 焦點在預覽裡時，編輯器的命令處理常式收不到按鍵，這幾個得由這裡處理。
+        if (eventArgs.Key == Key.Escape)
+        {
+            eventArgs.Handled = true;
+            HandleEscape();
+            return;
+        }
+
+        var modifiers = eventArgs.KeyboardDevice.Modifiers;
+
+        if (_search.IsKeyboardFocusWithin)
+        {
+            // Enter 在指令碼裡一處一處走；資料格的命中已經篩在眼前，沒有「下一處」可走。
+            if (eventArgs.Key == Key.Enter && ReferenceEquals(_tabs.SelectedItem, _scriptTab))
+            {
+                eventArgs.Handled = true;
+                _scriptMatches.Move(forward: (modifiers & ModifierKeys.Shift) == 0);
+            }
+
+            // 其餘按鍵（包括 Ctrl+C）屬於文字方塊自己。
+            base.OnPreviewKeyDown(eventArgs);
+            return;
+        }
+
+        if (eventArgs.Key == Key.C && (modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+        {
+            eventArgs.Handled = true;
+            CopySelection();
+            return;
+        }
+
+        base.OnPreviewKeyDown(eventArgs);
+    }
+
+    private static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>
+    /// 建立唯讀資料格。
+    /// </summary>
+    /// <remarks>
+    /// 以儲存格為選取單位，使用者才能只拉走要的那幾欄；
+    /// 複製走自己的處理常式，不依賴內建命令的繞送。
+    ///
+    /// 文字欄一律是樣板欄加 <see cref="SqlHighlightText"/>：搜尋時每一格自己標出命中。
+    /// <see cref="DataGridColumn.SortMemberPath"/> 指向同一個屬性，複製、排序與空欄判斷
+    /// 讀的都是它（見 <see cref="SqlDataGridText"/>）。
+    /// </remarks>
+    private DataGrid CreateGrid(params GridColumn[] columns)
+    {
+        var grid = SqlAssistChrome.CreateDataGrid(SqlAssistChrome.DefaultMetrics);
+
+        // 外觀之外的都是這個視窗自己的行為：以儲存格為選取單位、允許橫向捲動，
+        // 以及一份自己的內容選單。
+        grid.IsReadOnly = true;
+        grid.SelectionMode = DataGridSelectionMode.Extended;
+        grid.SelectionUnit = DataGridSelectionUnit.CellOrRowHeader;
+        grid.ClipboardCopyMode = DataGridClipboardCopyMode.IncludeHeader;
+        grid.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+        grid.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        grid.ContextMenu = CreateGridMenu();
+
+        foreach (var column in columns)
+        {
+            var text = new DataGridTemplateColumn
+            {
+                Header = column.Header,
+                SortMemberPath = column.Path,
+                CellTemplate = CreateCellTemplate(column.Path, _cellLine),
+                Width = column.Fill ? new DataGridLength(1, DataGridLengthUnitType.Star) : DataGridLength.Auto
+            };
+
+            if (column.Fill)
+            {
+                text.MinWidth = GridColumn.FillMinimumWidth;
+            }
+            else if (column.MaximumWidth > 0)
+            {
+                text.MaxWidth = column.MaximumWidth;
+            }
+
+            if (column.IsFreeText)
+            {
+                _freeTextColumns.Add(text);
+            }
+
+            if (column.Optional)
+            {
+                _optionalColumns.Add(text);
+            }
+
+            grid.Columns.Add(text);
+        }
+
+        return grid;
+    }
+
+    private static DataTemplate CreateCellTemplate(string path, Style style)
+    {
+        var text = new FrameworkElementFactory(typeof(SqlHighlightText));
+        text.SetBinding(SqlHighlightText.SourceTextProperty, new Binding(path) { Mode = BindingMode.OneWay });
+        text.SetValue(StyleProperty, style);
+        return new DataTemplate { VisualTree = text };
+    }
+
+    /// <summary>
+    /// 儲存格文字的兩種樣式：單行省略，或整段換行。
+    /// </summary>
+    /// <remarks>
+    /// 以共用的儲存格樣式為底（內距、垂直置中），只換斷行與 Tooltip。Tooltip 讀
+    /// <see cref="SqlHighlightText.SourceText"/> 而不是 <see cref="TextBlock.Text"/>：
+    /// 高亮是用 Run 組起來的，那時 Text 不是完整的一格。
+    /// </remarks>
+    private static Style CreateCellStyle(bool wrap)
+    {
+        var style = new Style(typeof(SqlHighlightText), SqlAssistChrome.CreateCellTextStyle());
+        style.Setters.Add(new Setter(TextBlock.TextWrappingProperty, wrap ? TextWrapping.Wrap : TextWrapping.NoWrap));
+        style.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, wrap ? TextTrimming.None : TextTrimming.CharacterEllipsis));
+        style.Setters.Add(new Setter(ToolTipProperty,
+            new Binding(nameof(SqlHighlightText.SourceText)) { RelativeSource = RelativeSource.Self }));
+
+        if (wrap)
+        {
+            // 換行之後一格可能好幾行；上下留一點距離，列與列之間才分得開。
+            style.Setters.Add(new Setter(MarginProperty, new Thickness(10, 4, 10, 4)));
+        }
+
+        return style;
+    }
+
+    /// <summary>
+    /// 把旗標畫成一列膠囊的欄。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DataGridColumn.SortMemberPath"/> 不是為了排序才設的——這一欄不是文字欄，
+    /// 複製時讀不到繫結路徑。複製的程式碼會退回這個路徑，因此它必須指向
+    /// 旗標的純文字版本。
+    /// </remarks>
+    private static DataGridTemplateColumn CreateFlagsColumn()
+    {
+        return new DataGridTemplateColumn
+        {
+            Header = PreviewText.HeaderFlags,
+            SortMemberPath = nameof(ColumnRow.Flags),
+            Width = DataGridLength.Auto
+        };
+    }
+
+    /// <summary>
+    /// 套用基準字級。
+    /// </summary>
+    /// <remarks>
+    /// 每次顯示都呼叫一次，設定改完不必重開查詢視窗就會生效。相同的值直接返回，
+    /// 因為重建樣式會讓資料格重新量一次所有欄寬——那是換選取時最不該付的成本。
+    ///
+    /// 資料格的字級靠繼承傳給儲存格，但欄位標題與徽章的字級是寫在樣式與範本裡的，
+    /// 那兩樣只能整個換掉。指令碼分頁不動，它跟的是編輯器的字型與字級；分頁列右側
+    /// 的工具也不動，理由見 <see cref="ToolMetrics"/>。
+    /// </remarks>
+    public void ApplyFontSize(double baseSize)
+    {
+        if (Math.Abs(_fontSize - baseSize) < 0.01)
+        {
+            return;
+        }
+
+        _fontSize = baseSize;
+        _metrics = new SqlAssistChrome.Metrics(baseSize);
+
+        _title.FontSize = _metrics.Title;
+        _signature.FontSize = _metrics.Caption;
+        _description.FontSize = _metrics.Caption;
+        _leadToggle.FontSize = _metrics.Caption;
+        _status.FontSize = _metrics.Caption;
+        _tabs.FontSize = _metrics.Body;
+
+        foreach (var pill in new[] { _kindPill, _keyPill, _pendingPill, _failurePill })
+        {
+            pill.TextSize = _metrics.Caption;
+        }
+
+        var headerStyle = SqlAssistChrome.CreateColumnHeaderStyle(_metrics);
+
+        foreach (var grid in SearchableGrids())
+        {
+            ApplyGridMetrics(grid, headerStyle);
+        }
+
+        _flags.CellTemplate = PreviewChrome.CreateFlagsCellTemplate(
+            nameof(ColumnRow.FlagList),
+            _metrics);
+
+        // 字變大，放得下一行的說明可能就放不下了。
+        UpdateLeadToggle();
+    }
+
+    private void ApplyGridMetrics(DataGrid grid, Style headerStyle)
+    {
+        grid.FontSize = _metrics.Body;
+        grid.ColumnHeaderStyle = headerStyle;
+        ApplyRowHeight(grid);
+    }
+
+    public void Dispose()
+    {
+        _searchDelay.Stop();
+        ShellKeyCapture.End(this);
+        _script.Dispose();
+    }
+}

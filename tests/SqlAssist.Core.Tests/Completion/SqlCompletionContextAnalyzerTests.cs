@@ -10,16 +10,17 @@ public sealed class SqlCompletionContextAnalyzerTests
     [Theory]
     [InlineData("SELECT * FROM ", CompletionTarget.DataSource)]
     [InlineData("SELECT * FROM Loans INNER JOIN ", CompletionTarget.DataSource)]
+    [InlineData("SELECT (CopyNo) AS c FROM ", CompletionTarget.DataSource)]
+    [InlineData("UPDATE l SET CopyNo = 1 FROM ", CompletionTarget.DataSource)]
     [InlineData("UPDATE ", CompletionTarget.DataSource)]
     [InlineData("INSERT INTO ", CompletionTarget.DataSource)]
-    [InlineData("INSERT ", CompletionTarget.DataSource)]
-    [InlineData("INSERT dbo.", CompletionTarget.DataSource)]
     [InlineData("MERGE INTO ", CompletionTarget.DataSource)]
     [InlineData("MERGE INTO dbo.Loan AS target USING ", CompletionTarget.DataSource)]
     [InlineData("ALTER TABLE ", CompletionTarget.DataSource)]
     [InlineData("DROP TABLE ", CompletionTarget.DataSource)]
     [InlineData("DROP TABLE IF EXISTS ", CompletionTarget.DataSource)]
     [InlineData("TRUNCATE TABLE ", CompletionTarget.DataSource)]
+    [InlineData("EXEC dbo.usp_Copies WITH RESULT SETS (AS OBJECT ", CompletionTarget.DataSource)]
     [InlineData("DROP TRIGGER IF EXISTS ", CompletionTarget.Trigger)]
     [InlineData("ALTER PROCEDURE ", CompletionTarget.Procedure)]
     [InlineData("ALTER PROC ", CompletionTarget.Procedure)]
@@ -38,7 +39,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.True(context.IsValid);
+        Assert.True(SqlCompletionPolicy.Participates(context, triggerAfterCharacters: 1));
         Assert.Equal(expected, context.Target);
     }
 
@@ -60,7 +61,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal(CompletionTarget.DataSource, context.Target);
     }
 
@@ -81,7 +82,7 @@ public sealed class SqlCompletionContextAnalyzerTests
         var input = SqlWithCaret.Parse(sqlWithCaret);
         var context = SqlCompletionContextAnalyzer.Analyze(input.Text, input.Caret);
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal(CompletionTarget.DataSource, context.Target);
         Assert.Null(context.ColumnSources);
         Assert.NotNull(context.QualifierPath);
@@ -93,77 +94,33 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// <remarks>
     /// 位置分析找子句錨點時會穿過還沒關上的左括號，於是這裡的逗號也拿到資料來源
     /// 的位置。跟著把目標改成資料來源的話，<c>INSERT INTO T (a, </c> 會列出整個
-    /// 資料庫的資料表，而那一格文法上只接得了 T 的資料行。
+    /// 資料庫的資料表，而那一格文法上只接得了 T 的資料行（見 <see cref="SqlColumnOwnerTests"/>）。
     /// </remarks>
     [Theory]
     [InlineData("INSERT INTO dbo.T (a, ")]
     [InlineData("INSERT INTO dbo.T (a, b, ")]
     public void INSERT的資料行清單不是資料來源(string textBeforeCaret)
     {
-        Assert.Equal(
-            CompletionTarget.Any,
-            SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).Target);
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+
+        Assert.Equal(CompletionTarget.Any, context.Target);
+        Assert.Equal("T", context.ColumnOwner?.ObjectName);
     }
 
     /// <summary>
     /// 沒有輸入前綴、也沒有可據以縮小範圍的前導關鍵字時不主動跳出清單，
     /// 否則按下空白鍵就會列出整個資料庫。
     /// </summary>
-    /// <remarks>
-    /// 述詞的起點是例外：那裡判得出來要的是什麼（見
-    /// <see cref="CompletionTarget.Predicate"/>），而 <c>WHERE </c> 自己一行
-    /// 也在其中——使用者已經表態他在寫條件了。這一條守的是真的判不出來的
-    /// 那幾格。
-    /// </remarks>
     [Theory]
     [InlineData("SELECT ")]
-    [InlineData("SELECT * FROM t ")]
+    [InlineData("WHERE ")]
     [InlineData("  ")]
     public void 既無前綴也無目標時不建議(string textBeforeCaret)
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.False(context.IsValid);
+        Assert.False(SqlCompletionPolicy.Participates(context, triggerAfterCharacters: 1));
         Assert.Equal(CompletionTarget.Any, context.Target);
-    }
-
-    /// <summary>
-    /// 述詞的起點判得出來，空前綴就參與。
-    /// </summary>
-    /// <remarks>
-    /// 目標仍然是寬的（欄位、關鍵字、片段、資料庫物件都列），分開的只是
-    /// 「參不參與」——<c>ON</c> 之後使用者就是要挑聯結欄位，清單該自己出現。
-    /// 允許的類別與 <see cref="CompletionTarget.Any"/> 完全相同，因此這一條
-    /// 不該拿去跟 <see cref="CompletionTarget.Column"/> 比。
-    /// </remarks>
-    [Theory]
-    [InlineData("WHERE ")]
-    [InlineData("SELECT * FROM t WHERE ")]
-    [InlineData("SELECT * FROM A a INNER JOIN B b ON ")]
-    [InlineData("SELECT * FROM A a WHERE a.Id = 1 AND ")]
-    public void 述詞起點判得出來因此參與(string textBeforeCaret)
-    {
-        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
-
-        Assert.True(context.IsValid);
-        Assert.Equal(CompletionTarget.Predicate, context.Target);
-        Assert.Equal(string.Empty, context.Prefix);
-    }
-
-    /// <summary>
-    /// 條件的右邊不是述詞起點：那裡要的是右邊那一個運算元。
-    /// </summary>
-    /// <remarks>
-    /// 詞元是運算子時分析器回「判不出上下文」，而那一個成員含著述詞的位元。
-    /// 靠交集判斷的話這裡會被當成述詞起點：清單從「欄位」換成「下一條條件」，
-    /// 選下去寫出 <c>= a.CopyNo = b.CopyNo</c>。
-    /// </remarks>
-    [Theory]
-    [InlineData("SELECT * FROM A a INNER JOIN B b ON a.CopyNo = ")]
-    [InlineData("SELECT * FROM A a WHERE a.Qty > ")]
-    public void 條件的右邊不是述詞起點(string textBeforeCaret)
-    {
-        Assert.NotEqual(CompletionTarget.Predicate, SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).Target);
     }
 
     [Theory]
@@ -189,7 +146,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal(CompletionTarget.Procedure, context.Target);
     }
 
@@ -200,9 +157,6 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// <remarks>
     /// INSERT INTO 與單獨的 INTO 也必須分開。<c>SELECT … INTO #tmp</c> 的 INTO 後面
     /// 是一個還不存在的新名稱，在那裡展開 INSERT 骨架會蓋掉使用者正在取的名字。
-    ///
-    /// <c>INTO</c> 是選用關鍵字，所以單獨一個 <c>INSERT</c> 要和兩個字連著寫一樣展開。
-    /// 少了這一條，<c>INSERT dbo.Loan …</c> 的使用者在那個位置提交只換到一個名稱。
     /// </remarks>
     [Theory]
     [InlineData("ALTER PROCEDURE ", CompletionIntent.AlterDefinition)]
@@ -217,10 +171,6 @@ public sealed class SqlCompletionContextAnalyzerTests
     [InlineData("exec usp", CompletionIntent.ExecuteCall)]
     [InlineData("INSERT INTO ", CompletionIntent.InsertStatement)]
     [InlineData("insert into lo", CompletionIntent.InsertStatement)]
-    [InlineData("INSERT ", CompletionIntent.InsertStatement)]
-    [InlineData("insert lo", CompletionIntent.InsertStatement)]
-    [InlineData("INSERT dbo.Loan", CompletionIntent.InsertStatement)]
-    [InlineData("INSERT #Lo", CompletionIntent.InsertStatement)]
     [InlineData("SELECT * INTO ", CompletionIntent.Reference)]
     [InlineData("SELECT * FROM ", CompletionIntent.Reference)]
     [InlineData("DROP TRIGGER ", CompletionIntent.Reference)]
@@ -232,47 +182,15 @@ public sealed class SqlCompletionContextAnalyzerTests
 
     /// <remarks>
     /// 提交時要換掉的是整句，起點必須是 INSERT 而不是 INTO——只從 INTO 開始換
-    /// 會在編輯器裡留下一個孤零零的 INSERT。省略 INTO 的寫法沒有第二個詞元可以
-    /// 算錯，起點同樣落在 INSERT 上。
+    /// 會在編輯器裡留下一個孤零零的 INSERT。
     /// </remarks>
-    [Theory]
-    [InlineData("  INSERT INTO ")]
-    [InlineData("  INSERT dbo.Loan")]
-    [InlineData("  INSERT ")]
-    public void INSERT的關鍵字起點落在INSERT上(string textBeforeCaret)
+    [Fact]
+    public void INSERT_INTO的關鍵字起點落在INSERT上()
     {
-        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+        var context = SqlCompletionContextAnalyzer.Analyze("  INSERT INTO ");
 
         Assert.Equal(2, context.TargetKeywordStart);
         Assert.Equal(CompletionTarget.DataSource, context.Target);
-    }
-
-    /// <remarks>
-    /// <c>WHEN NOT MATCHED THEN INSERT (欄位…) VALUES (…)</c> 的 <c>INSERT</c> 後面接的是
-    /// 欄位清單，資料表名稱在那個位置文法上根本寫不出來。把它讀成一句新的 INSERT 敘述，
-    /// 清單就會列出一串使用者選了必然出錯的資料表。
-    /// </remarks>
-    [Theory]
-    [InlineData("MERGE dbo.Target AS t USING dbo.Source AS s ON t.Id = s.Id WHEN NOT MATCHED THEN INSERT ")]
-    [InlineData("MERGE dbo.RowCount ON target.Id = source.Id WHEN NOT MATCHED THEN INSERT ")]
-    public void MERGE的INSERT動作子句不是新的INSERT敘述(string textBeforeCaret)
-    {
-        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
-
-        Assert.NotEqual(CompletionIntent.InsertStatement, context.Intent);
-        Assert.NotEqual(CompletionTarget.DataSource, context.Target);
-    }
-
-    /// <remarks>
-    /// <c>INSERT</c> 後面那一格是資料表名稱，後面不會接別名——與 <c>INSERT INTO</c>
-    /// 一樣。多補一個別名進去，那一句就跑不動了。
-    /// </remarks>
-    [Theory]
-    [InlineData("INSERT ")]
-    [InlineData("INSERT INTO ")]
-    public void INSERT之後不接別名(string textBeforeCaret)
-    {
-        Assert.False(SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).MayAppendTableAlias);
     }
 
     /// <remarks>
@@ -310,7 +228,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal(expected, context.Qualifier);
         Assert.Equal(CompletionTarget.DataSource, context.Target);
     }
@@ -320,10 +238,9 @@ public sealed class SqlCompletionContextAnalyzerTests
     [InlineData("/* publ")]
     [InlineData("SELECT 'publ")]
     [InlineData("SELECT \"publ")]
-    [InlineData("SELECT [publ")]
     public void 字串與註解內不建議(string textBeforeCaret)
     {
-        Assert.False(SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).IsValid);
+        Assert.Equal(SqlCompletionSlot.Inert, SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).Slot);
     }
 
     [Fact]
@@ -331,14 +248,16 @@ public sealed class SqlCompletionContextAnalyzerTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze("SELECT 'a' FROM publ");
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal("publ", context.Prefix);
     }
 
     [Fact]
     public void 空白輸入不建議()
     {
-        Assert.False(SqlCompletionContextAnalyzer.Analyze(string.Empty).IsValid);
+        Assert.False(SqlCompletionPolicy.Participates(
+            SqlCompletionContextAnalyzer.Analyze(string.Empty),
+            triggerAfterCharacters: 1));
     }
 
     /// <summary>
@@ -348,8 +267,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// T-SQL 的一般識別字不能以數字開頭，所以清單裡沒有一項會是對的。位置分析
     /// 在這裡也幫不上忙——運算子之後一律是 <c>Any</c>，於是整個目錄進場，
     /// 模糊比對把 <c>10</c> 對到 <c>LOG10</c>，而使用者順手按下 Enter 就把數字
-    /// 換成了一個函式名稱。與 <c>SqlCompletionTriggers.IsIdentifierLike</c>
-    /// 不讓 <c>1.5</c> 的點號彈出物件清單是同一條理由。
+    /// 換成了一個函式名稱。<c>1.</c> 的點號不當成限定字是同一條理由。
     /// </remarks>
     [Theory]
     [InlineData("UPDATE #Loan SET Fine = Fine - 1")]
@@ -362,7 +280,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     [InlineData("SELECT 0x1F")]
     public void 數值常值不建議(string textBeforeCaret)
     {
-        Assert.False(SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).IsValid);
+        Assert.Equal(SqlCompletionSlot.Inert, SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).Slot);
     }
 
     /// <summary>數字只在詞元開頭才算數值常值。</summary>
@@ -377,7 +295,7 @@ public sealed class SqlCompletionContextAnalyzerTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal(prefix, context.Prefix);
     }
 
@@ -396,11 +314,36 @@ public sealed class SqlCompletionContextAnalyzerTests
     [InlineData("SELECT * FROM dbo.PUBLISHER AS c")]
     [InlineData("SELECT c.PUBL_CODE AS co")]
     [InlineData("DECLARE @pub")]
-    [InlineData(";WITH CTE_TEST AS (SELECT 1 AS a)\r\nSELECT * FROM CTE_TEST a")]
-    [InlineData("SELECT * FROM CTE_TEST AS a INNER JOIN dbo.Cat_BookCopy b")]
+    [InlineData("CREATE PROCEDURE dbo.usp")]
+    [InlineData("CREATE NONCLUSTERED INDEX IX")]
+    [InlineData(";WITH CTE")]
+    [InlineData("SELECT PublCode INTO #Pub")]
     public void 取名字的位置不建議(string textBeforeCaret)
     {
-        Assert.False(SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).IsValid);
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+
+        Assert.Equal(SqlCompletionSlot.Name, context.Slot);
+        Assert.False(SqlCompletionPolicy.Participates(context, triggerAfterCharacters: 1));
+    }
+
+    /// <summary>
+    /// 沒有 AS 的別名那一格照常有清單，但不預先選中。
+    /// </summary>
+    /// <remarks>
+    /// 打到一半的 <c>b</c> 可能是別名，也可能是 <c>BETWEEN</c>、<c>BY</c> 的開頭。
+    /// 軟選時 Enter 照常換行、別名留在原處，要補關鍵字的人按 Tab。
+    /// </remarks>
+    [Theory]
+    [InlineData(";WITH CTE_TEST AS (SELECT 1 AS a)\r\nSELECT * FROM CTE_TEST a")]
+    [InlineData("SELECT * FROM CTE_TEST AS a INNER JOIN dbo.Cat_BookCopy b")]
+    [InlineData("SELECT c.PUBL_CODE co")]
+    public void 可能是別名的位置軟選(string textBeforeCaret)
+    {
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+
+        Assert.Equal(SqlCompletionSlot.MaybeName, context.Slot);
+        Assert.True(SqlCompletionPolicy.Participates(context, triggerAfterCharacters: 1));
+        Assert.True(SqlCompletionPolicy.UsesSoftSelection(context));
     }
 
     /// <summary>
@@ -420,9 +363,9 @@ public sealed class SqlCompletionContextAnalyzerTests
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
         var suggestions = BuiltInSuggestionCatalog.Create(SqlSnippetLibrary.Empty);
 
-        Assert.True(context.IsValid);
+        Assert.True(SqlCompletionPolicy.Participates(context, triggerAfterCharacters: 1));
         Assert.Contains(
-            SuggestionMatcher.Filter(suggestions, context),
+            SuggestionContextFilter.Filter(suggestions, context),
             suggestion => suggestion.Kind == SuggestionKind.Keyword &&
                 suggestion.DisplayText == keyword);
     }
@@ -432,17 +375,22 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// </summary>
     /// <remarks>
     /// 預存程序與檢視的主體開頭就在 <c>AS</c> 之後，那裡少了 <c>BEGIN</c>、
-    /// <c>SELECT</c> 的話，這個修正就從一個問題換成另一個問題。
+    /// <c>SELECT</c> 的話，這個修正就從一個問題換成另一個問題。主體是一句的開頭。
     /// </remarks>
     [Theory]
-    [InlineData("CREATE PROCEDURE dbo.p AS BEG")]
-    [InlineData("CREATE VIEW v AS SEL")]
-    public void AS之後是主體時照常建議(string textBeforeCaret)
+    [InlineData("CREATE PROCEDURE dbo.p AS BEG", "BEGIN")]
+    [InlineData("CREATE VIEW v AS SEL", "SELECT")]
+    public void AS之後是主體時照常建議(string textBeforeCaret, string keyword)
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+        var suggestions = BuiltInSuggestionCatalog.Create(SqlSnippetLibrary.Empty);
 
-        Assert.True(context.IsValid);
-        Assert.Equal(SqlKeywordPosition.Any, context.KeywordPosition);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
+        Assert.Equal(SqlKeywordPosition.StatementStart, context.KeywordPosition);
+        Assert.Contains(
+            SuggestionContextFilter.Filter(suggestions, context),
+            suggestion => suggestion.Kind == SuggestionKind.Keyword &&
+                suggestion.DisplayText == keyword);
     }
 
     /// <summary>別名寫完之後就恢復正常，那裡要的是 WHERE、JOIN 這些子句關鍵字。</summary>
@@ -455,9 +403,23 @@ public sealed class SqlCompletionContextAnalyzerTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze("SELECT * FROM (SELECT 1 AS a) d\r\nWHE");
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal(
             SqlKeywordPosition.TableSourceTail | SqlKeywordPosition.StatementStart,
             context.KeywordPosition);
+    }
+
+    /// <summary>
+    /// FETCH、RESTORE、REVOKE、BULK INSERT、CREATE LOGIN 的 FROM 後面不是資料表，
+    /// 判準與位置分析、範圍分析同一條。
+    /// </summary>
+    [Theory]
+    [InlineData("FETCH NEXT FROM ")]
+    [InlineData("REVOKE SELECT ON dbo.Loan FROM ")]
+    [InlineData("BULK INSERT dbo.Loan FROM ")]
+    [InlineData("CREATE LOGIN Lib_Reader FROM ")]
+    public void 不接資料來源的FROM之後不列資料表(string textBeforeCaret)
+    {
+        Assert.NotEqual(CompletionTarget.DataSource, SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).Target);
     }
 }

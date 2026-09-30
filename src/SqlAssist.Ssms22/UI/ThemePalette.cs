@@ -52,6 +52,7 @@ internal static class ThemePalette
             [ThemeBrush.RowHover] = highContrast ? selection.Background : Tint(0.05),
             [ThemeBrush.RowSelected] = highContrast ? selection.Background : Tint(0.12),
             [ThemeBrush.SelectedForeground] = highContrast ? selection.Foreground : foreground,
+            [ThemeBrush.TextSelection] = TextSelectionColors.Create(accent, highContrast, selection.Background, background, foreground),
             [ThemeBrush.RowPressed] = highContrast ? selection.Background : Tint(0.18),
             [ThemeBrush.RowAlternate] = highContrast ? background : Overlay(foreground, 0.045),
             [ThemeBrush.SegmentTrack] = highContrast ? background : Overlay(foreground, 0.06),
@@ -60,6 +61,9 @@ internal static class ThemePalette
             [ThemeBrush.BadgeBackground] = highContrast ? background : badge,
             [ThemeBrush.AccentBackground] = highContrast ? background : Tint(0.12),
             [ThemeBrush.AccentBorder] = highContrast ? foreground : accent,
+            // 連結是字不是圖形，要過文字的 4.5:1；兩種表面逐一校正，高對比沿用前景、靠底線辨識。
+            [ThemeBrush.LinkForeground] = highContrast ? foreground : ThemeColorMath.EnsureTextContrast(
+                ThemeColorMath.EnsureTextContrast(accent, background), window.Background),
             [ThemeBrush.MatchBackground] = matches.Background,
             [ThemeBrush.MatchForeground] = matches.Foreground,
             [ThemeBrush.MatchCurrentBackground] = matches.CurrentBackground,

@@ -9,6 +9,5 @@
   "ExpressionUnavailable": "Expression unavailable",
   "UnscriptableHeading": "Cannot generate an executable script for {name} ({kind}).",
   "UnscriptableReason": "SqlAssist does not recognize this object's type, so it cannot tell what its definition should look like.",
-  "UnscriptableAvailable": "What could be retrieved:",
-  "TriggerClr": "Trigger {trigger} is implemented in a CLR assembly, so it has no T-SQL definition to script."
+  "UnscriptableAvailable": "What could be retrieved:"
 }

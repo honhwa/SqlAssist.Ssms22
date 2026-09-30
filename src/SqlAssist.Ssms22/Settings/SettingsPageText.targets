@@ -19,17 +19,6 @@
     <SqlAssistSettingsPageText Include="$(MSBuildThisFileDirectory)SettingsPageText.*.resjson" />
     <!-- 設定頁用不到強型別成員，只要資源；產生器仍讀它，驗證規則只有那一份。 -->
     <AdditionalFiles Update="@(SqlAssistSettingsPageText)" SqlAssistTextResourceOnly="true" />
-    <!--
-      同一批 .resjson 再原樣收一份成內嵌資源（純文字）。設定頁的 .resources 是給殼層掃的，
-      而 SqlAssist 自己要讀這張表去把註冊檔換成該語言的字面值——那條路若走 ResourceManager
-      就得載衛星組件，而「衛星載不到只會安靜退回英文」正是設定頁一直是英文的原因，
-      不再賭一次探測路徑：來源文字直接收進來，查表與衛星完全無關。
-      兩種收法同源，改翻譯不必記得改兩份。
-    -->
-    <EmbeddedResource Include="@(SqlAssistSettingsPageText)"
-                      Type="Non-Resx"
-                      WithCulture="false"
-                      LogicalName="$(RootNamespace).Settings.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <UsingTask TaskName="SqlAssistResJsonToResources"

@@ -52,7 +52,6 @@ public static class SqlAssistMonikers
     public const string BlockDebounce = "sqlAssist.blocks.debounce";
     public const string UppercaseKeywordsOnType = "sqlAssist.general.uppercaseKeywordsOnType";
     public const string AutoPairDelimiters = "sqlAssist.general.autoPairDelimiters";
-    public const string AutoPairBlocks = "sqlAssist.general.autoPairBlocks";
     public const string CheckForUpdates = "sqlAssist.general.checkForUpdates";
     public const string Animations = "sqlAssist.general.animations";
     public const string IgnoreWindowsAnimationSetting = "sqlAssist.general.ignoreWindowsAnimationSetting";
@@ -67,7 +66,6 @@ public static class SqlAssistMonikers
 
     public const string QualifyObjectNames = "sqlAssist.insertion.qualifyObjectNames";
     public const string UseSquareBrackets = "sqlAssist.insertion.useSquareBrackets";
-    public const string TableSourceAliasStyle = "sqlAssist.insertion.tableSourceAliasStyle";
     public const string ExpandWildcardOnTab = "sqlAssist.insertion.expandWildcardOnTab";
     public const string WildcardLayout = "sqlAssist.insertion.wildcardLayout";
     public const string ExpandAlterDefinition = "sqlAssist.insertion.expandAlterDefinition";
@@ -84,7 +82,6 @@ public static class SqlAssistMonikers
     public const string ClickNavigation = "sqlAssist.structure.clickNavigation";
     public const string PreviewMode = "sqlAssist.structure.previewMode";
     public const string PreviewDelay = "sqlAssist.structure.previewDelay";
-    public const string PreviewPlacement = "sqlAssist.structure.previewPlacement";
     public const string PreviewFontSize = "sqlAssist.structure.previewFontSize";
     public const string ScriptStyle = "sqlAssist.structure.scriptStyle";
     public const string ScriptIncludeExtendedProperties =

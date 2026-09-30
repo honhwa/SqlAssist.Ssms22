@@ -70,25 +70,10 @@ public sealed class SqlAssistSettings
     /// 這幾種行為是同一件事的幾個方向，分成多個開關只會調出自相矛盾的組合
     /// （補得出來卻收不掉）。
     ///
-    /// <c>BEGIN</c>…<c>END</c> 與 <c>TRY</c>／<c>CATCH</c> 不在這個開關底下：
-    /// 它們是多字元的骨架，由 <see cref="AutoPairBlocks"/> 管。
+    /// <c>BEGIN</c>…<c>END</c> 不在這個開關底下：那是程式碼片段的守備範圍，
+    /// 與「每一次按鍵都要判斷」的分隔字元不是同一個機制。
     /// </remarks>
     public bool AutoPairDelimiters { get; init; } = true;
-
-    /// <summary>
-    /// sqlAssist.general.autoPairBlocks
-    /// </summary>
-    /// <remarks>
-    /// 選取一段文字之後打 <c>BEGIN</c>，把它包成 <c>BEGIN</c>…<c>END</c>；
-    /// 打 <c>BEGIN TRY</c> 則一次補出 <c>END TRY</c>／<c>BEGIN CATCH</c>／<c>END CATCH</c>。
-    ///
-    /// 與 <see cref="AutoPairDelimiters"/> 分成兩個開關，因為兩者的觸發條件與代價都不同：
-    /// 單字元配對在每一次按鍵上都要判斷，而區塊只在使用者<b>先選了一段文字</b>、
-    /// 又打了 <c>BEGIN</c> 的時候才成立。分開之後才調得出「括號要配對但區塊不要」這種組合。
-    ///
-    /// 只認得那兩種開頭：<c>BEGIN TRAN</c>、<c>BEGIN DIALOG</c> 不是區塊，不補 <c>END</c>。
-    /// </remarks>
-    public bool AutoPairBlocks { get; init; } = true;
 
     /// <summary>
     /// sqlAssist.general.checkForUpdates
@@ -174,17 +159,6 @@ public sealed class SqlAssistSettings
     public bool UseSquareBrackets { get; init; }
 
     /// <summary>
-    /// sqlAssist.insertion.tableSourceAliasStyle
-    /// </summary>
-    /// <remarks>
-    /// 在 FROM／JOIN／APPLY 等資料來源位置提交資料表、檢視或資料表值函式時，
-    /// 自動在物件名稱後補上別名並留下一個空格。別名取物件名各段的首字母小寫
-    /// （<c>Lib_Reader</c> → <c>lr</c>）；同一個敘述裡已有相同別名時自動加序號
-    /// （<c>lr2</c>）。INSERT 的目標表、DROP TABLE 這種不適用別名的位置不補。
-    /// </remarks>
-    public SqlTableSourceAliasStyle TableSourceAliasStyle { get; init; } = SqlTableSourceAliasStyle.None;
-
-    /// <summary>
     /// sqlAssist.insertion.expandWildcardOnTab
     /// </summary>
     /// <remarks>
@@ -222,11 +196,9 @@ public sealed class SqlAssistSettings
     /// sqlAssist.insertion.expandInsertStatement
     /// </summary>
     /// <remarks>
-    /// 在 <c>INSERT</c> 之後提交一張資料表時，把整句展開成欄位清單加
-    /// <c>VALUES</c> 預留值，而不是只補上名稱。<c>INTO</c> 是選用關鍵字，
-    /// 所以 <c>INSERT INTO t</c> 與 <c>INSERT t</c> 都算；寫回去的一律是
-    /// <c>INSERT INTO</c>，整句本來就是重寫。關掉之後那個位置就跟其他位置一樣
-    /// 只插入名稱——<c>INSERT t SELECT …</c> 這種寫法用得多的人會想關掉它。
+    /// 在 <c>INSERT INTO </c> 之後提交一張資料表時，把整句展開成欄位清單加
+    /// <c>VALUES</c> 預留值，而不是只補上名稱。關掉之後那個位置就跟其他位置一樣
+    /// 只插入名稱——<c>INSERT INTO t SELECT …</c> 這種寫法用得多的人會想關掉它。
     /// </remarks>
     public bool ExpandInsertStatement { get; init; } = true;
 
@@ -329,6 +301,10 @@ public sealed class SqlAssistSettings
     /// 只做<b>純量</b>函式。SSMS 自己的「陳述式完成 → 參數資訊」涵蓋內建函式，
     /// 以及 <c>FROM</c> 後面的資料表值函式（2026-09 實機量測），那些位置再浮一份
     /// 是兩個視窗搶同一格；純量函式在運算式位置它一律不給，缺的正是這一格。
+    ///
+    /// 同一個開關也管「提示中途被收掉之後請回來」：那一條對純量函式請的是這一份，
+    /// 對其他名稱補送 SSMS 自己的參數資訊。兩條是同一個概念（引數清單裡看得到簽章），
+    /// 分成兩個旋鈕的話，關掉其中一個的人分不出另一種函式為什麼還會浮。
     /// </remarks>
     public bool ParameterHintEnabled { get; init; } = true;
 
@@ -353,9 +329,6 @@ public sealed class SqlAssistSettings
     /// 展開後換選取時的查詢緩衝是實作細節，不由這個值決定。
     /// </remarks>
     public int PreviewDelayMilliseconds { get; init; } = SqlAssistLimits.DefaultPreviewDelay;
-
-    /// <summary>sqlAssist.structure.previewPlacement</summary>
-    public SqlPreviewPlacement PreviewPlacement { get; init; } = SqlPreviewPlacement.Stacked;
 
     /// <summary>
     /// sqlAssist.structure.previewFontSize

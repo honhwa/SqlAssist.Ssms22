@@ -50,17 +50,5 @@
   "CopiedWholeGrid": "Copied the entire grid.",
   "MenuCopySelectedCells": "Copy selected cells",
   "MenuCopyWholeGrid": "Copy entire grid",
-  "MenuCopyFullScript": "Copy complete script",
-  "PinToggle": "Pin: keeps the preview here, and later previews change content in this window; drag the header to move it. Only Esc or Close dismisses it",
-  "DockButton": "Move to tool window: stays across tabs and can be docked or dragged to another monitor",
-  "CloseButton": "Close preview (Esc)",
-  "LeadMore": "More",
-  "LeadLess": "Less",
-  "LeadExpand": "Show full syntax and description",
-  "LeadCollapse": "Collapse syntax and description to one line each",
-  "CapsuleLoading": "Loading {name}",
-  "ToolWindowCaption": "Structure Preview",
-  "ToolWindowCaptionFor": "Structure Preview - {name}",
-  "ToolWindowMissing": "SSMS did not create the Structure Preview tool window.",
-  "ToolWindowOpenFailed": "Could not open the Structure Preview tool window"
+  "MenuCopyFullScript": "Copy complete script"
 }

@@ -29,11 +29,25 @@ public sealed class SqlDataTypeCompletionTests
     [InlineData("CREATE TABLE dbo.Loan (LoanId INT NOT NULL, CopyNo ")]
     [InlineData("DECLARE @copies TABLE (CopyNo ")]
     [InlineData("ALTER TABLE dbo.Loan ALTER COLUMN CopyNo ")]
+    [InlineData("ALTER TABLE dbo.Loan ADD ReaderId ")]
+    [InlineData("ALTER TABLE dbo.Loan ADD ReaderId INT NULL, CopyNo ")]
+    [InlineData("CREATE TABLE #Loan (CopyNo ")]
+    [InlineData("CREATE TYPE dbo.CopyList AS TABLE (CopyNo ")]
+    [InlineData("CREATE PROCEDURE dbo.usp_Renew @readerId INT = NULL, @days ")]
+    [InlineData("CREATE PROCEDURE dbo.usp_Renew @readerId INT OUTPUT, @days ")]
+    [InlineData("CREATE PROC dbo.usp_Renew @readerId AS INT, @days ")]
+    [InlineData("DECLARE @rows INT = NULL, @name ")]
+    [InlineData("DECLARE @copies TABLE (CopyNo INT), @name ")]
+    [InlineData("CREATE SEQUENCE dbo.LoanSeq AS ")]
+    [InlineData("CREATE TYPE dbo.Code FROM ")]
+    [InlineData("EXEC dbo.usp_Copies WITH RESULT SETS ((Branch ")]
+    [InlineData("EXEC dbo.usp_Copies WITH RESULT SETS ((Branch varchar(10), CopyCount ")]
+    [InlineData("EXEC dbo.usp_Copies WITH RECOMPILE, RESULT SETS ((Branch int), (CopyNo ")]
     public void 型別的位置只建議型別(string textBeforeCaret)
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.True(context.IsValid);
+        Assert.Equal(SqlCompletionSlot.Grammar, context.Slot);
         Assert.Equal(CompletionTarget.DataType, context.Target);
     }
 
@@ -51,6 +65,12 @@ public sealed class SqlDataTypeCompletionTests
     [InlineData("SELECT * FROM dbo.Loan WHERE LoanId IN (1, ")]
     [InlineData("SELECT ISNULL(f.Amount, ")]
     [InlineData("DECLARE @rows INT;\r\nSELECT ")]
+    [InlineData("ALTER TABLE dbo.Loan DROP COLUMN CopyNo ")]
+    [InlineData("ALTER TABLE dbo.Loan ADD CONSTRAINT ")]
+    [InlineData("SELECT @rows = 1, @name ")]
+    [InlineData("EXEC dbo.usp_Renew @readerId = NULL, @days ")]
+    [InlineData("CREATE PROCEDURE dbo.usp_Renew @readerId INT AS SELECT @readerId ")]
+    [InlineData("EXEC dbo.usp_Copies WITH RESULT SETS ((Branch int ")]
     public void 不是型別的位置(string textBeforeCaret)
     {
         Assert.NotEqual(
@@ -72,7 +92,7 @@ public sealed class SqlDataTypeCompletionTests
                 new SqlSuggestion("Lib_Reader", "Lib_Reader", "資料表", "資料表", SuggestionKind.Table)
             });
 
-        var filtered = SuggestionMatcher.Filter(candidates, context);
+        var filtered = SuggestionContextFilter.Filter(candidates, context);
 
         Assert.NotEmpty(filtered);
         Assert.All(filtered, item => Assert.Equal(SuggestionKind.DataType, item.Kind));
@@ -87,7 +107,7 @@ public sealed class SqlDataTypeCompletionTests
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
 
-        Assert.Empty(SuggestionMatcher.Filter(SqlDataTypeCatalog.All, context));
+        Assert.Empty(SuggestionContextFilter.Filter(SqlDataTypeCatalog.All, context));
     }
 
     [Theory]
@@ -98,7 +118,7 @@ public sealed class SqlDataTypeCompletionTests
     public void 前綴比對排在第一(string textBeforeCaret, string expected)
     {
         var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
-        var ranked = SuggestionMatcher.Match(SqlDataTypeCatalog.All, context);
+        var ranked = SuggestionListProbe.Match(SqlDataTypeCatalog.All, context);
 
         Assert.NotEmpty(ranked);
         Assert.Equal(expected, ranked[0].DisplayText);

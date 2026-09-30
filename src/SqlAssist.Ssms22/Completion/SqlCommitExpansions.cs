@@ -233,10 +233,10 @@ internal sealed class SqlMergeStatementExpansion : ISqlCommitExpansion
 }
 
 /// <summary>
-/// 把已插入的模組名稱換成一整段「先宣告、再呼叫、最後取回輸出」的 <c>EXEC</c>。
+/// 把已插入的模組名稱換成一整句具名傳值的 <c>EXEC</c>。
 /// </summary>
 /// <remarks>
-/// 「哪些參數可以省略」與「省略時值是多少」都只能從模組定義讀出來（見
+/// 「哪些參數可以省略」只能從模組定義讀出來（見
 /// <see cref="SqlModuleParameterDefaults"/>），而定義與參數在同一次
 /// <c>GetDetailAsync</c> 就一起回來了，因此不多付一次往返。
 /// </remarks>
@@ -264,7 +264,7 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
 
     public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
     {
-        var defaults = SqlModuleParameterDefaults.Resolve(detail.Definition);
+        var optional = SqlModuleParameterDefaults.Find(detail.Definition);
         var parameters = new List<SqlStatementParameter>(detail.Parameters.Count);
 
         foreach (var parameter in detail.Parameters)
@@ -275,11 +275,11 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 continue;
             }
 
-            // 讀不到定義時 defaults 是空的，於是每個參數都算必填——寧可展開得多，
-            // 也不要因為讀不到定義就把該填的參數吞掉，那一句貼上去才是真的執行不了。
-            var isOptional = defaults.TryGetValue(parameter.Name, out var defaultValue);
+            var isOptional = optional.Contains(parameter.Name);
 
-            // 省略選擇性參數是合法的呼叫方式，不是少展開一半。
+            // 省略選擇性參數是合法的呼叫方式，不是少展開一半。定義讀不到時
+            // optional 是空的，於是每個參數都算必填——寧可展開得多，也不要因為
+            // 讀不到定義就把該填的參數吞掉，那一句貼上去才是真的執行不了。
             if (isOptional && !_settings.IncludeOptionalParameters)
             {
                 continue;
@@ -289,8 +289,7 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 parameter.Name,
                 parameter.DataType,
                 parameter.IsOutput,
-                isOptional,
-                defaultValue));
+                isOptional));
         }
 
         // 沒有參數的程序展開起來與只插入名稱完全一樣，那就不必動它——
@@ -381,16 +380,6 @@ internal sealed class SqlFunctionCallExpansion : ISqlCommitExpansion
 
     public SqlObjectInfo Object { get; }
 
-    /// <summary>
-    /// 要接在引數清單右括號之後的自動別名，含前後空白；沒有時為 null。
-    /// </summary>
-    /// <remarks>
-    /// 由提交端從建議項上取回填進來：自動別名是「提交的位置」決定的
-    /// （<see cref="SqlAssist.Core.Completion.SqlAutoAlias.ComposeSuffix"/> 要看上下文），
-    /// 而展開這裡只看得到物件與引數，問不出那個位置。
-    /// </remarks>
-    internal string? TableSourceAliasSuffix { get; set; }
-
     /// <summary>參數只有中繼資料層拿得到，這裡永遠要查。</summary>
     public SqlObjectDetail? KnownDetail => null;
 
@@ -454,12 +443,6 @@ internal sealed class SqlFunctionCallExpansion : ISqlCommitExpansion
         }
 
         var text = SqlFunctionCallText.Build(insertedName, arguments, out var caretOffset);
-
-        // 別名接在右括號之後；caretOffset 是從字串開頭算的，接在尾巴不影響它。
-        if (TableSourceAliasSuffix is not null)
-        {
-            text += TableSourceAliasSuffix;
-        }
 
         return new TextReplacement(
             text,

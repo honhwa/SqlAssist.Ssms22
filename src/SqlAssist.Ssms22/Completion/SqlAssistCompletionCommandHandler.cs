@@ -14,6 +14,7 @@ using SqlAssist.Ssms22.Completion;
 using SqlAssist.Ssms22.Editor;
 using SqlAssist.Ssms22.Preview;
 using SqlAssist.Ssms22.Settings;
+using SqlAssist.Ssms22.Signatures;
 using SqlAssist.Ssms22.Snippets;
 using SqlAssist.Ssms22.Wildcards;
 
@@ -86,9 +87,9 @@ internal sealed class SqlAssistCompletionCommandHandler :
     /// Esc 收掉包夾清單或預覽。
     /// </summary>
     /// <remarks>
-    /// 只處理「不是建議清單開出來的」那種預覽——由清單開出來的，
-    /// 讓平台照常關清單就好，清單一關預覽自己會跟著收。
-    /// 這樣 Esc 永遠只需要按一次；包夾清單也是為了同一件事接在這裡。
+    /// 清單開著時讓平台照常關清單：清單上展開的預覽跟著收，指名或釘住的留著，
+    /// 下一次 Esc 才輪到它。沒有清單時，畫面上的預覽不論怎麼打開都由這一鍵收掉。
+    /// 包夾清單也是為了「一次 Esc 只收一層」接在這裡。
     /// </remarks>
     public bool ExecuteCommand(EscapeKeyCommandArgs args, CommandExecutionContext executionContext)
     {
@@ -108,8 +109,11 @@ internal sealed class SqlAssistCompletionCommandHandler :
                     return false;
                 }
 
-                if (SqlStructurePreview.Peek(args.TextView) is { HasSession: false } preview &&
-                    preview.Collapse())
+                // 這一次 Esc 收的可能是參數提示；記下來，同一個呼叫裡就不再請它回來。
+                SqlParameterHintKeeper.NoteEscape(args.TextView);
+
+                if (SqlStructurePreview.Peek(args.TextView) is { } preview &&
+                    preview.Dismiss())
                 {
                     return true;
                 }
@@ -153,7 +157,7 @@ internal sealed class SqlAssistCompletionCommandHandler :
     {
         return SqlAssistPlatformGuard.Run(
             "處理 Left 按鍵",
-            () => SqlStructurePreview.Peek(args.TextView) is { HasSession: true } preview
+            () => SqlStructurePreview.Peek(args.TextView) is { } preview
                 && preview.Collapse(),
             fallback: false);
     }
@@ -205,12 +209,8 @@ internal sealed class SqlAssistCompletionCommandHandler :
     /// 回傳 false：改寫大寫與補上結尾字元都只動已經在緩衝區裡的文字，
     /// 使用者輸入的字元仍然交給編輯器插入，其他擴充也還看得到這次按鍵。
     ///
-    /// 這裡只用字元本身做第一層篩選，而那條規則與重開清單的判斷共用同一份
-    /// （<see cref="SqlCompletionTriggers.MayChangeContext"/>）：篩掉的字元
-    /// 連排程都不必，而放行的字元不代表一定會重開。真正的判斷在
-    /// <see cref="SqlCompletionReopen.AfterSeparator"/> 裡，
-    /// 因為它要看的是這個字元<b>已經進入緩衝區之後</b>的文字：
-    /// 此時此刻那個字元還沒被插入。
+    /// 要不要重開清單整份在 <see cref="SqlCompletionReopen.AfterTypedCharacter"/>；
+    /// 它要在配對之後問，因為配對可能已經先把清單收掉。
     /// </remarks>
     public bool ExecuteCommand(TypeCharCommandArgs args, CommandExecutionContext executionContext)
     {
@@ -218,21 +218,16 @@ internal sealed class SqlAssistCompletionCommandHandler :
             "處理 TypeChar 按鍵",
             () =>
             {
-                // 自動大寫與自動配對都是 Snippet Engine 之外的緩衝區編輯，
-                // 欄位 session 開著時暫停它們，避免欄位標記或同名欄位同步被外部修改打斷。
-                if (SqlSnippetExpansionController.Peek(args.TextView)?.HasActiveSession == true)
-                {
-                    return false;
-                }
-
-                SqlKeywordCasing.ApplyBeforeTypedCharacter(
+                // 欄位 session 開著時自己會讓開，與 Enter 走同一個入口。
+                SqlKeywordCasing.ApplyBeforeSeparator(
                     args.TextView,
                     args.SubjectBuffer,
-                    args.TypedChar);
+                    args.TypedChar,
+                    Broker);
 
-                // 建議清單開著時一律讓開：那一次 TypeChar 可能是提交鍵，
-                // 吞掉它等於提交不了；而在 session 中途插字元也會讓適用範圍失準。
-                if (Broker.GetSession(args.TextView) is not null)
+                // 欄位 session 開著時讓開：自動配對是 Snippet Engine 之外的緩衝區編輯，
+                // 會打斷欄位標記或同名欄位同步。建議清單開著時怎麼做見 SqlAutoPairing。
+                if (SqlSnippetExpansionController.Peek(args.TextView)?.HasActiveSession == true)
                 {
                     return false;
                 }
@@ -240,24 +235,14 @@ internal sealed class SqlAssistCompletionCommandHandler :
                 return SqlAutoPairing.TryHandleTypedCharacter(
                     args.TextView,
                     args.SubjectBuffer,
-                    args.TypedChar);
+                    args.TypedChar,
+                    Broker);
             },
             fallback: false);
 
-        if (SqlCompletionTriggers.MayChangeContext(args.TypedChar))
-        {
-            SqlAssistPlatformGuard.Run(
-                "處理 TypeChar 按鍵",
-                () => SqlCompletionReopen.AfterSeparator(args.TextView, Broker));
-        }
-
-        // 區塊骨架排到這一輪之後才問：判斷要看的是「緩衝區裡有沒有 BEGIN」，
-        // 而此刻那個字元還沒進去。這一條與上面的建議清單無關——使用者選著一段文字
-        // 打 BEGIN 時清單本來就不會開著，所以不必等 Broker 那一問。
-        TextViewDispatch.AfterCurrentCommand(
-            args.TextView,
-            "處理區塊骨架",
-            SqlAutoPairing.TrySurroundSelectionWithBlock);
+        SqlAssistPlatformGuard.Run(
+            "處理 TypeChar 按鍵",
+            () => SqlCompletionReopen.AfterTypedCharacter(args.TextView, Broker, args.TypedChar, handled));
 
         RequestParameterHint(args.TextView, args.TypedChar);
         return handled;
@@ -267,7 +252,7 @@ internal sealed class SqlAssistCompletionCommandHandler :
     /// Backspace 刪掉開頭字元時，把自動補上的另一半一起收掉。
     /// </summary>
     /// <remarks>
-    /// 參與條件與 TypeChar 完全相同（Snippet 欄位、建議清單各自讓開），
+    /// 參與條件與 TypeChar 完全相同（Snippet 欄位讓開，建議清單先收掉），
     /// 兩邊分岔的症狀是「補得出來卻收不掉」：打了左括號馬上後悔按 Backspace，
     /// 右括號留在原地。
     /// </remarks>
@@ -276,8 +261,7 @@ internal sealed class SqlAssistCompletionCommandHandler :
         return SqlAssistPlatformGuard.Run(
             "處理 Backspace 按鍵",
             () => SqlSnippetExpansionController.Peek(args.TextView)?.HasActiveSession != true
-                && Broker.GetSession(args.TextView) is null
-                && SqlAutoPairing.TryHandleBackspace(args.TextView, args.SubjectBuffer),
+                && SqlAutoPairing.TryHandleBackspace(args.TextView, args.SubjectBuffer, Broker),
             fallback: false);
     }
 

@@ -305,6 +305,46 @@ public sealed class SqlScopeAnalyzerTests
         Assert.Equal("c", table.Alias);
     }
 
+    /// <summary>
+    /// 相互關聯子查詢引用的外層別名解析得出來；未限定的來源仍只有子查詢自己那一層。
+    /// </summary>
+    /// <remarks>
+    /// 只看子查詢那一層的話，<c>a.</c> 退回「a 是結構描述」的解讀，一個欄位都列不出來。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT * FROM dbo.Loan a JOIN dbo.Copy b ON b.CopyNo = a.CopyNo\nWHERE NOT EXISTS(SELECT * FROM dbo.Branch c WHERE c.CopyNo = a.|)")]
+    [InlineData("SELECT * FROM dbo.Loan a JOIN dbo.Copy b ON b.CopyNo = a.CopyNo\nWHERE NOT EXISTS(SELECT * FROM dbo.Branch c WHERE c.CopyNo = a.|CopyNo)")]
+    [InlineData("SELECT * FROM dbo.Loan a WHERE a.CopyNo IN (SELECT c.CopyNo FROM dbo.Branch c WHERE EXISTS (SELECT 1 FROM dbo.Copy d WHERE d.CopyNo = a.|))")]
+    public void 相互關聯子查詢看得到外層的別名(string sqlWithCaret)
+    {
+        var scope = Analyze(sqlWithCaret);
+
+        Assert.DoesNotContain(scope.Tables, table => table.Alias == "a");
+        Assert.True(scope.TryResolve("a", out var outer));
+        Assert.Equal("Loan", outer.ObjectName);
+    }
+
+    /// <summary>子查詢裡與外層同名的別名遮住外層那一個。</summary>
+    [Fact]
+    public void 內層別名遮住外層同名的別名()
+    {
+        var scope = Analyze("SELECT * FROM dbo.Loan a WHERE EXISTS (SELECT 1 FROM dbo.Copy a WHERE a.|)");
+
+        Assert.True(scope.TryResolve("a", out var table));
+        Assert.Equal("Copy", table.ObjectName);
+        Assert.Equal("Loan", Assert.Single(scope.Outer!.Tables).ObjectName);
+    }
+
+    /// <summary>不在子查詢裡的範圍沒有外層；分號之後的下一句不是外層。</summary>
+    [Theory]
+    [InlineData("SELECT * FROM dbo.Loan a WHERE a.|")]
+    [InlineData("SELECT * FROM dbo.Copy b;\nSELECT * FROM dbo.Loan a WHERE a.|")]
+    [InlineData("SELECT COUNT(a.|) FROM dbo.Loan a")]
+    public void 子查詢以外沒有外層(string sqlWithCaret)
+    {
+        Assert.Null(Analyze(sqlWithCaret).Outer);
+    }
+
     /// <summary>反過來，外層的游標不應該看到子查詢裡的資料表。</summary>
     [Fact]
     public void 外層看不到子查詢的資料來源()
@@ -539,5 +579,74 @@ public sealed class SqlScopeAnalyzerTests
         var table = Assert.Single(Analyze("INSERT INTO dbo.Lib_Reader (|)").Tables);
 
         Assert.Equal("Lib_Reader", table.ObjectName);
+    }
+
+    /// <summary>
+    /// 範圍的界線與位置分析同一條判準：名單外的語句（BACKUP、RESTORE、THROW、BEGIN）也是界線。
+    /// </summary>
+    /// <remarks>
+    /// 游標後面那一句要切得開：<c>ON source.|</c> 這一格還沒寫完，而下一行的 RESTORE 不能被當成
+    /// <c>source.RESTORE</c>，它的 <c>DISK</c> 也不能被收成一個資料來源。
+    /// </remarks>
+    [Theory]
+    [InlineData("MERGE INTO dbo.Loan AS target\nUSING dbo.LoanDetail AS source\n    ON target.CopyNo = source.|\nRESTORE DATABASE LibArchive FROM DISK = 'x'")]
+    [InlineData("MERGE INTO dbo.Loan AS target\nUSING dbo.LoanDetail AS source\n    ON target.CopyNo = |\nRESTORE DATABASE LibArchive FROM DISK = 'x'")]
+    [InlineData("SELECT * FROM dbo.Loan AS target JOIN dbo.LoanDetail AS source ON source.|\nBACKUP DATABASE LibArchive TO DISK = 'x'")]
+    [InlineData("SELECT * FROM dbo.Loan AS target JOIN dbo.LoanDetail AS source ON source.CopyNo = target.CopyNo WHERE |\nUPDATE dbo.Branch SET x = 1")]
+    [InlineData("SELECT * FROM dbo.Loan AS target, dbo.LoanDetail AS source WHERE |\nBEGIN TRAN\nDELETE dbo.Branch")]
+    [InlineData("MERGE INTO dbo.Loan AS target\nUSING dbo.LoanDetail AS source\n    ON target.CopyNo = source.|\nDELETE FROM dbo.Branch")]
+    [InlineData("SELECT * FROM dbo.Loan AS target JOIN dbo.LoanDetail AS source ON source.|\nUPDATE dbo.Branch SET x = 1")]
+    public void 游標所在的敘述不會延伸進下一句(string sqlWithCaret)
+    {
+        var scope = Analyze(sqlWithCaret);
+
+        Assert.Equal(new[] { "Loan", "LoanDetail" }, scope.Tables.Select(table => table.ObjectName));
+    }
+
+    [Theory]
+    [InlineData("SELECT * FROM dbo.Loan WHERE CopyNo = 1\nRESTORE DATABASE LibArchive FROM DISK = 'x' WITH |")]
+    [InlineData("SELECT * FROM dbo.Loan WHERE CopyNo = 1\nBACKUP DATABASE LibArchive TO DISK = 'x' WITH |")]
+    [InlineData("SELECT * FROM dbo.Loan WHERE CopyNo = 1\nTHROW 50000, N'x', |")]
+    [InlineData("SELECT * FROM dbo.Loan WHERE CopyNo = 1\nRAISERROR (N'x', 16, 1) WITH |")]
+    [InlineData("SELECT * FROM dbo.Loan WHERE CopyNo = 1\nWAITFOR DELAY |")]
+    [InlineData("SELECT * FROM dbo.Loan WHERE CopyNo = 1\nCOMMIT TRAN |")]
+    public void 名單外的語句不會接到上一句(string sqlWithCaret)
+    {
+        Assert.Empty(Analyze(sqlWithCaret).Tables);
+    }
+
+    /// <summary>接在隱含界線後面、卻屬於同一句的字不切斷範圍。</summary>
+    [Theory]
+    [InlineData("UPDATE l\nSET CopyNo = |\nFROM dbo.Loan l\nJOIN dbo.Copy c ON c.CopyNo = l.CopyNo")]
+    [InlineData("UPDATE l WITH (ROWLOCK)\nSET CopyNo = |\nFROM dbo.Loan l\nJOIN dbo.Copy c ON c.CopyNo = l.CopyNo")]
+    public void UPDATE換行寫的SET仍屬於同一句(string sqlWithCaret)
+    {
+        var scope = Analyze(sqlWithCaret);
+
+        Assert.Equal(new[] { "Loan", "Copy" }, scope.Tables.Select(table => table.ObjectName));
+    }
+
+    /// <summary>
+    /// FROM 接不接資料來源由它所屬的動詞決定：游標、備份裝置、主體與檔案都不是資料表。
+    /// </summary>
+    [Theory]
+    [InlineData("FETCH NEXT FROM LoanCursor INTO |", "LoanCursor")]
+    [InlineData("RESTORE DATABASE LibArchive FROM DISK = 'x' WITH |", "DISK")]
+    [InlineData("REVOKE SELECT ON dbo.Loan FROM Lib_Reader |", "Lib_Reader")]
+    [InlineData("REVOKE SELECT (CopyNo), INSERT ON dbo.Loan FROM Lib_Reader |", "Lib_Reader")]
+    [InlineData("CREATE LOGIN Lib_Reader FROM WINDOWS |", "WINDOWS")]
+    public void 不接資料來源的FROM不收名稱(string sqlWithCaret, string name)
+    {
+        Assert.DoesNotContain(Analyze(sqlWithCaret).Tables, table => table.ObjectName == name);
+    }
+
+    [Theory]
+    [InlineData("SELECT (CopyNo) AS c FROM dbo.Loan WHERE |")]
+    [InlineData("SELECT TOP (5) WITH TIES CopyNo FROM dbo.Loan ORDER BY |")]
+    [InlineData("DELETE FROM dbo.Loan WHERE |")]
+    [InlineData("UPDATE l SET CopyNo = 1 FROM dbo.Loan l WHERE |")]
+    public void 查詢與更新的FROM照舊收資料來源(string sqlWithCaret)
+    {
+        Assert.Contains(Analyze(sqlWithCaret).Tables, table => table.ObjectName == "Loan");
     }
 }

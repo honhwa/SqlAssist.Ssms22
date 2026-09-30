@@ -1,6 +1,7 @@
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Keywords;
 using SqlAssist.Core.Parsing;
+using SqlAssist.Core.Snippets;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Ssms22.Completion;
 using Xunit;
@@ -121,5 +122,133 @@ public sealed class SqlSuggestionTargetTests
     public void 其餘項目沒有東西可畫(SuggestionKind kind)
     {
         Assert.Null(SqlSuggestionTarget.Describe(Suggestion("SELECT", kind)));
+    }
+
+    /// <summary>
+    /// 系統結構描述底下的預存程序，說明目錄裡找得到對應條目時換到系統程序說明。
+    /// </summary>
+    /// <remarks>
+    /// <c>sp_executesql</c> 是 <c>system-procedures.json</c> 既有的一筆，用來驗證
+    /// 物件分支之前那一段判斷真的接得上資料，不是只在假資料上成立。
+    /// </remarks>
+    [Fact]
+    public void 系統結構描述下有說明的預存程序換到系統程序說明()
+    {
+        var objectInfo = new SqlObjectInfo(3, "sys", "sp_executesql", SqlObjectKind.Procedure);
+
+        var doc = SqlSuggestionTarget.Describe(
+            Suggestion("sp_executesql", SuggestionKind.Procedure, objectInfo))!.BuiltIn!;
+
+        Assert.Equal(SqlBuiltInKind.SystemProcedure, doc.Kind);
+        Assert.Equal("SP_EXECUTESQL", doc.Name);
+    }
+
+    /// <summary>
+    /// 系統結構描述底下的預存程序，說明目錄裡還沒有對應條目時仍沿用物件分支。
+    /// </summary>
+    /// <remarks>
+    /// 用一個目錄裡確定查不到的假名稱，守住「查無說明就不能連物件本身都畫不出來」。
+    /// </remarks>
+    [Fact]
+    public void 查無系統程序說明時仍沿用物件()
+    {
+        var objectInfo = new SqlObjectInfo(1, "sys", "sp_不是真的系統程序", SqlObjectKind.Procedure);
+
+        Assert.Same(
+            objectInfo,
+            SqlSuggestionTarget.Describe(
+                Suggestion("sp_不是真的系統程序", SuggestionKind.Procedure, objectInfo))!.Object);
+    }
+
+    /// <summary>非系統結構描述的預存程序不查系統程序目錄，一律沿用物件分支。</summary>
+    [Fact]
+    public void 一般結構描述的預存程序不查系統程序目錄()
+    {
+        var objectInfo = new SqlObjectInfo(2, "dbo", "Lib_HelpProcedure", SqlObjectKind.Procedure);
+
+        Assert.Same(
+            objectInfo,
+            SqlSuggestionTarget.Describe(
+                Suggestion("Lib_HelpProcedure", SuggestionKind.Procedure, objectInfo))!.Object);
+    }
+
+    /// <summary>
+    /// 關鍵字建議項在語句開頭對到語句說明，<c>EXEC</c> 與別名 <c>EXECUTE</c> 都換得到同一份；
+    /// <c>CREATE </c> 之後的 <c>INDEX</c> 對到 CREATE INDEX。
+    /// </summary>
+    [Theory]
+    [InlineData("", "EXEC", "EXEC")]
+    [InlineData("", "EXECUTE", "EXECUTE")]
+    [InlineData("CREATE ", "INDEX", "CREATE INDEX")]
+    [InlineData("SET ", "NOCOUNT", "SET NOCOUNT")]
+    [InlineData("BEGIN ", "TRY", "BEGIN TRY")]
+    [InlineData("ALTER ", "TABLE", "ALTER TABLE")]
+    [InlineData("CREATE OR ALTER ", "PROCEDURE", "CREATE OR ALTER PROCEDURE")]
+    [InlineData("DBCC ", "CHECKDB", "DBCC CHECKDB")]
+    public void 關鍵字建議項換到語句說明(string before, string name, string expected)
+    {
+        var doc = SqlSuggestionTarget.Describe(
+            Suggestion(name, SuggestionKind.Keyword),
+            new SqlStatementCandidates(before, before.Length))!.BuiltIn!;
+
+        Assert.Equal(SqlBuiltInKind.Statement, doc.Kind);
+        Assert.Equal(expected, doc.Name);
+    }
+
+    /// <summary>
+    /// 同一個字不在語句開頭就不是語句，說明面板與浮動預覽都不對。
+    /// </summary>
+    /// <remarks>
+    /// 以前只比名稱：<c>ALTER TABLE Loan </c> 之後選到 <c>MERGE</c> 按向右鍵，開出 MERGE 陳述式的說明。
+    /// 不知道位置（清單還沒建過）時一律不對。
+    /// </remarks>
+    [Fact]
+    public void 不在語句開頭的關鍵字不對到語句說明()
+    {
+        const string before = "ALTER TABLE Loan ";
+        var merge = Suggestion("MERGE", SuggestionKind.Keyword);
+
+        Assert.Null(SqlSuggestionTarget.FindBuiltIn(merge, new SqlStatementCandidates(before, before.Length)));
+        Assert.Null(SqlSuggestionTarget.Describe(merge, new SqlStatementCandidates(before, before.Length)));
+        Assert.Null(SqlSuggestionTarget.FindBuiltIn(merge, statements: null));
+    }
+
+    /// <summary>
+    /// 語句名稱裡的常見字寫在一句中間時同樣不對：<c>UPDATE Loan SET</c> 的 SET 不是 SET NOCOUNT 那一類。
+    /// </summary>
+    [Theory]
+    [InlineData("UPDATE Loan ", "SET")]
+    [InlineData("IF 1 = 1\n", "BEGIN")]
+    [InlineData("ALTER TABLE Loan ", "DROP")]
+    public void 語句中間的常見字不對到語句說明(string before, string name)
+    {
+        var suggestion = Suggestion(name, SuggestionKind.Keyword);
+
+        Assert.Null(SqlSuggestionTarget.FindBuiltIn(suggestion, new SqlStatementCandidates(before, before.Length)));
+    }
+
+    /// <summary>
+    /// 片段的程式碼只畫在浮動預覽裡，所以一行的片段也開：依行數分兩邊畫的話，
+    /// 同一類項目在清單上移動時一下是面板、一下是預覽。
+    /// </summary>
+    [Fact]
+    public void 片段不論長短都開視窗()
+    {
+        var snippet = new SqlSnippet("ssf", "SELECT * FROM ");
+
+        Assert.Same(snippet, SqlSuggestionTarget.Describe(Suggestion("ssf", SuggestionKind.Snippet, snippet))!.Snippet);
+    }
+
+    /// <summary>
+    /// 關鍵字建議項查無語句說明時回 null，不會誤把普通關鍵字說成語句。
+    /// </summary>
+    /// <remarks>
+    /// <c>SELECT</c> 在 <c>statements.json</c> 裡確定沒有條目，用它守住
+    /// 「查不到就是 null」，不會被日後補寫的內容意外通過。
+    /// </remarks>
+    [Fact]
+    public void 查無語句說明的關鍵字仍回傳空值()
+    {
+        Assert.Null(SqlSuggestionTarget.Describe(Suggestion("SELECT", SuggestionKind.Keyword)));
     }
 }

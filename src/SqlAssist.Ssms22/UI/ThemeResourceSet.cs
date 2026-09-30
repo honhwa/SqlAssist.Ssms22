@@ -19,6 +19,10 @@ internal enum ThemeBrush
     RowHover,
     RowSelected,
     SelectedForeground,
+
+    /// <summary>文字選取蓋在字上的那一層；推導見 <see cref="TextSelectionColors"/>。</summary>
+    TextSelection,
+
     RowPressed,
     RowAlternate,
     SegmentTrack,
@@ -26,6 +30,10 @@ internal enum ThemeBrush
     BadgeBackground,
     AccentBackground,
     AccentBorder,
+
+    /// <summary>可以按的一段字（<see cref="SqlAssistChrome.CreateLinkButton"/>）；強調色相，在內容與視窗兩種底色上都過 4.5:1。</summary>
+    LinkForeground,
+
     MatchBackground,
     MatchForeground,
     MatchCurrentBackground,
@@ -67,7 +75,7 @@ internal enum ThemeBrush
 internal sealed class ThemeResourceSet
 {
     // XAML 的 x:Static 需要公開欄位；型別本身仍限於組件內部。
-    public const string NotificationSpinnerKey = "SqlAssist.NotificationSpinner";
+    public const string SurfaceSpinnerKey = "SqlAssist.SurfaceSpinner";
     internal const string NotificationGlassKey = "SqlAssist.NotificationGlass";
     public const string NotificationDimKey = "SqlAssist.NotificationDim";
     public const string NotificationRimKey = "SqlAssist.NotificationRim";
@@ -110,11 +118,11 @@ internal sealed class ThemeResourceSet
         }
 
         if (colors.TryGetValue(ThemeBrush.NotificationRunning, out var running) && colors.TryGetValue(ThemeBrush.NotificationRunningEnd, out var end) &&
-            (Resources[NotificationSpinnerKey] is not LinearGradientBrush gradient || gradient.GradientStops[0].Color != running || gradient.GradientStops[1].Color != end))
+            (Resources[SurfaceSpinnerKey] is not LinearGradientBrush gradient || gradient.GradientStops[0].Color != running || gradient.GradientStops[1].Color != end))
         {
             var spinner = new LinearGradientBrush(running, end, 45);
             spinner.Freeze();
-            Resources[NotificationSpinnerKey] = spinner;
+            Resources[SurfaceSpinnerKey] = spinner;
         }
 
         // 材質保持主題色與高覆蓋率，文字不跟著透明；高對比由表面切回實色。
@@ -149,8 +157,9 @@ internal sealed class ThemeResourceSet
             UpdateNotificationGradient(NotificationSheenKey, foreground, 8, 0);
         }
 
-        // 原生樣板的角落填色、預設文字選取仍可能讀系統鍵；別名只作用在本擴充根節點，
+        // 原生樣板的角落填色與列選取仍可能讀系統鍵；別名只作用在本擴充根節點，
         // 不修改 Application.Resources，更不改 SSMS 或 Windows 的全域配色。
+        // 文字選取不靠這裡：文字框預設取的是靜態系統色，讀不到區域資源，由共用文字欄位樣式指定。
         foreach (var alias in SystemAliases)
         {
             if (Resources[alias.Role] is SolidColorBrush brush && !ReferenceEquals(Resources[alias.Brush], brush))

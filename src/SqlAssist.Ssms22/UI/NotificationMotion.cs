@@ -12,6 +12,7 @@ namespace SqlAssist.Ssms22.UI;
 /// 散在表面、列與 Chrome 三處各寫一次的版本，改一個數字要找三個地方，而漏掉的那一處
 /// 只有在兩處並排時才看得出節奏不一樣。尺寸變形（通知島的寬、高與圓角）走
 /// <see cref="SpringMotion"/>，不在這裡：那是可中斷的揭露動畫，不是固定長度的補間。
+/// 內容進出場與緩動和浮動預覽共用，在 <see cref="SurfaceMotion"/>。
 /// 狀態回饋守 ui-guidelines 的上限：縮放不超過 400 ms、位移不超過 300 ms。
 /// </remarks>
 internal static class NotificationMotion
@@ -27,20 +28,6 @@ internal static class NotificationMotion
 
     /// <summary>進度條收成分隔線，或有新工作時長回來。</summary>
     public const int ProgressSettle = 240;
-
-    /// <summary>抬頭或膠囊上唯一那一個進度圈轉一圈。</summary>
-    public const int Spin = 1100;
-
-    /// <summary>通知島換內容：舊內容淡出。</summary>
-    public const int ContentFadeOut = 120;
-
-    /// <summary>通知島換內容：新內容晚這麼久才開始，兩份不會同時搶視線。</summary>
-    public const int ContentDelay = 60;
-
-    /// <summary>通知島換內容：新內容淡入並從 <see cref="ContentScaleFrom"/> 放大到 1。</summary>
-    public const int ContentFadeIn = 180;
-
-    public const double ContentScaleFrom = 0.96;
 
     /// <summary>展開時各列依序進場，相鄰兩列差這麼多。</summary>
     public const int RowStagger = 30;
@@ -84,39 +71,17 @@ internal static class NotificationMotion
     /// <summary>失敗短震每一格的長度；共五格，250 ms 內結束。</summary>
     public const int ShakeStep = 50;
 
-    public static TimeSpan Duration(int milliseconds) => TimeSpan.FromMilliseconds(milliseconds);
+    public static TimeSpan Duration(int milliseconds) => SurfaceMotion.Duration(milliseconds);
 
-    /// <summary>通知表面的預設補間：ease-out，從呼叫端給的目前值接續。</summary>
+    /// <summary>通知表面的預設補間，與浮動預覽同一條；見 <see cref="SurfaceMotion.Ease"/>。</summary>
     public static DoubleAnimation Ease(double from, double to, int milliseconds) =>
-        new(from, to, Duration(milliseconds)) { EasingFunction = EaseOut };
-
-    /// <summary>
-    /// 延遲之後才補間，但延遲期間就已經停在起點。
-    /// </summary>
-    /// <remarks>
-    /// 單用 <see cref="Timeline.BeginTime"/> 的話，開始之前屬性是基底值：依序進場的列會先整份出現，
-    /// 輪到它時才跳回 0 再淡入。
-    /// </remarks>
-    public static DoubleAnimationUsingKeyFrames Delayed(double from, double to, int delay, int milliseconds)
-    {
-        var animation = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
-        animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(Duration(delay))));
-        animation.KeyFrames.Add(new EasingDoubleKeyFrame(to, KeyTime.FromTimeSpan(Duration(delay + milliseconds)), EaseOut));
-        return animation;
-    }
-
-    private static readonly CubicEase EaseOut = FrozenEaseOut();
-
-    /// <summary>進度圈；只准膠囊、清單抬頭或附條上的那一個掛它，同一時間只有一個。</summary>
-    public static DoubleAnimation Spinner() =>
-        new(0, 360, Duration(Spin)) { RepeatBehavior = RepeatBehavior.Forever };
+        SurfaceMotion.Ease(from, to, milliseconds);
 
     /// <summary>勾號描完之後的微彈；結束後交還基底值。</summary>
     public static void PlaySettle(ScaleTransform scale)
     {
         var settle = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
-        settle.KeyFrames.Add(new EasingDoubleKeyFrame(1.06, KeyTime.FromTimeSpan(Duration(CheckSettle / 2)), EaseOut));
+        settle.KeyFrames.Add(new EasingDoubleKeyFrame(1.06, KeyTime.FromTimeSpan(Duration(CheckSettle / 2)), SurfaceMotion.EaseOut));
         settle.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(Duration(CheckSettle))));
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, settle);
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, settle);
@@ -147,12 +112,5 @@ internal static class NotificationMotion
         fade.FillBehavior = FillBehavior.Stop;
         element.Opacity = to;
         element.BeginAnimation(UIElement.OpacityProperty, fade);
-    }
-
-    private static CubicEase FrozenEaseOut()
-    {
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        ease.Freeze();
-        return ease;
     }
 }

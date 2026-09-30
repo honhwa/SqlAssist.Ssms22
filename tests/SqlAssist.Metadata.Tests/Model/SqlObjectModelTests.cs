@@ -1,4 +1,6 @@
+using System;
 using System.Linq;
+using SqlAssist.Core.Localization;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Metadata.Formatting;
 using SqlAssist.Metadata.Model;
@@ -37,11 +39,31 @@ public sealed class SqlObjectModelTests
     [InlineData("TF", SqlObjectKind.TableValuedFunction)]
     [InlineData("FT", SqlObjectKind.TableValuedFunction)]
     [InlineData("SN", SqlObjectKind.Synonym)]
-    [InlineData("X", SqlObjectKind.Unknown)]
+    [InlineData("X", SqlObjectKind.Procedure)]
+    [InlineData("TA", SqlObjectKind.Trigger)]
     [InlineData(null, SqlObjectKind.Unknown)]
     public void 對應sys_objects型別(string? type, SqlObjectKind expected)
     {
         Assert.Equal(expected, SqlObjectKinds.FromSysObjectType(type));
+    }
+
+    /// <remarks>
+    /// 種類說它怎麼用，實作方式說它的本文在哪裡：<c>sp_executesql</c>（<c>X</c>）與
+    /// CLR 物件都是能呼叫的程序或函式，卻根本沒有 T-SQL 本文。
+    /// </remarks>
+    [Theory]
+    [InlineData("X ", SqlObjectImplementation.Extended)]
+    [InlineData("PC", SqlObjectImplementation.Clr)]
+    [InlineData("FS", SqlObjectImplementation.Clr)]
+    [InlineData("FT", SqlObjectImplementation.Clr)]
+    [InlineData("TA", SqlObjectImplementation.Clr)]
+    [InlineData("P ", SqlObjectImplementation.TransactSql)]
+    [InlineData("V ", SqlObjectImplementation.TransactSql)]
+    [InlineData("TR", SqlObjectImplementation.TransactSql)]
+    [InlineData(null, SqlObjectImplementation.TransactSql)]
+    public void 由sys_objects型別判斷本文用什麼寫成(string? type, SqlObjectImplementation expected)
+    {
+        Assert.Equal(expected, SqlObjectImplementations.FromSysObjectType(type));
     }
 
     [Fact]
@@ -442,7 +464,7 @@ public sealed class SqlObjectModelTests
 
         var preview = detail.BuildPreview();
 
-        Assert.Contains("Table [dbo].[Lib_Reader]", preview);
+        Assert.Contains("資料表 [dbo].[Lib_Reader]", preview);
         Assert.Contains("[UserId] int IDENTITY NOT NULL -- PK,", preview);
         Assert.Contains("[UserName] nvarchar(50) NULL", preview);
     }
@@ -466,7 +488,8 @@ public sealed class SqlObjectModelTests
 
         var preview = detail.BuildPreview();
 
-        Assert.Contains("Procedure [dbo].[usp_Encrypted]", preview);
+        Assert.Contains("預存程序 [dbo].[usp_Encrypted]", preview);
+        Assert.Contains("參數", preview);
         Assert.Contains("@Id int", preview);
     }
 
@@ -527,5 +550,24 @@ public sealed class SqlObjectModelTests
         Assert.Equal(
             new[] { "dbo.Alpha", "sales.Alpha", "dbo.Zulu" },
             snapshot.Objects.Select(info => $"{info.SchemaName}.{info.Name}").ToArray());
+    }
+
+    /// <summary>種類名稱走 <see cref="SqlKindText"/>：建議清單、滑鼠停留提示與 SQL Search 分類都跟著介面語言。</summary>
+    [Fact]
+    public void 種類名稱跟著介面語言()
+    {
+        Assert.Equal("資料表 dbo.Loan", SqlObjectKind.Table.ToDisplayTitle("dbo.Loan"));
+
+        using (SqlText.Use(SqlLanguage.Find("en")!))
+        {
+            Assert.Equal("Stored procedure", SqlObjectKind.Procedure.ToDisplayName());
+            Assert.Equal("Temporary table", SqlObjectKind.TemporaryTable.ToDisplayName());
+            Assert.Equal("Table dbo.Loan", SqlObjectKind.Table.ToDisplayTitle("dbo.Loan"));
+
+            foreach (SqlObjectKind kind in Enum.GetValues(typeof(SqlObjectKind)))
+            {
+                Assert.DoesNotMatch(@"^$|\p{IsCJKUnifiedIdeographs}", kind.ToDisplayName());
+            }
+        }
     }
 }

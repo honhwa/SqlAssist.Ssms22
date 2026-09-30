@@ -35,7 +35,7 @@ internal sealed class NotificationActivityStrip : Button
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotificationLayout.IconColumn) });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Icon = new NotificationStatusIcon { Margin = NotificationLayout.StatusIconInset };
+        Icon = new SurfaceStatusIcon { Margin = NotificationLayout.StatusIconInset };
         grid.Children.Add(Icon);
         Summary = new NotificationTicker(() =>
         {
@@ -55,7 +55,7 @@ internal sealed class NotificationActivityStrip : Button
         Content = grid;
     }
 
-    public NotificationStatusIcon Icon { get; }
+    public SurfaceStatusIcon Icon { get; }
 
     public NotificationTicker Summary { get; }
 
@@ -98,7 +98,7 @@ internal sealed class NotificationActivityStrip : Button
         Icon.Spin(false);
         if (!motion) { Collapse(); return; }
         _collapsed = collapsed;
-        var fade = NotificationMotion.Ease(Opacity, 0, NotificationMotion.ContentFadeOut);
+        var fade = NotificationMotion.Ease(Opacity, 0, SurfaceMotion.ContentFadeOut);
         fade.Completed += (_, _) =>
         {
             if (!ReferenceEquals(_collapsed, collapsed)) return;

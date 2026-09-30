@@ -3,12 +3,9 @@
   //   <SSMS>\Common7\IDE\UnifiedSettings\registration.schema.json
   //
   // 顯示文字（title、description、enumItemLabels，以及 messages、commands 的 text）
-  // 一律寫成 "@鍵;{packageGuid}"：SSMS 依自己的介面語言到套件組件的資源查表。
-  // 那一條鏈碰不到 SqlAssist 的語言設定，所以安裝資料夾裡的那一份會被
-  // Settings/SettingsPageManifest.cs 換成該語言的字面值；本檔（內嵌成資源）就是它的樣板。
-  // 換過之後殼層沒有鍵可以查，只能照著畫。殼層在啟動時讀註冊檔，所以切換語言要重新啟動 SSMS。
-  // 文字在 Settings/SettingsPageText.<語言>.resjson，建置時英文編成中性資源、
-  // 其餘語言編成衛星組件（Settings/SettingsPageText.targets）：那是「跟隨 SSMS」時的後備路徑。
+  // 一律寫成 "@鍵;{packageGuid}"：SSMS 依自己的介面語言到套件組件的資源查表，
+  // 不受 SqlAssist 的語言設定控制。文字在 Settings/SettingsPageText.<語言>.resjson，
+  // 建置時英文編成中性資源、其餘語言編成衛星組件（Settings/SettingsPageText.targets）。
   // 新增設定時鍵要同時加進每一種語言；引用了不存在的鍵是建置錯誤 SQLSET006，
   // 否則設定頁只會把引用原樣畫出來。additionalKeywords 只供搜尋、不顯示，維持原文。
   //
@@ -232,15 +229,6 @@
       "additionalKeywords": [ "括號", "引號", "配對", "自動關閉", "auto close", "bracket", "quote" ],
       "enableWhen": "${config:sqlAssist.general.enabled} == 'true'"
     },
-    "sqlAssist.general.autoPairBlocks": {
-      "type": "boolean",
-      "default": true,
-      "order": 211,
-      "title": "@GeneralAutoPairBlocksTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-      "description": "@GeneralAutoPairBlocksDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-      "additionalKeywords": [ "區塊", "BEGIN", "END", "TRY", "CATCH", "block", "自動關閉" ],
-      "enableWhen": "${config:sqlAssist.general.enabled} == 'true'"
-    },
     "sqlAssist.general.checkForUpdates": {
       "type": "boolean",
       "default": true,
@@ -315,7 +303,7 @@
       "order": 130,
       "title": "@SuggestionsShowCategoryFiltersTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "description": "@SuggestionsShowCategoryFiltersDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-      "additionalKeywords": [ "filter", "只看欄位", "只看資料表", "存取鍵", "工具列" ],
+      "additionalKeywords": [ "filter", "只看欄位", "只看資料表", "快捷鍵", "Alt+1", "工具列" ],
       "enableWhen": "${config:sqlAssist.suggestions.enabled} == 'true'"
     },
     "sqlAssist.suggestions.includeSnippets": {
@@ -361,20 +349,6 @@
       "title": "@InsertionUseSquareBracketsTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "description": "@InsertionUseSquareBracketsDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "additionalKeywords": [ "[]", "中括號", "bracket", "跳脫", "保留字" ]
-    },
-    "sqlAssist.insertion.tableSourceAliasStyle": {
-      "type": "string",
-      "default": "none",
-      "order": 120,
-      "enum": [ "none", "as", "off" ],
-      "enumItemLabels": [
-        "@InsertionTableSourceAliasStyleItemNone;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-        "@InsertionTableSourceAliasStyleItemAs;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-        "@InsertionTableSourceAliasStyleItemOff;{b386e18d-f34b-4db4-a40d-b9092a31d89f}"
-      ],
-      "title": "@InsertionTableSourceAliasStyleTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-      "description": "@InsertionTableSourceAliasStyleDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-      "additionalKeywords": [ "alias", "別名", "AS", "簡寫", "來源" ]
     },
     "sqlAssist.insertion.expandWildcardOnTab": {
       "type": "boolean",
@@ -515,20 +489,6 @@
       "description": "@StructurePreviewDelayDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "additionalKeywords": [ "延遲", "delay", "反應太快", "反應太慢" ],
       "enableWhen": "${config:sqlAssist.structure.previewMode} == 'delay'"
-    },
-    "sqlAssist.structure.previewPlacement": {
-      "type": "string",
-      "default": "stacked",
-      "order": 220,
-      "enum": [ "stacked", "beside" ],
-      "enumItemLabels": [
-        "@StructurePreviewPlacementItemStacked;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-        "@StructurePreviewPlacementItemBeside;{b386e18d-f34b-4db4-a40d-b9092a31d89f}"
-      ],
-      "title": "@StructurePreviewPlacementTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-      "description": "@StructurePreviewPlacementDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
-      "additionalKeywords": [ "擺放", "上下", "側邊", "placement", "蓋住程式碼" ],
-      "enableWhen": "${config:sqlAssist.structure.previewMode} != 'off'"
     },
     "sqlAssist.structure.previewFontSize": {
       "type": "integer",

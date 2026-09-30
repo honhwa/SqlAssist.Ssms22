@@ -1,10 +1,10 @@
-using System;
 using System.Collections.Generic;
+using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Pairing;
-using SqlAssist.Core.Snippets;
 using SqlAssist.Ssms22;
+using SqlAssist.Ssms22.Completion;
 using SqlAssist.Ssms22.Settings;
 
 namespace SqlAssist.Ssms22.Editor;
@@ -30,6 +30,13 @@ namespace SqlAssist.Ssms22.Editor;
 /// 開頭字元仍由編輯器自己插入。這樣選取取代、覆寫模式與虛擬空白都還是平台的行為，
 /// 不必在這裡重寫一份。代價是 Ctrl+Z 要按兩次才連補上的字元一起收掉——
 /// 換成自己插入兩個字元可以合成一次復原，但要接管的東西比省下的那一次多得多。
+///
+/// 建議清單開著不是讓開的理由：分隔字元不是提交鍵
+/// （<see cref="SqlAsyncCompletionCommitManager.CommitsOn"/>），那一次按鍵本來就會
+/// 結束正在打的詞元。讓開的症狀是 <c>RESULT SETS </c> 開著清單時打 <c>(</c> 不補右括號、
+/// <c>(|)</c> 開著清單時按 Backspace 留下右括號。要動緩衝區之前先收掉清單，
+/// 否則補上的字元會落進 session 的適用範圍；清單收掉之後，平台看到這一鍵時會自己
+/// 照新的上下文開一份（<see cref="SqlCompletionReopen.AfterTypedCharacter"/>）。
 /// </remarks>
 internal static class SqlAutoPairing
 {
@@ -43,20 +50,27 @@ internal static class SqlAutoPairing
     public static bool TryHandleTypedCharacter(
         ITextView textView,
         ITextBuffer buffer,
-        char typedCharacter)
+        char typedCharacter,
+        IAsyncCompletionBroker? broker)
     {
-        // 第一道篩選只看字元本身與開關：打字時絕大多數按鍵在這裡就結束，
-        // 連游標與選取範圍都不必問。
-        if (!IsEnabled(SqlAssistSettingsStore.Current.AutoPairDelimiters) ||
-            !SqlDelimiterPairs.IsPairCharacter(typedCharacter) ||
+        // 第一道篩選只看字元本身：打字時絕大多數按鍵在這裡就結束，
+        // 連游標、選取範圍與設定都不必問。
+        if (!SqlDelimiterPairs.IsPairCharacter(typedCharacter) ||
             !TryGetCaret(textView, buffer, out var caret))
+        {
+            return false;
+        }
+
+        // 提交鍵留給清單：吞掉它等於提交不了。
+        if (SqlAsyncCompletionCommitManager.CommitsOn(typedCharacter) &&
+            broker?.GetSession(textView) is not null)
         {
             return false;
         }
 
         if (!textView.Selection.IsEmpty)
         {
-            return TrySurroundSelection(textView, buffer, typedCharacter);
+            return TrySurroundSelection(textView, buffer, typedCharacter, broker);
         }
 
         var snapshot = caret.Snapshot;
@@ -66,6 +80,7 @@ internal static class SqlAutoPairing
         if (SqlAutoPairAnalyzer.ShouldOvertype(source, caret.Position, typedCharacter) &&
             tracker.TryTake(snapshot, caret.Position, typedCharacter))
         {
+            DismissCompletion(textView, broker);
             textView.Caret.MoveTo(new SnapshotPoint(snapshot, caret.Position + 1));
             textView.Caret.EnsureVisible();
             SqlAssistDiagnostics.Write($"跳過自動補上的 {typedCharacter}", textView);
@@ -77,6 +92,7 @@ internal static class SqlAutoPairing
             return false;
         }
 
+        DismissCompletion(textView, broker);
         InsertClose(textView, buffer, caret.Position, close, tracker);
         return false;
     }
@@ -97,9 +113,7 @@ internal static class SqlAutoPairing
         SnapshotPoint position,
         string insertionText)
     {
-        if (!IsEnabled(SqlAssistSettingsStore.Current.AutoPairDelimiters) ||
-            textView is null ||
-            textView.IsClosed)
+        if (!IsEnabled() || textView is null || textView.IsClosed)
         {
             return null;
         }
@@ -122,150 +136,6 @@ internal static class SqlAutoPairing
     }
 
     /// <summary>
-    /// 打完 <c>BEGIN</c> 或 <c>BEGIN TRY</c> 時，把選取的那一段包成一組區塊骨架。
-    /// </summary>
-    /// <remarks>
-    /// 由 <see cref="TextViewDispatch.AfterCurrentCommand"/> 排在這一輪命令<b>結束之後</b>
-    /// 才呼叫，因為要問的是「緩衝區裡有沒有 BEGIN」——而 TypeChar 處理常式跑的當下，
-    /// 那個字元還沒進去（與自動大寫要在插入<b>之前</b>改寫是同一個時序）。
-    /// 在原地問只會看到少一個字元的字。
-    ///
-    /// 也因此沒有回傳值：排在後面的工作沒有任何按鍵可以吞，
-    /// 而它要改的文字此時都已經在緩衝區裡了。
-    ///
-    /// 有選取範圍才動作。沒有選取範圍時打 <c>BEGIN</c> 什麼都不補：
-    /// 使用者可能正要打 <c>BEGIN TRAN</c>，在那個當下補一行 <c>END</c> 只會被刪掉。
-    /// </remarks>
-    public static void TrySurroundSelectionWithBlock(ITextView textView)
-    {
-        if (!IsEnabled(SqlAssistSettingsStore.Current.AutoPairBlocks))
-        {
-            return;
-        }
-
-        // 方塊選取與多重選取沒有「包起來」的明確語意；與單字元配對同一條。
-        if (textView.Selection.IsEmpty ||
-            textView.Selection.Mode != TextSelectionMode.Stream ||
-            textView.Selection.SelectedSpans.Count != 1)
-        {
-            return;
-        }
-
-        var buffer = textView.TextBuffer;
-        var caret = textView.Caret.Position.BufferPosition;
-
-        if (textView.Caret.InVirtualSpace ||
-            !ReferenceEquals(caret.Snapshot.TextBuffer, buffer))
-        {
-            return;
-        }
-
-        if (SqlBlockPairAnalyzer.MatchEndingAt(
-                new SnapshotTextSource(caret.Snapshot),
-                caret.Position) is { } match)
-        {
-            TrySurroundWithBlock(textView, buffer, match);
-        }
-    }
-
-    /// <summary>
-    /// 把選取範圍連同 <c>BEGIN</c> 那一行換成整段骨架。
-    /// </summary>
-    /// <remarks>
-    /// 取代的範圍是「<c>BEGIN</c> 所在那一行的行首到選取範圍結尾」：開頭那一行
-    /// 由骨架自己寫，所以它連同使用者打的 <c>BEGIN</c> 一起被換掉，
-    /// 也就不必自己算「開頭留在哪裡、結尾插在哪」。
-    ///
-    /// 起點取自 <see cref="SqlBlockMatch.Start"/> 而不是「游標減關鍵字長度」——
-    /// 關鍵字裡的空白幾個都算，長度因此推不出起點。
-    ///
-    /// 一次編輯換完整段，因此 Ctrl+Z 一次就回到原狀。
-    /// </remarks>
-    private static bool TrySurroundWithBlock(ITextView textView, ITextBuffer buffer, SqlBlockMatch match)
-    {
-        var snapshot = textView.TextSnapshot;
-        var firstLine = snapshot.GetLineFromPosition(match.Start);
-        var lastLine = snapshot.GetLineFromPosition(textView.Selection.SelectedSpans[0].End.Position);
-        var replace = new SnapshotSpan(firstLine.Start, lastLine.End);
-
-        if (buffer.IsReadOnly(replace.Span))
-        {
-            return false;
-        }
-
-        // 縮排單位取這一行的前導空白；縮排為空時退成四個空白。
-        var lineText = firstLine.GetText();
-        var indent = SqlSnippetIndentation.LeadingWhitespace(lineText, match.Start - firstLine.Start.Position);
-        var unit = indent.Length > 0 ? indent : "    ";
-        var newLine = SnapshotNewLine.Resolve(snapshot, replace.Start.Position);
-
-        // 選取內容每一行已經帶著自己的前導空白，先去掉再交給 Wrap 重排，才不會愈縮愈深。
-        var content = StripIndent(replace.GetText(), indent);
-        var text = SqlBlockPairAnalyzer.Wrap(match.Closer, content, indent, unit, newLine);
-
-        using var edit = buffer.CreateEdit();
-        edit.Replace(replace.Span, text);
-
-        var updated = edit.Apply();
-
-        if (updated is null || edit.Canceled)
-        {
-            return false;
-        }
-
-        // 游標停在區塊裡第一行的開頭，使用者接著就打內容。
-        var offset = Math.Min(replace.Start.Position + indent.Length + unit.Length, updated.Length);
-        textView.Selection.Clear();
-        textView.Caret.MoveTo(new SnapshotPoint(updated, offset));
-        textView.Caret.EnsureVisible();
-        SqlAssistDiagnostics.Write($"以 {match.Closer.Keyword} 包夾選取範圍", textView);
-        return true;
-    }
-
-    /// <summary>去掉每一行開頭那段縮排；第一行的行首由取代範圍本身涵蓋。</summary>
-    /// <remarks>
-    /// 只在續行的行首動手：第一行是使用者打 <c>BEGIN</c> 的那一行，
-    /// 它開頭的空白已經含在 <paramref name="indent"/> 裡、由骨架自己重寫。
-    /// 不做的話每一行都會白白多縮一層，選得愈深縮得愈多。
-    /// </remarks>
-    private static string StripIndent(string content, string indent)
-    {
-        if (indent.Length == 0)
-        {
-            return content;
-        }
-
-        var builder = new System.Text.StringBuilder(content.Length);
-
-        for (var index = 0; index < content.Length; index++)
-        {
-            builder.Append(content[index]);
-
-            if (content[index] != '\r' && content[index] != '\n')
-            {
-                continue;
-            }
-
-            // CRLF 看成一次換行，否則會在 CR 與 LF 之間找縮排。
-            if (content[index] == '\r' && index + 1 < content.Length && content[index + 1] == '\n')
-            {
-                builder.Append('\n');
-                index++;
-            }
-
-            var skipped = 0;
-            while (skipped < indent.Length && index + 1 < content.Length &&
-                   content[index + 1] == indent[skipped])
-            {
-                index++;
-                skipped++;
-            }
-        }
-
-        return builder.ToString();
-    }
-
-    /// <summary>
     /// Backspace 落在一對空的配對中間時，兩邊一起刪。
     /// </summary>
     /// <returns><c>true</c> 代表已經刪掉整對，呼叫端要吞掉這次按鍵。</returns>
@@ -273,11 +143,12 @@ internal static class SqlAutoPairing
     /// 一次編輯刪掉兩個字元，所以 Ctrl+Z 一次就還原——與補上時要按兩次不對稱，
     /// 但這裡沒有平台的那一半要等，能合就合。
     /// </remarks>
-    public static bool TryHandleBackspace(ITextView textView, ITextBuffer buffer)
+    public static bool TryHandleBackspace(
+        ITextView textView,
+        ITextBuffer buffer,
+        IAsyncCompletionBroker? broker)
     {
-        if (!IsEnabled(SqlAssistSettingsStore.Current.AutoPairDelimiters) ||
-            !textView.Selection.IsEmpty ||
-            !TryGetCaret(textView, buffer, out var caret))
+        if (!TryGetCaret(textView, buffer, out var caret) || !textView.Selection.IsEmpty)
         {
             return false;
         }
@@ -294,6 +165,8 @@ internal static class SqlAutoPairing
         {
             return false;
         }
+
+        DismissCompletion(textView, broker);
 
         using var edit = buffer.CreateEdit();
         edit.Delete(caret.Position - 1, 2);
@@ -315,7 +188,8 @@ internal static class SqlAutoPairing
     private static bool TrySurroundSelection(
         ITextView textView,
         ITextBuffer buffer,
-        char typedCharacter)
+        char typedCharacter,
+        IAsyncCompletionBroker? broker)
     {
         // 方塊選取每一行是一段，包夾的語意不明確；多重選取同理。
         if (textView.Selection.Mode != TextSelectionMode.Stream ||
@@ -340,6 +214,8 @@ internal static class SqlAutoPairing
         {
             return false;
         }
+
+        DismissCompletion(textView, broker);
 
         using var edit = buffer.CreateEdit();
         edit.Insert(span.Start.Position, typedCharacter.ToString());
@@ -390,6 +266,15 @@ internal static class SqlAutoPairing
         SqlAssistDiagnostics.Write($"自動補上 {close}", textView);
     }
 
+    /// <summary>要動緩衝區或游標之前，先收掉還開著的建議清單。</summary>
+    /// <remarks>
+    /// <c>Dismiss</c> 是同步的，回傳前 session 就已經不在了，接著的編輯不會被它追蹤。
+    /// </remarks>
+    private static void DismissCompletion(ITextView textView, IAsyncCompletionBroker? broker)
+    {
+        broker?.GetSession(textView)?.Dismiss();
+    }
+
     /// <summary>
     /// 取得可以動的游標位置。
     /// </summary>
@@ -400,6 +285,11 @@ internal static class SqlAutoPairing
     private static bool TryGetCaret(ITextView textView, ITextBuffer buffer, out SnapshotPoint caret)
     {
         caret = default;
+
+        if (!IsEnabled())
+        {
+            return false;
+        }
 
         if (textView is null || buffer is null || textView.IsClosed || textView.Caret.InVirtualSpace)
         {
@@ -417,12 +307,12 @@ internal static class SqlAutoPairing
         return true;
     }
 
-    /// <summary>總開關與這一項功能自己的開關都開著。</summary>
-    /// <remarks>
-    /// 兩個功能各有一個開關（分隔字元與區塊骨架），總開關是第三層。
-    /// 判斷收在這裡，呼叫端才不必各自記得「還要看總開關」。
-    /// </remarks>
-    private static bool IsEnabled(bool feature) => SqlAssistSettingsStore.Current.Enabled && feature;
+    private static bool IsEnabled()
+    {
+        var settings = SqlAssistSettingsStore.Current;
+
+        return settings.Enabled && settings.AutoPairDelimiters;
+    }
 
     /// <summary>
     /// 這個編輯器裡「由自動配對補出來、而且還沒被收掉」的結尾字元。

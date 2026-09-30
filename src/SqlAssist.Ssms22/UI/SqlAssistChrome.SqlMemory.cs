@@ -229,17 +229,6 @@ internal static partial class SqlAssistChrome
         AutomationProperties.SetName(input, label); return panel;
     }
 
-    /// <summary>下拉建議的開關：沿用展開箭頭，停駐才顯色，不另畫一個 ComboBox 外框。</summary>
-    public static Button CreateDropDownButton(string label)
-    {
-        var button = CreateButton("", DefaultMetrics);
-        button.Template = CreateGhostButtonTemplate();
-        button.Content = CreateChevron(); button.Padding = new Thickness(4);
-        button.MinWidth = 26; button.MinHeight = 26; button.Focusable = false;
-        button.ToolTip = label; AutomationProperties.SetName(button, label);
-        return button;
-    }
-
     public static Style CreateMemoryPillStyle()
     {
         var border = new FrameworkElementFactory(typeof(Border)) { Name = "pill" };
@@ -277,6 +266,7 @@ internal static partial class SqlAssistChrome
         style.Setters.Add(new Setter(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center));
         style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 24d));
         style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
+        style.Setters.Add(ClickCursorSetter());
         style.Setters.Add(ThemeResourceSet.Setter(Control.ForegroundProperty, ThemeBrush.ListForeground));
         return style;
     }

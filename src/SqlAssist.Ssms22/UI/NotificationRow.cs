@@ -67,7 +67,7 @@ internal sealed class NotificationRow : Grid
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotificationLayout.IconColumn - NotificationLayout.StatusIconInset.Left) });
         content.ColumnDefinitions.Add(new ColumnDefinition());
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Icon = new NotificationStatusIcon { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 0, 0) };
+        Icon = new SurfaceStatusIcon { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 0, 0) };
         content.Children.Add(Icon);
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Top }; SetColumn(text, 1);
@@ -111,7 +111,7 @@ internal sealed class NotificationRow : Grid
         MouseLeave += (_, _) => NotificationMotion.Fade(_hover, 0, NotificationMotion.WashOut, _motion);
     }
 
-    internal NotificationStatusIcon Icon { get; }
+    internal SurfaceStatusIcon Icon { get; }
 
     internal TextBlock TitleText { get; }
 
@@ -206,10 +206,10 @@ internal sealed class NotificationRow : Grid
     internal void Stagger(int index, bool motion)
     {
         if (!motion) return;
-        var delay = NotificationMotion.ContentDelay + Math.Min(index, NotificationMotion.StaggerLimit - 1) * NotificationMotion.RowStagger;
-        BeginAnimation(OpacityProperty, NotificationMotion.Delayed(0, 1, delay, NotificationMotion.RowEnter));
+        var delay = SurfaceMotion.ContentDelay + Math.Min(index, NotificationMotion.StaggerLimit - 1) * NotificationMotion.RowStagger;
+        BeginAnimation(OpacityProperty, SurfaceMotion.Delayed(0, 1, delay, NotificationMotion.RowEnter));
         _offset.BeginAnimation(TranslateTransform.YProperty,
-            NotificationMotion.Delayed(NotificationMotion.StaggerShift, 0, delay, NotificationMotion.RowEnter));
+            SurfaceMotion.Delayed(NotificationMotion.StaggerShift, 0, delay, NotificationMotion.RowEnter));
     }
 
     /// <summary>

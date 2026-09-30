@@ -42,17 +42,5 @@
   "DatePart": "Date part",
   "TableHint": "Table hint",
   "QueryHint": "Query hint",
-  "Predicate": "predicate",
-  "Statement": "Statement",
-  "SystemProcedure": "System stored procedure",
-  "TemporaryTable": "Temporary table",
-  "TemporaryProcedure": "Temporary stored procedure",
-  "TableVariable": "Table variable",
-  "CommonTableExpression": "CTE",
-  "Sequences": "Sequences",
-  "Alias": "Alias",
-  "Cursor": "Cursor",
-  "Language": "Language",
-  "TimeZone": "Time zone",
-  "Named": "{kind} {name}"
+  "Predicate": "predicate"
 }

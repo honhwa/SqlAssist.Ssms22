@@ -19,6 +19,19 @@ public sealed class TSqlScriptRendererRegressionTests
         Assert.Equal(definition, Assert.Single(Batches(script), batch => batch.Contains("CREATE TRIGGER")));
     }
 
+    [Theory]
+    [InlineData(SqlObjectImplementation.TransactSql, "WITH ENCRYPTION")]
+    [InlineData(SqlObjectImplementation.Clr, "CLR")]
+    public void 取不到定義的觸發程序說出真正的原因(SqlObjectImplementation implementation, string reason)
+    {
+        var trigger = new SqlTriggerInfo("TR_Loan", definition: null, implementation: implementation);
+        var structure = new SqlObjectStructure(Detail(), triggers: new[] { trigger });
+        var script = structure.BuildScript(Context(SqlScriptOptions.Minimal with { IncludeTriggers = true }));
+
+        Assert.Contains(reason, script);
+        Assert.DoesNotContain("CREATE TRIGGER", script);
+    }
+
     [Fact]
     public void 第二層預覽載入期間不能複製出缺索引的DDL()
     {
@@ -42,11 +55,15 @@ public sealed class TSqlScriptRendererRegressionTests
         Assert.Equal(definition, Assert.Single(Batches(script), batch => batch.Contains(definition)));
     }
 
+    /// <remarks>
+    /// 缺的那一項要點名，而且排在欄位摘要前面：上百個欄位的摘要裡看不出是哪一欄少了
+    /// DEFAULT。原因只有權限一個，說成「可能」的話使用者會去查一個不存在的原因。
+    /// </remarks>
     [Theory]
-    [InlineData("computed")]
-    [InlineData("check")]
-    [InlineData("default")]
-    public void 運算式缺失時不交出可執行的半份結構(string missing)
+    [InlineData("computed", "[LoanId] AS (…)")]
+    [InlineData("check", "CONSTRAINT [CK_Loan] CHECK (…)")]
+    [InlineData("default", "[LoanId] DEFAULT (…)")]
+    public void 運算式缺失時不交出可執行的半份結構(string missing, string item)
     {
         var detail = missing == "computed"
             ? Detail(new SqlColumnInfo(1, "LoanId", "int", false, isComputed: true))
@@ -57,7 +74,11 @@ public sealed class TSqlScriptRendererRegressionTests
         var structure = new SqlObjectStructure(detail,
             checkConstraints: missing == "check" ? new[] { new SqlCheckConstraint("CK_Loan", "") } : null);
         Assert.False(structure.CanBuildExecutableScript);
-        Assert.Empty(SqlTokenizer.Tokenize(structure.BuildScript(Context(SqlScriptOptions.Fidelity))));
+        var script = structure.BuildScript(Context(SqlScriptOptions.Fidelity));
+        Assert.Empty(SqlTokenizer.Tokenize(script));
+        Assert.Contains("沒有它的 VIEW DEFINITION 權限", script);
+        Assert.DoesNotContain("可能", script);
+        Assert.InRange(script.IndexOf("--     " + item, StringComparison.Ordinal), 0, script.IndexOf("的欄位（", StringComparison.Ordinal));
     }
 
     [Fact]

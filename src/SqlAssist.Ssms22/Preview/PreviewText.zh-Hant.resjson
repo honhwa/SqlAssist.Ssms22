@@ -65,17 +65,5 @@
   // 資料格的右鍵選單。
   "MenuCopySelectedCells": "複製選取的儲存格",
   "MenuCopyWholeGrid": "複製整個表格",
-  "MenuCopyFullScript": "複製完整指令碼",
-  "PinToggle": "釘住：預覽固定在這裡，之後的預覽都在這扇窗裡換內容；拖曳抬頭可以搬到別處，只有 Esc 或關閉才收",
-  "DockButton": "移到工具窗：跨分頁留著，可以停靠或拖到別的螢幕",
-  "CloseButton": "關閉預覽（Esc）",
-  "LeadMore": "更多",
-  "LeadLess": "收起",
-  "LeadExpand": "顯示完整寫法與說明",
-  "LeadCollapse": "寫法與說明各收成一行",
-  "CapsuleLoading": "正在載入 {name}",
-  "ToolWindowCaption": "結構預覽",
-  "ToolWindowCaptionFor": "結構預覽 - {name}",
-  "ToolWindowMissing": "SSMS 未建立結構預覽工具窗。",
-  "ToolWindowOpenFailed": "開啟結構預覽工具窗失敗"
+  "MenuCopyFullScript": "複製完整指令碼"
 }

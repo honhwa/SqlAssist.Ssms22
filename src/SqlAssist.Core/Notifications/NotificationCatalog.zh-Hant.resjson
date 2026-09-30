@@ -225,18 +225,5 @@
   // 「」裡是設定項目的名稱，英文要對上設定頁的英文名稱。
   "HiddenByEnabled": "「啟用 SqlAssist」關著，測試通知不會出現。",
   "HiddenByNotifications": "「顯示通知提示」關著，測試通知不會出現。",
-  "HiddenByFailures": "「顯示所有種類的失敗」關著，失敗的測試不會出現。",
-  "LoadingLanguages": "載入語言名單",
-  "LoadingLanguagesDone": "已載入語言名單",
-  "LoadingLoginLanguage": "載入登入的預設語言",
-  "LoadingLoginLanguageDone": "已載入登入的預設語言",
-  "LoadingTimeZones": "載入時區名單",
-  "LoadingTimeZonesDone": "已載入時區名單",
-  "LoadingServerTimeZone": "載入伺服器時區",
-  "LoadingServerTimeZoneDone": "已載入伺服器時區",
-  "BuildingSearchIndex": "建立搜尋索引",
-  "BuildingSearchIndexDone": "已建立搜尋索引",
-  "RunningInternalStep": "執行 SqlAssist 內部步驟",
-  "RunningInternalStepDone": "已執行 SqlAssist 內部步驟",
-  "ResultUnexpected": "這一次已略過；錯誤堆疊寫在診斷紀錄檔"
+  "HiddenByFailures": "「顯示所有種類的失敗」關著，失敗的測試不會出現。"
 }
