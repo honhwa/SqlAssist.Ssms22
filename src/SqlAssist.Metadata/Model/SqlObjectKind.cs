@@ -1,4 +1,5 @@
 using System;
+using SqlAssist.Core.Localization;
 using SqlAssist.Metadata.Formatting;
 
 namespace SqlAssist.Metadata.Model;
@@ -49,14 +50,20 @@ public enum SqlObjectKind
 
 public static class SqlObjectKinds
 {
+    /// <summary><c>sys.objects.type</c> 是 <c>char(2)</c>，單字元代碼帶著尾端空白（<c>'X '</c>）。</summary>
+    internal static string NormalizeType(string? type) => (type ?? string.Empty).Trim().ToUpperInvariant();
+
     /// <summary>把 sys.objects.type 對應到列舉；未知型別回傳 <see cref="SqlObjectKind.Unknown"/>。</summary>
     public static SqlObjectKind FromSysObjectType(string? type)
     {
-        return (type ?? string.Empty).Trim().ToUpperInvariant() switch
+        return NormalizeType(type) switch
         {
             "U" => SqlObjectKind.Table,
             "V" => SqlObjectKind.View,
-            "P" or "PC" => SqlObjectKind.Procedure,
+
+            // X 是擴充預存程序（sp_executesql）：呼叫方式與預存程序完全相同，
+            // 本文不是 T-SQL 這件事另由 SqlObjectImplementations 回答。
+            "P" or "PC" or "X" => SqlObjectKind.Procedure,
             "FN" or "FS" => SqlObjectKind.ScalarFunction,
             "IF" => SqlObjectKind.InlineTableFunction,
             "TF" or "FT" => SqlObjectKind.TableValuedFunction,
@@ -259,25 +266,35 @@ public static class SqlObjectKinds
         return kind is SqlObjectKind.Procedure or SqlObjectKind.ScalarFunction;
     }
 
+    /// <summary>介面上的種類名稱，取目前介面語言。</summary>
+    /// <remarks>
+    /// 譯名與圖示朗讀、篩選鈕共用 <see cref="SqlKindText"/>：同一種東西在建議清單、滑鼠停留提示與
+    /// SQL Search 叫不同的名字，使用者分不出兩者是不是同一件事。每次呼叫才取字，
+    /// 把結果存起來的呼叫端要自己照「即時切換」重建。
+    /// </remarks>
     public static string ToDisplayName(this SqlObjectKind kind)
     {
         return kind switch
         {
-            SqlObjectKind.Table => "Table",
-            SqlObjectKind.View => "View",
-            SqlObjectKind.Procedure => "Procedure",
-            SqlObjectKind.ScalarFunction => "Scalar function",
-            SqlObjectKind.InlineTableFunction => "Inline table function",
-            SqlObjectKind.TableValuedFunction => "Table-valued function",
-            SqlObjectKind.Synonym => "Synonym",
-            SqlObjectKind.Trigger => "Trigger",
-            SqlObjectKind.Sequence => "Sequence",
-            SqlObjectKind.TableType => "Table type",
-            SqlObjectKind.Constraint => "Constraint",
-            SqlObjectKind.TemporaryTable => "Temp table",
-            SqlObjectKind.TableVariable => "Table variable",
-            SqlObjectKind.CommonTableExpression => "CTE",
-            _ => "Object"
+            SqlObjectKind.Table => SqlKindText.Table,
+            SqlObjectKind.View => SqlKindText.View,
+            SqlObjectKind.Procedure => SqlKindText.Procedure,
+            SqlObjectKind.ScalarFunction => SqlKindText.ScalarFunction,
+            SqlObjectKind.InlineTableFunction => SqlKindText.InlineTableFunction,
+            SqlObjectKind.TableValuedFunction => SqlKindText.TableFunction,
+            SqlObjectKind.Synonym => SqlKindText.Synonym,
+            SqlObjectKind.Trigger => SqlKindText.Trigger,
+            SqlObjectKind.Sequence => SqlKindText.Sequence,
+            SqlObjectKind.TableType => SqlKindText.TableType,
+            SqlObjectKind.Constraint => SqlKindText.Constraint,
+            SqlObjectKind.TemporaryTable => SqlKindText.TemporaryTable,
+            SqlObjectKind.TableVariable => SqlKindText.TableVariable,
+            SqlObjectKind.CommonTableExpression => SqlKindText.CommonTableExpression,
+            _ => SqlKindText.Unknown
         };
     }
+
+    /// <summary>種類加名稱的標題，例如「資料表 dbo.Loan」。</summary>
+    public static string ToDisplayTitle(this SqlObjectKind kind, string name) =>
+        SqlKindText.Named(kind.ToDisplayName(), name);
 }

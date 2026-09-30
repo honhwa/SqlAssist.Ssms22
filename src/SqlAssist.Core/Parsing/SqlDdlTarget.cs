@@ -62,10 +62,13 @@ public static class SqlDdlTarget
 
         var nameStart = SqlTokenNavigator.SkipQualifiedNameBackward(tokens, nameEnd);
 
+        // SET STATISTICS IO ON 是同一個形狀，但 SET 後面的 STATISTICS 是工作階段選項，
+        // 那個 ON 是選項值。
         return nameStart >= 1 &&
                tokens[nameStart - 1].Kind == SqlTokenKind.Identifier &&
                !tokens[nameStart - 1].IsQuoted &&
-               ObjectKeywords.Contains(tokens[nameStart - 1].Value);
+               ObjectKeywords.Contains(tokens[nameStart - 1].Value) &&
+               !(nameStart >= 2 && tokens[nameStart - 2].IsKeyword("SET"));
     }
 
     /// <summary>
@@ -77,8 +80,9 @@ public static class SqlDdlTarget
     /// （<c>ON dbo.|</c>）尾巴多了名稱與點號，那幾個詞元是同一個名稱的一部分，
     /// 跳過它們問的仍然是同一個 <c>ON</c>。
     ///
-    /// 跳的只有識別字與點號，所以 <c>JOIN b ON b.x = a.x </c> 這種寫完的述詞停在
-    /// 等號上，不會誤認成 <c>ON</c>。
+    /// 跳的只有「名稱＋點號」：串流以點號結尾才是還沒寫完的限定名稱。名稱寫完之後
+    /// （<c>ON dbo.Loan |</c>、<c>ON t INSTEAD OF DELETE |</c>）問的已經不是這個 <c>ON</c>——
+    /// 關鍵字也是識別字，照單全收的話觸發程序的事件會一路走回目標前的 <c>ON</c>。
     /// </remarks>
     public static int FindTrailingDataSourceOn(IReadOnlyList<SqlToken> tokens)
     {
@@ -89,11 +93,11 @@ public static class SqlDdlTarget
 
         var index = tokens.Count - 1;
 
-        while (index >= 0 &&
-               !tokens[index].IsKeyword("ON") &&
-               (tokens[index].IsPunctuation(".") || tokens[index].Kind == SqlTokenKind.Identifier))
+        while (index >= 1 &&
+               tokens[index].IsPunctuation(".") &&
+               tokens[index - 1].Kind == SqlTokenKind.Identifier)
         {
-            index--;
+            index -= 2;
         }
 
         return index >= 0 && IsDataSourceOn(tokens, index) ? index : -1;

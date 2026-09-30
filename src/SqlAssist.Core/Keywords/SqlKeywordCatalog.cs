@@ -60,7 +60,14 @@ public static class SqlKeywordCatalog
     private static readonly HashSet<string> ReservedIdentifiers =
         new(SqlKeywordCatalogData.ReservedIdentifiers, StringComparer.OrdinalIgnoreCase);
 
-    private static readonly Dictionary<string, SqlKeywordPosition> Positions = BuildPositions();
+    private static readonly HashSet<string> ItemEndings =
+        new(SqlKeywordCatalogData.ItemEndings, StringComparer.OrdinalIgnoreCase);
+
+    private static readonly Dictionary<string, SqlKeywordPosition> StatementEndings =
+        ToDictionary(SqlKeywordCatalogData.StatementEndings);
+
+    private static readonly Dictionary<string, SqlKeywordPosition> Positions =
+        ToDictionary(SqlKeywordCatalogData.Keywords);
 
     private static readonly string[] AllKeywords = BuildAllKeywords();
 
@@ -70,28 +77,29 @@ public static class SqlKeywordCatalog
     /// <summary>全部關鍵字，已排序。</summary>
     public static IReadOnlyList<string> All => AllKeywords;
 
-    /// <summary>出現在建議清單裡的關鍵字。</summary>
-    /// <remarks>
-    /// 現在等於 <see cref="All"/>：清單雜訊由位置過濾負責，不再靠縮短清單。
-    /// </remarks>
-    public static IReadOnlyList<string> SuggestionKeywords => AllKeywords;
-
     /// <summary>
     /// 查出某個關鍵字可以出現在哪些位置。
     /// </summary>
     /// <remarks>
-    /// 產生器判不出位置的字（<c>FILLFACTOR</c>、<c>STOPLIST</c> 這類深層子句字）
-    /// 回傳 <see cref="SqlKeywordPosition.Any"/>：寧可讓它在每個位置都出現，
-    /// 也不要因為樣板沒涵蓋到就讓使用者永遠打不出來。
+    /// 產生器判不出位置的字（<c>STOPLIST</c>、<c>PUBLIC</c> 這類深層子句字）原樣回傳
+    /// <see cref="SqlKeywordPosition.None"/>，查不到的字也一樣。它們在清單裡出不出現由
+    /// <see cref="SqlKeywordPositionExtensions.Allows"/> 決定，這裡不翻譯成別的值。
     /// </remarks>
     public static SqlKeywordPosition GetPositions(string keyword)
     {
-        if (string.IsNullOrEmpty(keyword) || !Positions.TryGetValue(keyword, out var positions))
-        {
-            return SqlKeywordPosition.Any;
-        }
+        return !string.IsNullOrEmpty(keyword) && Positions.TryGetValue(keyword, out var positions)
+            ? positions
+            : SqlKeywordPosition.None;
+    }
 
-        return positions == SqlKeywordPosition.None ? SqlKeywordPosition.Any : positions;
+    /// <summary>這個關鍵字能開始一句：<c>SELECT</c>、<c>SET</c>、<c>DECLARE</c>、<c>RETURN</c>。</summary>
+    /// <remarks>
+    /// 能開始一句的字也寫在一句的中間（<c>INSERT … SELECT</c>）；是不是這一句的開頭要看前一格，
+    /// 見 <see cref="SqlKeywordPositionAnalyzer"/>。
+    /// </remarks>
+    public static bool StartsStatement(string keyword)
+    {
+        return (GetPositions(keyword) & SqlKeywordPosition.StatementStart) != SqlKeywordPosition.None;
     }
 
     /// <summary>是否為認得的關鍵字或內建資料型別；語法著色用。</summary>
@@ -105,6 +113,49 @@ public static class SqlKeywordCatalog
     public static bool IsKeyword(string word)
     {
         return !string.IsNullOrEmpty(word) && Positions.ContainsKey(word);
+    }
+
+    /// <summary>
+    /// 這個關鍵字本身就把前一格開的那一項寫完：<c>NULL</c>、<c>CURRENT_USER</c> 是完整的
+    /// 運算元，<c>DESC</c> 寫完 ORDER BY 的一項。
+    /// </summary>
+    /// <remarks>
+    /// 由產生器判定：接在某個樣板後面就是完整的一句，而且語法樹裡以它結尾的是語句以外的片段。
+    /// <c>BEGIN TRAN</c> 的 <c>TRAN</c> 不算：它寫完的是語句本身。
+    /// </remarks>
+    public static bool EndsItem(string keyword)
+    {
+        return !string.IsNullOrEmpty(keyword) && ItemEndings.Contains(keyword);
+    }
+
+    /// <summary>
+    /// 這個關鍵字能寫完一整句：<c>BREAK</c>、<c>COMMIT</c>、<c>BEGIN TRAN</c> 的 <c>TRAN</c>。
+    /// </summary>
+    /// <remarks>
+    /// 由產生器判定：接在某個樣板後面就是完整的一句，而且以它結尾的是語句本身——
+    /// <see cref="EndsItem"/> 排除的那一半。寫完之後還接不接得了別的字不管，那一問見
+    /// <see cref="ClosesStatement"/>。
+    /// </remarks>
+    public static bool EndsStatement(string keyword)
+    {
+        return !string.IsNullOrEmpty(keyword) && StatementEndings.ContainsKey(keyword);
+    }
+
+    /// <summary>
+    /// 前一格是 <paramref name="before"/> 時，這個關鍵字寫完那一句就結束了，後面只接得了下一句。
+    /// </summary>
+    /// <remarks>
+    /// 產生器只在那一句再也接不了語句開頭以外的東西時才記下位置：<c>COMMIT</c> 還接
+    /// <c>TRAN</c>、<c>RETURN</c> 還接運算式、<c>BEGIN TRAN</c> 還接交易名稱的變數，
+    /// 把它們之後判成語句開頭就把這些字藏起來了。判不出前一格（<see cref="SqlKeywordPosition.Any"/>）
+    /// 時不算。
+    /// </remarks>
+    public static bool ClosesStatement(string keyword, SqlKeywordPosition before)
+    {
+        return before != SqlKeywordPosition.Any &&
+            !string.IsNullOrEmpty(keyword) &&
+            StatementEndings.TryGetValue(keyword, out var positions) &&
+            (positions & before) != SqlKeywordPosition.None;
     }
 
     /// <summary>
@@ -148,13 +199,11 @@ public static class SqlKeywordCatalog
         return true;
     }
 
-    private static Dictionary<string, SqlKeywordPosition> BuildPositions()
+    private static Dictionary<string, SqlKeywordPosition> ToDictionary(KeyValuePair<string, SqlKeywordPosition>[] entries)
     {
-        var positions = new Dictionary<string, SqlKeywordPosition>(
-            SqlKeywordCatalogData.Keywords.Length,
-            StringComparer.OrdinalIgnoreCase);
+        var positions = new Dictionary<string, SqlKeywordPosition>(entries.Length, StringComparer.OrdinalIgnoreCase);
 
-        foreach (var entry in SqlKeywordCatalogData.Keywords)
+        foreach (var entry in entries)
         {
             positions[entry.Key] = entry.Value;
         }

@@ -15,5 +15,6 @@
   // 認不出種類的物件：{kind} 是物件種類的顯示名稱。
   "UnscriptableHeading": "無法為 {name}（{kind}）產生可以執行的指令碼。",
   "UnscriptableReason": "SqlAssist 認不得這個物件的種類，因此不知道它的定義該長什麼樣。",
-  "UnscriptableAvailable": "以下是查得到的部分："
+  "UnscriptableAvailable": "以下是查得到的部分：",
+  "TriggerClr": "觸發程序 {trigger} 是 CLR 組件實作的，本來就沒有 T-SQL 定義可以寫出。"
 }

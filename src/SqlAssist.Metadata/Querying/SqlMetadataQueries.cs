@@ -66,14 +66,15 @@ WHERE tt.is_user_defined = 1;";
     /// 只收這兩個結構描述：<c>sys.all_objects</c> 裡 <c>is_ms_shipped = 1</c> 的東西
     /// 還包含一堆內部物件，而使用者打得出來的就是這兩個名字。
     ///
-    /// <c>X</c> 是擴充預存程序，<c>sp_executesql</c> 就在那一類。
+    /// <c>X</c> 是擴充預存程序，<c>sp_executesql</c> 就在那一類；型別代碼原樣交出，
+    /// 種類與實作方式都由讀取端的同一份對應決定。
     /// </remarks>
     public const string SystemObjects = @"
 SELECT
     o.object_id,
     s.name AS schema_name,
     o.name AS object_name,
-    CASE WHEN o.type = 'X' THEN 'P' ELSE o.type END AS type
+    o.type
 FROM sys.all_objects AS o
 INNER JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 WHERE o.is_ms_shipped = 1
@@ -128,9 +129,7 @@ ORDER BY s.name;";
     /// </summary>
     /// <remarks>
     /// <c>sys.fn_helpcollations()</c> 從 SQL Server 2000 就有，而且不看權限——
-    /// 這是一份與資料無關的常數表。它與物件清單分開快取：名單屬於<b>伺服器</b>，
-    /// 與目前連線的是哪一個資料庫無關，跟著每一份目錄各存一次的話，
-    /// 使用者每打出一個跨資料庫的限定字就多五千多個字串。
+    /// 這是一份與資料無關的常數表。與物件清單分開快取，見 <c>SqlServerInstanceListCache</c>。
     ///
     /// 不做成寫死的內建目錄：SQL Server 2019 之後有五千五百筆以上，
     /// 而每一版都在增加——寫死的那一份會在下一版開始漏掉名稱，
@@ -156,6 +155,58 @@ ORDER BY c.name;";
 SELECT CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), 'Collation'));";
 
     /// <summary>
+    /// 這台伺服器支援的語言名稱與英文別名。
+    /// </summary>
+    /// <remarks>
+    /// <c>sys.syslanguages</c> 是相容性檢視，但從 SQL Server 2000 起每一版都有，而且沒有
+    /// 對應的新目錄檢視。別名一起讀：名稱是當地寫法（<c>Deutsch</c>），使用者記得的常是
+    /// 別名（<c>German</c>）。
+    /// </remarks>
+    public const string Languages = @"
+SELECT l.name, l.alias
+FROM sys.syslanguages AS l
+ORDER BY l.name;";
+
+    /// <summary>
+    /// 這條連線的語言，也就是登入的預設語言。
+    /// </summary>
+    /// <remarks>
+    /// 中繼資料用的是自己開的連線，問得到的是登入的預設語言，不是查詢視窗裡
+    /// <c>SET LANGUAGE</c> 之後的那一個；後者寫在指令碼裡，由指令碼已用值那一份補上。
+    /// </remarks>
+    public const string LoginLanguage = @"
+SELECT CONVERT(nvarchar(128), @@LANGUAGE);";
+
+    /// <summary>
+    /// 這台伺服器支援的時區名稱與目前的 UTC 位移。
+    /// </summary>
+    /// <remarks>
+    /// <c>sys.time_zone_info</c> 從 SQL Server 2016 起才有。直接 SELECT 的話整句在舊版上是
+    /// 「無效的物件名稱」，降級會把它變成「這一輪沒有資料」，而失敗不進快取，每一次都再撞一次。
+    /// 所以先問它在不在，在才用動態 SQL 讀：舊版得到一份成功的空名單，那一版本來就沒有
+    /// <c>AT TIME ZONE</c>。
+    /// </remarks>
+    public const string TimeZones = @"
+IF EXISTS (SELECT 1 FROM sys.all_views AS v WHERE v.name = N'time_zone_info' AND v.schema_id = 4)
+    EXEC (N'SELECT z.name, z.current_utc_offset FROM sys.time_zone_info AS z ORDER BY z.name;');";
+
+    /// <summary>
+    /// 伺服器的時區。
+    /// </summary>
+    /// <remarks>
+    /// <c>CURRENT_TIMEZONE_ID()</c> 要 SQL Server 2022（與 Azure SQL）才有，而版本號分不出
+    /// Azure（永遠回 12）。所以直接試：包在動態 SQL 裡，認不得這個函式時是下一層的編譯錯誤，
+    /// 接得住，回一列 NULL——這一版問不到不是失敗，不該進「詳細記錄」。
+    /// </remarks>
+    public const string ServerTimeZone = @"
+BEGIN TRY
+    EXEC (N'SELECT CONVERT(nvarchar(128), CURRENT_TIMEZONE_ID());');
+END TRY
+BEGIN CATCH
+    SELECT CONVERT(nvarchar(128), NULL);
+END CATCH;";
+
+    /// <summary>
     /// 第二層：單一物件的欄位。主索引鍵資訊由 sys.indexes／sys.index_columns 帶出，
     /// 讓滑鼠停留提示能直接標示 PK。
     /// </summary>
@@ -179,13 +230,6 @@ SELECT CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), 'Collation'));";
     /// <c>sys.extended_properties</c> 的鍵是 class＋major_id＋minor_id＋name，
     /// 四個都給定就最多接得到一列，多的只有一欄，不是多一輪來回。
     /// 值同樣在伺服器端 <c>CONVERT</c>——它也是 <c>sql_variant</c>。
-    ///
-    /// 索引鍵欄位（<c>is_index_key</c>）走 <c>EXISTS</c> 子查詢而不是再
-    /// <c>LEFT JOIN</c> 一次 <c>sys.index_columns</c>：同一個資料行可以是好幾個索引的
-    /// 鍵，接了會讓這一列變成好幾列，整個欄位清單跟著出現重複項——主索引鍵那一條
-    /// 之所以接得安全，正是因為一張表只會有一個 <c>is_primary_key = 1</c> 的索引。
-    /// <c>key_ordinal &gt; 0</c> 用的是 <see cref="Indexes"/> 同一把尺：INCLUDE 欄位的
-    /// 序號是 0，不算索引鍵。讀取端據此把索引欄位排到 WHERE 之後的最前面。
     /// </remarks>
     public const string Columns = ColumnsHead + "sys.columns" + ColumnsTail;
 
@@ -249,14 +293,7 @@ SELECT
         WHEN COLUMNPROPERTY(c.object_id, c.name, 'IsRowGuidCol') > 0 THEN 1
         ELSE 0
     END) AS is_row_guid_col,
-    CONVERT(nvarchar(max), ep.value) AS column_description,
-    CONVERT(bit, CASE WHEN EXISTS (
-        SELECT 1
-        FROM sys.index_columns AS ic
-        WHERE ic.object_id = c.object_id
-          AND ic.column_id = c.column_id
-          AND ic.key_ordinal > 0
-    ) THEN 1 ELSE 0 END) AS is_index_key
+    CONVERT(nvarchar(max), ep.value) AS column_description
 FROM ";
 
     /// <summary>欄位查詢的後半段，從資料行的目錄檢視名稱之後接下去。</summary>
@@ -449,7 +486,8 @@ ORDER BY fk.name, fkc.constraint_column_id;";
     /// 定義走 <c>sys.sql_modules</c> 的 <c>LEFT JOIN</c> 而不是 <c>OBJECT_DEFINITION</c>：
     /// 那是本機函式，加不了限定字，跨到連結伺服器時會在對方登入的預設資料庫裡
     /// 找 object_id——與模組定義那一條同一個理由。加密的觸發程序那一欄是 NULL，
-    /// 讀取端據此整個跳過。
+    /// 讀取端據此整個跳過；型別代碼一起帶回來，分得出 CLR 觸發程序（<c>TA</c>）
+    /// 是根本沒有 T-SQL 本文。
     ///
     /// <c>parent_class = 1</c> 只收掛在物件上的那些；掛在資料庫或伺服器上的
     /// DDL 觸發程序不屬於任何一張資料表。
@@ -458,7 +496,8 @@ ORDER BY fk.name, fkc.constraint_column_id;";
 SELECT
     tr.name AS trigger_name,
     m.definition,
-    tr.is_disabled
+    tr.is_disabled,
+    tr.type
 FROM sys.triggers AS tr
 LEFT JOIN sys.sql_modules AS m ON m.object_id = tr.object_id
 WHERE tr.parent_id = @objectId
@@ -592,7 +631,22 @@ FROM (
 ORDER BY level, minor_id, target_name, property_name;";
 
     /// <summary>第二層：單一模組的參數。</summary>
-    public const string Parameters = @"
+    public const string Parameters = ParametersHead + "sys.parameters" + ParametersTail;
+
+    /// <summary>第二層：系統模組的參數。</summary>
+    /// <remarks>
+    /// <c>sp_executesql</c> 這一類的參數只在 <c>sys.all_parameters</c> 上；兩條只差目錄檢視，
+    /// 分開的理由與 <see cref="SystemColumns"/> 相同。
+    /// </remarks>
+    public const string SystemParameters = ParametersHead + "sys.all_parameters" + ParametersTail;
+
+    /// <summary>某個結構描述底下的模組該問哪一條參數查詢；規則與 <see cref="ColumnsFor"/> 相同。</summary>
+    public static string ParametersFor(string? schemaName)
+    {
+        return SqlSystemSchemas.IsSystem(schemaName) ? SystemParameters : Parameters;
+    }
+
+    private const string ParametersHead = @"
 SELECT
     p.parameter_id,
     p.name AS parameter_name,
@@ -601,26 +655,53 @@ SELECT
     p.precision,
     p.scale,
     p.is_output
-FROM sys.parameters AS p
+FROM ";
+
+    private const string ParametersTail = @" AS p
 INNER JOIN sys.types AS t ON t.user_type_id = p.user_type_id
 WHERE p.object_id = @objectId
 ORDER BY p.parameter_id;";
 
-    /// <summary>第三層：模組定義本文。加密物件會回傳 NULL。</summary>
+    /// <summary>第三層：模組的型別代碼與定義本文。</summary>
     /// <remarks>
     /// 讀 <c>sys.sql_modules</c> 而不是 <c>OBJECT_DEFINITION</c>，雖然兩者讀的是
     /// 同一欄：那是本機函式，加不了限定字，跨到連結伺服器時會在<b>對方登入的
     /// 預設資料庫</b>裡找 object_id，於是拿到另一個資料庫裡剛好同號的那個物件的
     /// 定義——而畫面上看不出來。目錄檢視則跟著 <see cref="SqlCatalogQualifier"/> 走。
     ///
-    /// 行為完全一致：加密物件的那一列 <c>definition</c> 是 NULL，沒有
-    /// <c>VIEW DEFINITION</c> 權限時整列看不到，而呼叫端用 <c>ExecuteScalar</c>
-    /// 讀，兩種都得到 null。
+    /// 型別代碼一起帶回來，才分得出 <c>definition</c> 為什麼是 NULL：T-SQL 模組是加密或
+    /// 沒有 <c>VIEW DEFINITION</c> 權限，CLR 與擴充預存程序則根本沒有 T-SQL 本文
+    /// （<c>sys.sql_modules</c> 沒有那一列，所以是 <c>LEFT JOIN</c>）。問的是這一次查到的
+    /// 物件本身，不靠呼叫端手上那份 <c>SqlObjectInfo</c> 從哪條路建出來。
     /// </remarks>
-    public const string Definition = @"
-SELECT m.definition
-FROM sys.sql_modules AS m
-WHERE m.object_id = @objectId;";
+    public const string Definition = DefinitionHead + "sys.objects" + DefinitionMiddle + "sys.sql_modules" + DefinitionTail;
+
+    /// <summary>第三層：系統模組的型別代碼與定義本文。</summary>
+    /// <remarks>
+    /// 系統物件與它們的本文只在 <c>sys.all_objects</c>／<c>sys.all_sql_modules</c> 上；
+    /// 拿使用者那兩個去問 <c>sp_help</c> 一列都沒有，預覽便把原因說成加密或沒有權限。
+    /// 分開的理由與 <see cref="SystemColumns"/> 相同。
+    /// </remarks>
+    public const string SystemDefinition =
+        DefinitionHead + "sys.all_objects" + DefinitionMiddle + "sys.all_sql_modules" + DefinitionTail;
+
+    /// <summary>某個結構描述底下的模組該問哪一條定義查詢；規則與 <see cref="ColumnsFor"/> 相同。</summary>
+    public static string DefinitionFor(string? schemaName)
+    {
+        return SqlSystemSchemas.IsSystem(schemaName) ? SystemDefinition : Definition;
+    }
+
+    private const string DefinitionHead = @"
+SELECT
+    o.type,
+    m.definition
+FROM ";
+
+    private const string DefinitionMiddle = @" AS o
+LEFT JOIN ";
+
+    private const string DefinitionTail = @" AS m ON m.object_id = o.object_id
+WHERE o.object_id = @objectId;";
 
     /// <summary>
     /// 第三層：同義字指向的物件。

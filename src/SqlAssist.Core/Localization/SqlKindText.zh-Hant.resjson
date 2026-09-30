@@ -49,5 +49,17 @@
   "TableHint": "資料表提示",
   "QueryHint": "查詢提示",
   // 游標停在 ON／WHERE／HAVING 或 AND／OR 正後方時的建議目標：列的仍是欄位。
-  "Predicate": "述詞"
+  "Predicate": "述詞",
+  "Statement": "陳述式",
+  "SystemProcedure": "系統預存程序",
+  "TemporaryTable": "暫存資料表",
+  "TemporaryProcedure": "暫存預存程序",
+  "TableVariable": "資料表變數",
+  "CommonTableExpression": "CTE",
+  "Sequences": "序列",
+  "Alias": "別名",
+  "Cursor": "資料指標",
+  "Language": "語言",
+  "TimeZone": "時區",
+  "Named": "{kind} {name}"
 }

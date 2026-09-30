@@ -14,6 +14,23 @@ namespace SqlAssist.Core.Parsing;
 public static class SqlTokenNavigator
 {
     /// <summary>
+    /// <paramref name="index"/> 的 END 收掉一個區塊或 CASE。
+    /// </summary>
+    /// <remarks>
+    /// 兩種 END 不收：<c>END CONVERSATION</c> 是 Service Broker 的語句，<c>GENERATED ALWAYS AS ROW END</c>
+    /// 是時態表期間資料行的產生方式。當成區塊結尾的話，外層的 BEGIN 提早配對，位置分析也在那之後回報下一句。
+    /// </remarks>
+    public static bool ClosesBlock(IReadOnlyList<SqlToken> tokens, int index)
+    {
+        return tokens[index].IsKeyword("END") &&
+            !(index + 1 < tokens.Count && tokens[index + 1].IsKeyword("CONVERSATION")) &&
+            !(index >= 4 &&
+                tokens[index - 2].IsKeyword("AS") &&
+                tokens[index - 3].IsKeyword("ALWAYS") &&
+                tokens[index - 4].IsKeyword("GENERATED"));
+    }
+
+    /// <summary>
     /// 緊接在左括號後面時，代表這個括號開啟了一個新的查詢範圍。
     /// </summary>
     /// <remarks>
@@ -177,6 +194,124 @@ public static class SqlTokenNavigator
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// 每一個位置的 <see cref="FindUnclosedParenthesis"/>，一趟算完。
+    /// </summary>
+    /// <remarks>
+    /// 往回找一次最壞要走到指令碼開頭（沒有分號時），同一份文字問很多個位置時就是平方：
+    /// 範圍分析判游標後方的語句開頭、欄位來源解析掃每一句 <c>SELECT … INTO</c> 都是這種問法。
+    ///
+    /// 答案與往回找的那一份相同：還開著的左括號裡最內層那一個；同一層在它之後出現過分號或
+    /// 配不起來的右括號時是 -1。關上的括號連同裡面的分號一起消失。
+    /// </remarks>
+    public static int[] MapUnclosedParentheses(IReadOnlyList<SqlToken> tokens)
+    {
+        if (tokens is null)
+        {
+            throw new ArgumentNullException(nameof(tokens));
+        }
+
+        var result = new int[tokens.Count];
+        var opens = new Stack<int>();
+
+        // 每一層（最外層加上每個還開著的左括號）有沒有出現過分號或配不起來的右括號。
+        var blocked = new Stack<bool>();
+        blocked.Push(false);
+
+        for (var index = 0; index < tokens.Count; index++)
+        {
+            var token = tokens[index];
+
+            if (token.IsPunctuation("("))
+            {
+                opens.Push(index);
+                blocked.Push(false);
+            }
+            else if (token.IsPunctuation(")"))
+            {
+                if (opens.Count > 0)
+                {
+                    opens.Pop();
+                    blocked.Pop();
+                }
+                else
+                {
+                    blocked.Pop();
+                    blocked.Push(true);
+                }
+            }
+            else if (token.IsPunctuation(";"))
+            {
+                blocked.Pop();
+                blocked.Push(true);
+            }
+
+            result[index] = opens.Count == 0 || blocked.Peek() ? -1 : opens.Peek();
+        }
+
+        return result;
+    }
+
+    /// <summary>逗號分隔的清單裡，從 <paramref name="start"/> 起下一個同層逗號；沒有時回 <paramref name="end"/>。</summary>
+    /// <remarks>括號裡的逗號屬於那一組（<c>decimal(10, 2)</c>），不算。</remarks>
+    public static int FindListItemEnd(IReadOnlyList<SqlToken> tokens, int start, int end)
+    {
+        var depth = 0;
+
+        for (var index = start; index < end; index++)
+        {
+            var token = tokens[index];
+
+            if (token.IsPunctuation("("))
+            {
+                depth++;
+                continue;
+            }
+
+            if (token.IsPunctuation(")"))
+            {
+                depth--;
+                continue;
+            }
+
+            if (depth == 0 && token.IsPunctuation(","))
+            {
+                return index;
+            }
+        }
+
+        return end;
+    }
+
+    /// <summary>
+    /// 從 <paramref name="index"/> 跳過一個資料型別，回傳型別之後的位置；那裡不是名稱時原樣回傳。
+    /// </summary>
+    /// <remarks>
+    /// 型別可以帶結構描述（<c>dbo.CopyList</c>），也可以帶長度或有效位數（<c>varchar(10)</c>）。
+    /// 資料行定義的每一種讀法都走這一份，各寫一份的症狀是其中一份不認得自訂型別。
+    /// </remarks>
+    public static int SkipDataType(IReadOnlyList<SqlToken> tokens, int index, int end)
+    {
+        var start = index;
+
+        while (index < end && tokens[index].Kind == SqlTokenKind.Identifier)
+        {
+            index++;
+
+            if (index < end && tokens[index].IsPunctuation("."))
+            {
+                index++;
+                continue;
+            }
+
+            break;
+        }
+
+        return index > start && index < end && tokens[index].IsPunctuation("(")
+            ? SkipParenthesised(tokens, index, end)
+            : index;
     }
 
     /// <summary>從左括號跳到對應的右括號之後；配不起來時停在 <paramref name="end"/>。</summary>

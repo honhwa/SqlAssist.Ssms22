@@ -3,27 +3,6 @@ namespace SqlAssist.Core.Completion;
 public enum CompletionTarget
 {
     Any,
-
-    /// <summary>
-    /// 游標停在述詞的起點（<c>ON</c>、<c>WHERE</c>、<c>HAVING</c> 與 <c>AND</c>／<c>OR</c>
-    /// 的正後方），因此除了欄位之外還要提議配對鍵。
-    /// </summary>
-    /// <remarks>
-    /// 它<b>不是新的一類建議目標</b>：要列的東西與欄位相同，只是其中幾筆帶著
-    /// 已經配好的對象。會獨立成一個目標是因為「這裡算不算述詞起點」影響三件事：
-    ///
-    /// <list type="bullet">
-    /// <item><c>SqlCompletionContextAnalyzer</c> 用它決定要不要參與——
-    /// 空前綴時目標本來是 <see cref="Any"/>，而 <see cref="Any"/> 是不參與的，
-    /// 所以少了這一條，<c>ON </c> 之後清單根本不會出現。</item>
-    /// <item><c>SqlAsyncCompletionSource.InitializeCompletionCore</c> 的觸發字元數門檻
-    /// 認的是「目標不是 <see cref="Any"/>」，因此這裡也跟著放行。</item>
-    /// <item><c>SqlCompletionTriggers.ShouldReopen</c> 在目標不是 <see cref="Any"/> 時
-    /// 會重開清單，讓使用者打完 <c>AND </c> 之後不必再打一個字。</item>
-    /// </list>
-    /// </remarks>
-    Predicate,
-
     DataSource,
     Procedure,
 
@@ -47,7 +26,11 @@ public enum CompletionTarget
     /// </remarks>
     TableFunction,
 
-    /// <summary>限定字解析成敘述中的資料來源，因此建議該來源的欄位。</summary>
+    /// <summary>限定字解析成敘述中的資料來源，或文法指定了資料行的所屬資料表，因此建議該來源的欄位。</summary>
+    /// <remarks>
+    /// 後者是省略掉的限定字（<c>UPDATE t SET |</c> 與 <c>t.|</c> 同一份），見
+    /// <see cref="SqlCompletionContext.ColumnOwner"/>。
+    /// </remarks>
     Column,
 
     /// <summary>
@@ -107,6 +90,16 @@ public enum CompletionTarget
     /// <summary><c>NEXT VALUE FOR</c>、<c>ALTER</c>、<c>DROP SEQUENCE</c> 之後。</summary>
     Sequence,
 
+    /// <summary>
+    /// <c>OPEN</c>、<c>CLOSE</c>、<c>DEALLOCATE</c>、<c>FETCH</c>、<c>FETCH … FROM</c>、
+    /// <c>WHERE CURRENT OF</c> 之後，中間可以夾 <c>GLOBAL</c>；只建議這份指令碼宣告的游標。
+    /// </summary>
+    /// <remarks>
+    /// 名稱只寫在 <c>DECLARE c CURSOR</c> 裡，與變數一樣不必對資料庫送出查詢。
+    /// <c>FETCH </c> 之後的 <c>NEXT</c>、<c>PRIOR</c> 由片語給，片語的字不看目標。
+    /// </remarks>
+    Cursor,
+
     /// <summary><c>DATEADD(</c> 這一族的第一個引數。</summary>
     DatePart,
 
@@ -120,13 +113,26 @@ public enum CompletionTarget
     /// <remarks>
     /// 與其他封閉位置差在清單的來源：日期部分與兩種提示的名稱寫在
     /// <see cref="Keywords.SqlArgumentCatalog"/> 裡，定序名稱只有伺服器知道
-    /// （<c>sys.fn_helpcollations()</c>，SQL Server 2019 之後五千多筆且隨版本增加），
-    /// 寫死一份的下一個版本就開始說謊。
-    ///
-    /// 三種 <c>COLLATE</c> 的位置——運算式之後、資料行定義、
-    /// <c>CREATE</c>／<c>ALTER DATABASE</c>——在這裡不分：文法上接得了的東西
-    /// 完全一樣，分開只是多兩條會漏的路。
+    /// （SQL Server 2019 之後五千多筆且隨版本增加），寫死一份的下一個版本就開始說謊。
+    /// 這一個與 <see cref="Language"/>、<see cref="TimeZone"/> 是同一種名單，
+    /// 位置、來源與排名都在 <see cref="SqlInstanceList"/>。
     /// </remarks>
-    Collation
+    Collation,
+
+    /// <summary><c>SET LANGUAGE</c> 與 <c>DEFAULT_LANGUAGE =</c> 之後的語言名稱。</summary>
+    Language,
+
+    /// <summary><c>AT TIME ZONE</c> 之後的時區名稱。</summary>
+    TimeZone,
+
+    /// <summary>
+    /// 游標前面是封閉的子句片語（<c>SET STATISTICS </c>、<c>ALTER INDEX i ON t </c>…），
+    /// 清單只有片語接得上的那幾個字。
+    /// </summary>
+    /// <remarks>
+    /// 字在 <see cref="SqlCompletionContext.ClausePhrase"/> 裡，由產生器以剖析器探測得到。
+    /// 不封閉的片語不走這個目標：那裡只換掉關鍵字，名稱照常。
+    /// </remarks>
+    ClauseKeyword
 }
 

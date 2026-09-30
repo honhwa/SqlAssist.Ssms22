@@ -12,7 +12,7 @@ public sealed class SqlCompletionContext
     private static readonly IReadOnlyList<SqlSuggestion> NoScriptSources = Array.Empty<SqlSuggestion>();
 
     public SqlCompletionContext(
-        bool isValid,
+        SqlCompletionSlot slot,
         int tokenStart,
         string prefix,
         CompletionTarget target,
@@ -25,10 +25,15 @@ public sealed class SqlCompletionContext
         IReadOnlyList<SqlSuggestion>? scriptSources = null,
         SqlExecutedModule? executedModule = null,
         int qualifierStart = -1,
-        bool mayAppendTableAlias = false)
+        SqlClausePhraseMatch? clausePhrase = null,
+        bool startsBatch = false,
+        bool expectsScalar = false,
+        bool bracketed = false,
+        SqlTableReference? columnOwner = null,
+        string? textBeforeCaret = null)
     {
         ScriptSources = scriptSources ?? NoScriptSources;
-        IsValid = isValid;
+        Slot = slot;
         TokenStart = tokenStart;
         Prefix = prefix;
         Target = target;
@@ -40,14 +45,35 @@ public sealed class SqlCompletionContext
         ScopeSources = scopeSources ?? NoSources;
         ExecutedModule = executedModule;
         QualifierStart = qualifierStart;
-        MayAppendTableAlias = mayAppendTableAlias;
+        ClausePhrase = clausePhrase;
+        StartsBatch = startsBatch;
+        ExpectsScalar = expectsScalar;
+        Bracketed = bracketed;
+        ColumnOwner = columnOwner;
+        TextBeforeCaret = textBeforeCaret;
     }
 
-    public bool IsValid { get; }
+    /// <summary>
+    /// 游標所在的這一格可不可補、是不是名字；要不要開清單見 <see cref="SqlCompletionPolicy"/>。
+    /// </summary>
+    public SqlCompletionSlot Slot { get; }
 
+    /// <summary>正在打的名稱從哪裡開始；<see cref="Bracketed"/> 時是左方括號的位置。</summary>
     public int TokenStart { get; }
 
+    /// <summary>使用者要找的名稱：方括號裡打的字已經拿掉左方括號、還原跳脫。</summary>
     public string Prefix { get; }
+
+    /// <summary>
+    /// 使用者自己打了左方括號：這一格要的是一個名稱，而且要寫成方括號的樣子。
+    /// </summary>
+    /// <remarks>
+    /// T-SQL 的左方括號只有一個意思，所以它和限定字一樣把範圍講完了——清單只列
+    /// 寫得進方括號的名稱（<see cref="SuggestionContextFilter"/>），不必等字元數
+    /// （<see cref="SqlCompletionPolicy"/>），提交的名稱一律包起來
+    /// （<see cref="SqlInsertionText"/>）。三處問的都是這一個旗標。
+    /// </remarks>
+    public bool Bracketed { get; }
 
     public CompletionTarget Target { get; }
 
@@ -103,6 +129,16 @@ public sealed class SqlCompletionContext
     public IReadOnlyList<SqlColumnSource>? ColumnSources { get; }
 
     /// <summary>
+    /// 文法指定這一格是哪一張資料表的資料行（<c>UPDATE t SET |</c>、<c>INSERT INTO t (|</c>…）；
+    /// 寫的是游標前的那個名稱，別名還沒解開。
+    /// </summary>
+    /// <remarks>
+    /// 是省略掉的限定字：只看游標前文時與 <see cref="QualifierPath"/> 一樣只記下寫了什麼，
+    /// 全文分析解得開時把目標換成 <see cref="CompletionTarget.Column"/>。位置見 <c>SqlColumnOwner</c>。
+    /// </remarks>
+    public SqlTableReference? ColumnOwner { get; }
+
+    /// <summary>
     /// 敘述在游標處看得到的所有欄位來源。
     /// </summary>
     /// <remarks>
@@ -119,7 +155,7 @@ public sealed class SqlCompletionContext
     /// <remarks>
     /// 共同點是中繼資料一個都看不到，而且是使用者上面幾行才寫下的。
     /// 哪一種放進來由位置決定：資料來源位置（<c>FROM </c>、<c>JOIN </c>…）
-    /// 而且沒有限定字時是 CTE 與暫存資料表，<c>@</c> 之後是變數。
+    /// 而且沒有限定字時是 CTE 與暫存資料表，<c>@</c> 之後是變數，運算式裡是這一句的別名。
     /// 其餘位置留空是刻意的：掃描不必要的話就不掃。
     /// </remarks>
     public IReadOnlyList<SqlSuggestion> ScriptSources { get; }
@@ -187,19 +223,6 @@ public sealed class SqlCompletionContext
     public CompletionIntent Intent { get; }
 
     /// <summary>
-    /// 這個位置接不接受「名稱後面再加一個別名」。
-    /// </summary>
-    /// <remarks>
-    /// 刻意不從 <see cref="Target"/> 推導。有幾個位置的目標同樣是
-    /// <see cref="CompletionTarget.DataSource"/>，文法上卻不接受別名：
-    /// <c>INSERT INTO</c> 的目標表與 <c>DROP TABLE</c> 的名稱一樣是資料來源，
-    /// 兩者後面接一個別名都是語法錯誤。反過來說，<c>FROM </c> 與 <c>JOIN </c>
-    /// 之後的名稱不接別名只是可惜，不是錯——所以這一個判斷與「別名還沒寫」
-    /// 那一個（<c>SqlKeywordPositionAnalyzer</c>）互補，兩邊都問過才動手。
-    /// </remarks>
-    public bool MayAppendTableAlias { get; }
-
-    /// <summary>
     /// 游標落在哪一個關鍵字位置。
     /// </summary>
     /// <remarks>
@@ -210,45 +233,48 @@ public sealed class SqlCompletionContext
     /// </remarks>
     public SqlKeywordPosition KeywordPosition { get; }
 
+    /// <summary>
+    /// 游標前面比對到的子句片語；比對確定時，這一格的關鍵字只來自它。
+    /// </summary>
+    /// <remarks>
+    /// 確定而且封閉時 <see cref="Target"/> 是 <see cref="CompletionTarget.ClauseKeyword"/>，
+    /// 清單只有它的字；不封閉時名稱照常，只有關鍵字換成它的字。前一格判不出位置時
+    /// 片語的字只是加進來，見 <see cref="SqlClausePhraseMatch"/>。
+    /// </remarks>
+    public SqlClausePhraseMatch? ClausePhrase { get; }
+
+    /// <summary>游標在批次的第一句：只有這裡可以省略 EXEC 直接寫程序名稱。</summary>
+    public bool StartsBatch { get; }
+
+    /// <summary>
+    /// <c>@</c> 這一格文法上只收純量運算式，整張資料表放不進來。
+    /// </summary>
+    /// <remarks>
+    /// 只在 <see cref="Target"/> 是 <see cref="CompletionTarget.Variable"/> 時有意義。
+    /// 資料表變數能整張出現的位置只有兩種：資料來源（<c>FROM @rows</c>、
+    /// <c>INSERT INTO @rows</c>）與模組的引數（<c>EXEC p @rows</c>、
+    /// <c>dbo.fn(@rows)</c>，資料表值參數）。其餘位置它只能當欄位的限定字，
+    /// 而那裡的寫法只有 <c>[@rows]</c>，見 <see cref="SqlInsertionText.QuoteQualifier"/>。
+    /// </remarks>
+    public bool ExpectsScalar { get; }
+
+    /// <summary>分析的那段文字；沒有經過 <see cref="SqlCompletionContextAnalyzer"/> 時為 <c>null</c>。</summary>
+    /// <remarks>
+    /// 片段開頭的字要逐字接得上時，後面的字接上文字再分析一次（見 <see cref="SuggestionContextFilter"/>）；
+    /// 只存參考，不另外切字串。
+    /// </remarks>
+    internal string? TextBeforeCaret { get; }
+
+    /// <summary>複製這個上下文，記下分析的那段文字。</summary>
+    internal SqlCompletionContext WithTextBeforeCaret(string text) => Copy(textBeforeCaret: text);
+
     /// <summary>複製這個上下文，補上敘述看得到的欄位來源。</summary>
-    internal SqlCompletionContext WithScopeSources(IReadOnlyList<SqlColumnSource> sources)
-    {
-        return new SqlCompletionContext(
-            IsValid,
-            TokenStart,
-            Prefix,
-            Target,
-            QualifierPath,
-            TargetKeywordStart,
-            Intent,
-            ColumnSources,
-            KeywordPosition,
-            sources,
-            ScriptSources,
-            ExecutedModule,
-            QualifierStart,
-            MayAppendTableAlias);
-    }
+    internal SqlCompletionContext WithScopeSources(IReadOnlyList<SqlColumnSource> sources) =>
+        Copy(scopeSources: sources);
 
     /// <summary>複製這個上下文，補上指令碼自己宣告的資料來源。</summary>
-    internal SqlCompletionContext WithScriptSources(IReadOnlyList<SqlSuggestion> sources)
-    {
-        return new SqlCompletionContext(
-            IsValid,
-            TokenStart,
-            Prefix,
-            Target,
-            QualifierPath,
-            TargetKeywordStart,
-            Intent,
-            ColumnSources,
-            KeywordPosition,
-            ScopeSources,
-            sources,
-            ExecutedModule,
-            QualifierStart,
-            MayAppendTableAlias);
-    }
+    internal SqlCompletionContext WithScriptSources(IReadOnlyList<SqlSuggestion> sources) =>
+        Copy(scriptSources: sources);
 
     /// <summary>複製這個上下文，換上重新對齊過的限定字。</summary>
     /// <remarks>
@@ -258,42 +284,50 @@ public sealed class SqlCompletionContext
     /// 記在旁邊的話，過濾、插入文字、目錄選擇這三條路會各問各的，
     /// 症狀是清單列得出來、Tab 下去卻少一段。
     /// </remarks>
-    public SqlCompletionContext WithQualifierPath(SqlObjectPath path)
-    {
-        return new SqlCompletionContext(
-            IsValid,
-            TokenStart,
-            Prefix,
-            Target,
-            path,
-            TargetKeywordStart,
-            Intent,
-            ColumnSources,
-            KeywordPosition,
-            ScopeSources,
-            ScriptSources,
-            ExecutedModule,
-            QualifierStart,
-            MayAppendTableAlias);
-    }
+    public SqlCompletionContext WithQualifierPath(SqlObjectPath path) =>
+        Copy(qualifierPath: path ?? throw new ArgumentNullException(nameof(path)));
 
     /// <summary>複製這個上下文，改以欄位為建議目標。</summary>
-    internal SqlCompletionContext AsColumnsOf(IReadOnlyList<SqlColumnSource> sources)
+    internal SqlCompletionContext AsColumnsOf(IReadOnlyList<SqlColumnSource> sources) =>
+        Copy(CompletionTarget.Column, intent: CompletionIntent.Reference, columnSources: sources);
+
+    /// <summary>複製這個上下文，標成使用者自己打了左方括號。</summary>
+    internal SqlCompletionContext AsBracketed() => Copy(bracketed: true);
+
+    /// <summary>複製一份，只換掉有給的那幾項。</summary>
+    /// <remarks>
+    /// 複製只有這一份：每個 <c>With</c> 各自抄一次建構子引數的話，新增一個欄位就要改
+    /// 好幾處，漏掉的那一處會在某條路徑上悄悄把它重設成預設值。
+    /// </remarks>
+    private SqlCompletionContext Copy(
+        CompletionTarget? target = null,
+        SqlObjectPath? qualifierPath = null,
+        CompletionIntent? intent = null,
+        IReadOnlyList<SqlColumnSource>? columnSources = null,
+        IReadOnlyList<SqlColumnSource>? scopeSources = null,
+        IReadOnlyList<SqlSuggestion>? scriptSources = null,
+        bool? bracketed = null,
+        string? textBeforeCaret = null)
     {
         return new SqlCompletionContext(
-            isValid: true,
+            Slot,
             TokenStart,
             Prefix,
-            CompletionTarget.Column,
-            QualifierPath,
+            target ?? Target,
+            qualifierPath ?? QualifierPath,
             TargetKeywordStart,
-            CompletionIntent.Reference,
-            sources,
+            intent ?? Intent,
+            columnSources ?? ColumnSources,
             KeywordPosition,
-            ScopeSources,
-            ScriptSources,
+            scopeSources ?? ScopeSources,
+            scriptSources ?? ScriptSources,
             ExecutedModule,
             QualifierStart,
-            MayAppendTableAlias);
+            ClausePhrase,
+            StartsBatch,
+            ExpectsScalar,
+            bracketed ?? Bracketed,
+            ColumnOwner,
+            textBeforeCaret ?? TextBeforeCaret);
     }
 }

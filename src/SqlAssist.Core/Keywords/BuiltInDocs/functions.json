@@ -1,0 +1,3074 @@
+{
+  "version": 2,
+  "docs": [
+    {
+      "name": "CAST",
+      "kind": "function",
+      "summary": "把運算式轉成指定型別，轉不過去整句失敗（要容錯用 TRY_CAST）。型別寫在 AS 後面。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CAST('2026-09-08' AS date)   -- 2026-09-08"
+        },
+        {
+          "id": "truncates-not-rounds",
+          "title": "小數轉整數捨去",
+          "sql": "SELECT CAST(19.99 AS int)   -- 19（無條件捨去，不是四捨五入）"
+        },
+        {
+          "id": "invalid-string-fails",
+          "title": "字串轉 int 失敗",
+          "sql": "SELECT CAST('abc' AS int)   -- 錯誤：轉換失敗；要容錯改用 TRY_CAST"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/cast-and-convert-transact-sql"
+    },
+    {
+      "name": "CONVERT",
+      "kind": "function",
+      "summary": "把運算式轉成指定型別，並可用 style 決定日期與數值的格式。型別寫在最前面，與 CAST 的順序相反。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CONVERT(varchar(10), CAST('2026-09-08' AS date), 120)   -- '2026-09-08'"
+        },
+        {
+          "id": "style-compare",
+          "title": "常用 style 對照",
+          "sql": "SELECT\n  CONVERT(varchar(30), CAST('2026-09-08 21:30:00' AS datetime), 101) AS s101,   -- '09/08/2026'\n  CONVERT(varchar(30), CAST('2026-09-08 21:30:00' AS datetime), 108) AS s108,   -- '21:30:00'\n  CONVERT(varchar(30), CAST('2026-09-08 21:30:00' AS datetime), 112) AS s112,   -- '20260908'\n  CONVERT(varchar(30), CAST('2026-09-08 21:30:00' AS datetime), 120) AS s120,   -- '2026-09-08 21:30:00'\n  CONVERT(varchar(30), CAST('2026-09-08 21:30:00' AS datetime), 126) AS s126    -- '2026-09-08T21:30:00.000'"
+        },
+        {
+          "id": "silent-truncate",
+          "title": "字串轉換靜默截斷",
+          "sql": "SELECT CONVERT(varchar(4), 'ABCDE')   -- 'ABCD'，長度不夠會靜默截斷，不會報錯"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/cast-and-convert-transact-sql",
+      "references": [
+        "dateStyles",
+        "numberStyles"
+      ]
+    },
+    {
+      "name": "TRY_CONVERT",
+      "kind": "function",
+      "summary": "與 CONVERT 相同，但轉不過去時回傳 NULL 而不是讓整句失敗。清洗來路不明的字串時用它。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TRY_CONVERT(int, 'x')   -- NULL"
+        },
+        {
+          "id": "invalid-date",
+          "title": "無效日期回傳 NULL",
+          "sql": "SELECT TRY_CONVERT(date, '2026-13-01')   -- NULL：CONVERT 遇到同樣的字串會直接報錯"
+        },
+        {
+          "id": "style-succeeds",
+          "title": "轉換成功時同 CONVERT",
+          "sql": "SELECT TRY_CONVERT(varchar(10), CAST('2026-09-08' AS date), 23)   -- '2026-09-08'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/try-convert-transact-sql",
+      "references": [
+        "dateStyles",
+        "numberStyles"
+      ]
+    },
+    {
+      "name": "ISNULL",
+      "kind": "function",
+      "summary": "第一個引數是 NULL 時改用第二個。回傳型別跟著第一個引數走，替代值可能因此被截斷。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ISNULL(CAST(NULL AS varchar(2)), 'abc')   -- 'ab'，不是 'abc'"
+        },
+        {
+          "id": "default-value",
+          "title": "提供預設值",
+          "sql": "DECLARE @Reader TABLE (ReaderId int, NickName nvarchar(20));\nINSERT INTO @Reader VALUES (1, NULL);\nSELECT ISNULL(NickName, N'(未設定)') FROM @Reader   -- '(未設定)'"
+        },
+        {
+          "id": "vs-coalesce",
+          "title": "與 COALESCE 對照",
+          "sql": "DECLARE @s varchar(2) = NULL, @Code varchar(10) = 'A01';\nSELECT ISNULL(@s, 'abc') AS [ISNULL], COALESCE(@s, 'abc') AS [COALESCE];   -- 'ab' | 'abc'\nSELECT ISNULL(@Code, 0) AS [ISNULL];   -- 'A01'；換成 COALESCE(@Code, 0) 會報錯"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/isnull-transact-sql"
+    },
+    {
+      "name": "COALESCE",
+      "kind": "function",
+      "summary": "回傳第一個不是 NULL 的值，個數不限。型別取全部引數中優先順序最高者：不會截斷，但連第一個引數也可能被轉型而報錯。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COALESCE(NULL, NULL, 'abc')   -- 'abc'"
+        },
+        {
+          "id": "vs-isnull",
+          "title": "與 ISNULL 對照：不截斷",
+          "sql": "DECLARE @s varchar(2) = NULL;\nSELECT ISNULL(@s, 'abc') AS [ISNULL], COALESCE(@s, 'abc') AS [COALESCE]   -- 'ab' | 'abc'"
+        },
+        {
+          "id": "type-from-all-args",
+          "title": "型別看全部引數，不只傳回的那個",
+          "sql": "DECLARE @Code varchar(10) = 'A01';\nSELECT ISNULL(@Code, 0) AS [ISNULL];       -- 'A01'\nSELECT COALESCE(@Code, 0) AS [COALESCE];   -- 錯誤：@Code 不是 NULL，但型別取 int，'A01' 轉不成 int"
+        },
+        {
+          "id": "same-type-fallback",
+          "title": "替代值寫成同一型別",
+          "sql": "DECLARE @Code varchar(10) = 'A01', @Qty int = NULL;\nSELECT COALESCE(@Code, '0') AS Code,                       -- 'A01'\n       COALESCE(CAST(@Qty AS varchar(10)), 'N/A') AS Qty   -- 'N/A'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/language-elements/coalesce-transact-sql"
+    },
+    {
+      "name": "NULLIF",
+      "kind": "function",
+      "summary": "兩個值相等時回傳 NULL，否則回傳第一個。常用來把「0」變成 NULL 以避開除以零。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT 10 / NULLIF(0, 0)   -- NULL，不會拋出除以零"
+        },
+        {
+          "id": "safe-division-column",
+          "title": "欄位安全除法",
+          "sql": "DECLARE @Copy TABLE (CopyNo int, LoanCount int);\nINSERT INTO @Copy VALUES (1, 0);\nSELECT CopyNo, 100.0 / NULLIF(LoanCount, 0) AS AvgLoad FROM @Copy   -- NULL，不拋出除以零"
+        },
+        {
+          "id": "null-first-arg",
+          "title": "NULL 本身不算相等",
+          "sql": "SELECT NULLIF(NULL, 1)   -- NULL（第一個引數就是 NULL，不代表判定為相等）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/language-elements/nullif-transact-sql"
+    },
+    {
+      "name": "IIF",
+      "kind": "function",
+      "summary": "只有兩個分支的 CASE 簡寫；條件成立回傳第二個引數，否則回傳第三個。兩個分支都會參與型別推導。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IIF(1 > 2, '是', '否')   -- '否'"
+        },
+        {
+          "id": "type-mismatch-both-branches",
+          "title": "兩分支型別都要相容",
+          "sql": "SELECT IIF(1 = 1, 100, 'oops')   -- 錯誤：不管走不走得到，兩個分支的型別都要能轉成同一種"
+        },
+        {
+          "id": "with-table",
+          "title": "配合資料表使用",
+          "sql": "DECLARE @Copy TABLE (CopyNo int, Status tinyint);\nINSERT INTO @Copy VALUES (1, 1), (2, 0);\nSELECT CopyNo, IIF(Status = 1, N'借出', N'在架') FROM @Copy ORDER BY CopyNo   -- 1: 借出；2: 在架"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/logical-functions-iif-transact-sql"
+    },
+    {
+      "name": "DATEADD",
+      "kind": "function",
+      "summary": "在日期上加減一段時間，number 為負就往前。datepart 寫 DAY、MONTH 這類名稱，不加引號。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATEADD(DAY, -14, GETDATE())   -- 兩週前的同一時刻"
+        },
+        {
+          "id": "month-end-clamp",
+          "title": "月底自動夾住",
+          "sql": "SELECT DATEADD(MONTH, 1, '2026-01-31')   -- 2026-02-28（沒有 2 月 31 日，自動夾到月底）"
+        },
+        {
+          "id": "add-quarter",
+          "title": "以季為單位",
+          "sql": "SELECT DATEADD(QUARTER, 1, '2026-01-01')   -- 2026-04-01"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/dateadd-transact-sql",
+      "references": [
+        "datePart"
+      ]
+    },
+    {
+      "name": "DATEDIFF",
+      "kind": "function",
+      "summary": "兩個日期之間跨過幾個 datepart 邊界，不是「相差多久」——差 1 分鐘也可能算成跨了 1 天。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATEDIFF(DAY, '2026-09-08 23:59', '2026-09-09 00:01')   -- 1"
+        },
+        {
+          "id": "year-boundary",
+          "title": "只跨一天也算差 1 年",
+          "sql": "SELECT DATEDIFF(YEAR, '2026-12-31', '2027-01-01')   -- 1（只跨了一天，但跨過年份邊界）"
+        },
+        {
+          "id": "negative-direction",
+          "title": "方向錯了變負數",
+          "sql": "SELECT DATEDIFF(DAY, '2026-09-08', '2026-09-01')   -- -7"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datediff-transact-sql",
+      "references": [
+        "datePart"
+      ]
+    },
+    {
+      "name": "DATEPART",
+      "kind": "function",
+      "summary": "取出日期的某一段，回傳整數。要文字（月份名、星期名）用 DATENAME。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATEPART(WEEKDAY, '2026-09-08')   -- 3（受 SET DATEFIRST 影響）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datepart-transact-sql",
+      "references": [
+        "datePart",
+        "dateFirst"
+      ]
+    },
+    {
+      "name": "EOMONTH",
+      "kind": "function",
+      "summary": "該月最後一天；第二個引數是先加減幾個月。算月底區間不必自己處理 28、30、31 天。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT EOMONTH('2026-02-10')   -- 2026-02-28"
+        },
+        {
+          "id": "leap-year",
+          "title": "閏年最後一天",
+          "sql": "SELECT EOMONTH('2028-02-10')   -- 2028-02-29（閏年）"
+        },
+        {
+          "id": "offset-month",
+          "title": "加減月份再取月底",
+          "sql": "SELECT EOMONTH('2026-01-31', 1)   -- 2026-02-28（先加一個月，2 月沒有 31 天所以夾到月底）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/eomonth-transact-sql"
+    },
+    {
+      "name": "FORMAT",
+      "kind": "function",
+      "summary": "依 .NET 格式字串把值排成文字，可指定文化特性。它每一列都要走一次 CLR，大量資料上比 CONVERT 慢得多。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT FORMAT(1234.5, 'N2', 'zh-TW')   -- 1,234.50"
+        },
+        {
+          "id": "weekday-culture",
+          "title": "星期名稱隨文化特性",
+          "sql": "SELECT FORMAT(CAST('2026-09-08' AS date), 'dddd', 'zh-TW'), FORMAT(CAST('2026-09-08' AS date), 'dddd', 'en-US')   -- '星期二', 'Tuesday'"
+        },
+        {
+          "id": "number-culture",
+          "title": "千分位與小數點互換",
+          "sql": "SELECT FORMAT(1234.5, 'N2', 'de-DE')   -- '1.234,50'（千分位與小數點依文化特性互換）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/format-transact-sql",
+      "references": [
+        "formatStrings"
+      ]
+    },
+    {
+      "name": "CHARINDEX",
+      "kind": "function",
+      "summary": "找出子字串第一次出現的位置，從 1 起算；找不到回傳 0，比對是否分大小寫由定序決定。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CHARINDEX('-', 'ABC-123')   -- 4"
+        },
+        {
+          "id": "not-found",
+          "title": "找不到回傳 0",
+          "sql": "SELECT CHARINDEX('X', 'ABC-123')   -- 0"
+        },
+        {
+          "id": "start-position",
+          "title": "指定起始位置",
+          "sql": "SELECT CHARINDEX('-', '12-34-56', 4)   -- 6"
+        },
+        {
+          "id": "collation-case",
+          "title": "定序影響大小寫",
+          "sql": "SELECT CHARINDEX('abc', 'ABC' COLLATE Latin1_General_CS_AS)   -- 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/charindex-transact-sql"
+    },
+    {
+      "name": "SUBSTRING",
+      "kind": "function",
+      "summary": "從第 start 個字元起取 length 個字元，start 從 1 起算。長度超出尾端不會出錯，只會取到結束為止。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SUBSTRING('ABC-123', 5, 3)   -- '123'"
+        },
+        {
+          "id": "start-from-1",
+          "title": "start 從 1 起算",
+          "sql": "SELECT SUBSTRING('ABC-123', 0, 3)   -- 'AB'（0 或負值會把多出來的長度從左邊吃掉）"
+        },
+        {
+          "id": "length-overflow-safe",
+          "title": "長度超出尾端不報錯",
+          "sql": "SELECT SUBSTRING('ABC-123', 5, 100)   -- '123'（長度超出尾端不會報錯，只取到字串結尾）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/substring-transact-sql"
+    },
+    {
+      "name": "LEN",
+      "kind": "function",
+      "summary": "字串的字元數，忽略結尾空白（開頭空白仍算）；要含結尾空白或算位元組數用 DATALENGTH。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LEN('ab  '), DATALENGTH('ab  ')   -- 2, 4"
+        },
+        {
+          "id": "trailing-space-ignored",
+          "title": "尾端空白不算長度",
+          "sql": "SELECT LEN('ab'), LEN('ab   ')   -- 2, 2"
+        },
+        {
+          "id": "leading-space-counts",
+          "title": "開頭空白仍算長度",
+          "sql": "SELECT LEN('  ab')   -- 4"
+        },
+        {
+          "id": "nvarchar-bytes",
+          "title": "字元數與位元組數",
+          "sql": "SELECT LEN(N'書'), DATALENGTH(N'書')   -- 1, 2"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/len-transact-sql"
+    },
+    {
+      "name": "STRING_AGG",
+      "kind": "function",
+      "summary": "把群組內的值串成一個字串。要指定順序就接 WITHIN GROUP (ORDER BY …)，否則順序不保證。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT STRING_AGG(v, ', ') FROM (VALUES ('A'), ('B'), ('C')) AS t(v)   -- 'A, B, C'"
+        },
+        {
+          "id": "ignores-null",
+          "title": "NULL 直接略過",
+          "sql": "DECLARE @Copy TABLE (CopyNo varchar(10));\nINSERT INTO @Copy VALUES ('A01'), (NULL), ('A02');\nSELECT STRING_AGG(CopyNo, ', ') WITHIN GROUP (ORDER BY CopyNo) FROM @Copy   -- 'A01, A02'（NULL 直接略過，不留分隔字元）"
+        },
+        {
+          "id": "group-by-branch",
+          "title": "搭配 GROUP BY 分組",
+          "sql": "DECLARE @Copy TABLE (BranchId int, CopyNo varchar(10));\nINSERT INTO @Copy VALUES (1, 'A01'), (1, 'A02'), (2, 'B01');\nSELECT BranchId, STRING_AGG(CopyNo, ', ') WITHIN GROUP (ORDER BY CopyNo)\nFROM @Copy GROUP BY BranchId ORDER BY BranchId   -- 1: 'A01, A02'；2: 'B01'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/string-agg-transact-sql"
+    },
+    {
+      "name": "ROW_NUMBER",
+      "kind": "function",
+      "summary": "依 OVER 排序給每一列連號，同分也不重號；PARTITION BY 讓每組各自重編號；同分同名次改用 RANK。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ROW_NUMBER() OVER (ORDER BY CopyNo DESC) FROM dbo.Cat_BookCopy"
+        },
+        {
+          "id": "partition-by",
+          "title": "各組各自重新編號",
+          "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY Branch ORDER BY CopyNo) FROM dbo.Copy"
+        },
+        {
+          "id": "vs-rank-dense-rank",
+          "title": "同分時與 RANK 的差異",
+          "sql": "DECLARE @t TABLE (Id int, D date);\nINSERT INTO @t VALUES (1,'2026-01-01'),(2,'2026-01-01'),(3,'2026-01-02'),(4,'2026-01-03');\nSELECT Id,\n       ROW_NUMBER() OVER (ORDER BY D) AS RowNum,\n       RANK()       OVER (ORDER BY D) AS Rnk,\n       DENSE_RANK() OVER (ORDER BY D) AS DenseRnk\nFROM @t ORDER BY D;\n-- 前兩筆同分：RowNum 給 1、2，Rnk 都是 1，DenseRnk 都是 1；\n-- 第三筆 Rnk 跳到 3、DenseRnk 只到 2；第四筆 Rnk=4、DenseRnk=3"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/row-number-transact-sql",
+      "references": [
+        "rankFunctions"
+      ]
+    },
+    {
+      "name": "DATENAME",
+      "kind": "function",
+      "summary": "取出日期的某一段並回傳文字，結果隨語言設定改變；要整數用 DATEPART。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATENAME(MONTH, '2026-09-08')   -- 09（語言為英文時是 September）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datename-transact-sql",
+      "references": [
+        "datePart",
+        "dateFirst"
+      ]
+    },
+    {
+      "name": "AVG",
+      "kind": "function",
+      "summary": "平均值，忽略 NULL；整數欄相除會先無條件捨去小數。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT AVG(CAST(CopyNo AS decimal(9, 2))) FROM dbo.Cat_BookCopy   -- 先轉型才有小數"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/avg-transact-sql"
+    },
+    {
+      "name": "CHECKSUM_AGG",
+      "kind": "function",
+      "summary": "群組內整數值的總和檢查碼，用來偵測資料有沒有變過。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CHECKSUM_AGG(CHECKSUM(CopyNo)) FROM dbo.Cat_BookCopy   -- 值變了就不一樣"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/checksum-agg-transact-sql"
+    },
+    {
+      "name": "COUNT",
+      "kind": "function",
+      "summary": "資料列數；COUNT(*) 連 NULL 都算，COUNT(欄) 不算 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COUNT(*), COUNT(ReturnDate) FROM dbo.Loan   -- 第二個少掉還沒還的"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/count-transact-sql"
+    },
+    {
+      "name": "COUNT_BIG",
+      "kind": "function",
+      "summary": "與 COUNT 相同，但回傳 bigint；超過 21 億列時要用它。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COUNT_BIG(*) FROM dbo.LoanDetail   -- COUNT 在這裡會溢位"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/count-big-transact-sql"
+    },
+    {
+      "name": "GROUPING",
+      "kind": "function",
+      "summary": "ROLLUP 補出來的小計列在這一欄回傳 1，真的 NULL 回傳 0。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT GROUPING(BranchId) FROM dbo.Loan GROUP BY ROLLUP(BranchId)   -- 小計列是 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/grouping-transact-sql"
+    },
+    {
+      "name": "GROUPING_ID",
+      "kind": "function",
+      "summary": "把多個 GROUPING 併成一個整數，用來分辨是哪一層小計。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT GROUPING_ID(BranchId) FROM dbo.Loan GROUP BY ROLLUP(BranchId)   -- 總計列是 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/grouping-id-transact-sql"
+    },
+    {
+      "name": "MAX",
+      "kind": "function",
+      "summary": "最大值，忽略 NULL；字串與日期也比得出來，比的是定序順序。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT MAX(LoanDate) FROM dbo.Loan   -- 最近一次借閱"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/max-transact-sql"
+    },
+    {
+      "name": "MIN",
+      "kind": "function",
+      "summary": "最小值，忽略 NULL；整欄都是 NULL 時結果也是 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT MIN(LoanDate) FROM dbo.Loan   -- 第一次借閱"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/min-transact-sql"
+    },
+    {
+      "name": "STDEV",
+      "kind": "function",
+      "summary": "樣本標準差；整個母體用 STDEVP，兩者分母差一。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT STDEV(CopyNo) FROM dbo.Cat_BookCopy   -- 只有一列時回傳 NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/stdev-transact-sql"
+    },
+    {
+      "name": "STDEVP",
+      "kind": "function",
+      "summary": "母體標準差，分母是 N；抽樣資料請改用 STDEV。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT STDEVP(CopyNo) FROM dbo.Cat_BookCopy   -- 只有一列時回傳 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/stdevp-transact-sql"
+    },
+    {
+      "name": "SUM",
+      "kind": "function",
+      "summary": "總和，忽略 NULL；一列都沒有時回傳 NULL 而不是 0。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ISNULL(SUM(Quantity), 0) FROM dbo.LoanDetail   -- 沒有資料列也給 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sum-transact-sql"
+    },
+    {
+      "name": "VAR",
+      "kind": "function",
+      "summary": "樣本變異數，等於 STDEV 的平方；母體變異數用 VARP。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT VAR(CopyNo) FROM dbo.Cat_BookCopy   -- 只有一列時回傳 NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/var-transact-sql"
+    },
+    {
+      "name": "VARP",
+      "kind": "function",
+      "summary": "母體變異數，分母是 N；抽樣資料請改用 VAR。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT VARP(CopyNo) FROM dbo.Cat_BookCopy   -- 只有一列時回傳 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/varp-transact-sql"
+    },
+    {
+      "name": "DENSE_RANK",
+      "kind": "function",
+      "summary": "同分同名次，且下一個名次不跳號；要跳號反映真正名次改用 RANK。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DENSE_RANK() OVER (ORDER BY LoanDate DESC) FROM dbo.Loan   -- 1, 1, 2"
+        },
+        {
+          "id": "vs-row-number-rank",
+          "title": "同分時與其他兩者的差異",
+          "sql": "DECLARE @t TABLE (Id int, D date);\nINSERT INTO @t VALUES (1,'2026-01-01'),(2,'2026-01-01'),(3,'2026-01-02'),(4,'2026-01-03');\nSELECT Id,\n       ROW_NUMBER() OVER (ORDER BY D) AS RowNum,\n       RANK()       OVER (ORDER BY D) AS Rnk,\n       DENSE_RANK() OVER (ORDER BY D) AS DenseRnk\nFROM @t ORDER BY D;\n-- 前兩筆同分：DenseRnk 都是 1；第三筆是 2（不跳號）；同一筆的 Rnk 卻是 3"
+        },
+        {
+          "id": "partition-by",
+          "title": "各組各自排名",
+          "sql": "SELECT DENSE_RANK() OVER (PARTITION BY Branch ORDER BY LoanDate) FROM dbo.Loan"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/dense-rank-transact-sql",
+      "references": [
+        "rankFunctions"
+      ]
+    },
+    {
+      "name": "FIRST_VALUE",
+      "kind": "function",
+      "summary": "視窗裡第一列的值；預設視窗只算到目前這一列為止。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT FIRST_VALUE(CopyNo) OVER (ORDER BY LoanDate) FROM dbo.Loan   -- 最早借的那本"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/first-value-transact-sql"
+    },
+    {
+      "name": "LAG",
+      "kind": "function",
+      "summary": "取排序下前面第 offset 列的值；省略 offset 預設 1，超出範圍回傳第三引數，預設 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LAG(LoanDate, 1) OVER (ORDER BY LoanDate) FROM dbo.Loan   -- 上一次借閱日"
+        },
+        {
+          "id": "default-offset",
+          "title": "省略第二引數",
+          "sql": "SELECT LAG(LoanDate) OVER (ORDER BY LoanDate) FROM dbo.Loan"
+        },
+        {
+          "id": "default-value",
+          "title": "第一列沒有前一列",
+          "sql": "SELECT LAG(LoanDate, 1, '1900-01-01') OVER (ORDER BY LoanDate) FROM dbo.Loan"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/lag-transact-sql"
+    },
+    {
+      "name": "LAST_VALUE",
+      "kind": "function",
+      "summary": "視窗裡最後一列的值；不指定視窗範圍時它就是目前這一列。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LAST_VALUE(CopyNo) OVER (ORDER BY LoanDate) FROM dbo.Loan   -- 預設等於本列"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/last-value-transact-sql"
+    },
+    {
+      "name": "LEAD",
+      "kind": "function",
+      "summary": "取排序下後面第 offset 列的值；省略 offset 預設 1，超出範圍回傳第三引數，預設 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LEAD(LoanDate, 1) OVER (ORDER BY LoanDate) FROM dbo.Loan   -- 下一次借閱日"
+        },
+        {
+          "id": "default-offset",
+          "title": "省略第二引數",
+          "sql": "SELECT LEAD(LoanDate) OVER (ORDER BY LoanDate) FROM dbo.Loan"
+        },
+        {
+          "id": "default-value",
+          "title": "最後一列沒有下一列",
+          "sql": "SELECT LEAD(LoanDate, 1, '9999-12-31') OVER (ORDER BY LoanDate) FROM dbo.Loan"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/lead-transact-sql"
+    },
+    {
+      "name": "NTILE",
+      "kind": "function",
+      "summary": "把排序後的資料列平分成 N 組，除不盡時前面幾組多一列。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT NTILE(4) OVER (ORDER BY LoanDate) FROM dbo.Loan   -- 1 到 4 的四分位"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/ntile-transact-sql",
+      "references": [
+        "rankFunctions"
+      ]
+    },
+    {
+      "name": "RANK",
+      "kind": "function",
+      "summary": "同分同名次，下一個名次跳號（跳過重複的列數）；不跳號用 DENSE_RANK。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT RANK() OVER (ORDER BY LoanDate DESC) FROM dbo.Loan   -- 1, 1, 3"
+        },
+        {
+          "id": "vs-row-number-dense-rank",
+          "title": "同分時與其他兩者的差異",
+          "sql": "DECLARE @t TABLE (Id int, D date);\nINSERT INTO @t VALUES (1,'2026-01-01'),(2,'2026-01-01'),(3,'2026-01-02'),(4,'2026-01-03');\nSELECT Id,\n       ROW_NUMBER() OVER (ORDER BY D) AS RowNum,\n       RANK()       OVER (ORDER BY D) AS Rnk,\n       DENSE_RANK() OVER (ORDER BY D) AS DenseRnk\nFROM @t ORDER BY D;\n-- 前兩筆同分：Rnk 都是 1；第三筆跳號變成 3（略過名次 2）；第四筆是 4"
+        },
+        {
+          "id": "partition-by",
+          "title": "各組各自排名",
+          "sql": "SELECT RANK() OVER (PARTITION BY Branch ORDER BY LoanDate) FROM dbo.Loan"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/rank-transact-sql",
+      "references": [
+        "rankFunctions"
+      ]
+    },
+    {
+      "name": "ASCII",
+      "kind": "function",
+      "summary": "字串第一個字元的 ASCII 碼；Unicode 請用 UNICODE。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ASCII('A')   -- 65"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/ascii-transact-sql"
+    },
+    {
+      "name": "CHAR",
+      "kind": "function",
+      "summary": "0 到 255 的碼位換成字元，超出範圍回傳 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CHAR(13) + CHAR(10)   -- 換行；Unicode 碼位請用 NCHAR"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/char-transact-sql"
+    },
+    {
+      "name": "CONCAT",
+      "kind": "function",
+      "summary": "串接兩個以上的值，NULL 當成空字串，不會整句變 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CONCAT('A', NULL, 'B')   -- 'AB'"
+        },
+        {
+          "id": "vs-plus-null",
+          "title": "和 + 運算子的差別",
+          "sql": "SELECT 'A' + NULL + 'B'   -- NULL（+ 遇到 NULL 整句變 NULL，CONCAT 不會）"
+        },
+        {
+          "id": "auto-convert-number",
+          "title": "非字串引數自動轉換",
+          "sql": "SELECT CONCAT('CopyNo=', 7)   -- 'CopyNo=7'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/concat-transact-sql"
+    },
+    {
+      "name": "CONCAT_WS",
+      "kind": "function",
+      "summary": "以第一個引數當分隔字元串接，NULL 的值連分隔字元一起略過。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CONCAT_WS('-', 'A', NULL, 'B')   -- 'A-B'"
+        },
+        {
+          "id": "skips-consecutive-nulls",
+          "title": "連續 NULL 不留空分隔",
+          "sql": "SELECT CONCAT_WS('-', 'A', NULL, NULL, 'B')   -- 'A-B'（連續 NULL 也不會留下多餘的分隔字元）"
+        },
+        {
+          "id": "all-null",
+          "title": "全部 NULL 回傳空字串",
+          "sql": "SELECT CONCAT_WS('-', NULL, NULL)   -- ''（不是 NULL，而是空字串）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/concat-ws-transact-sql"
+    },
+    {
+      "name": "DATALENGTH",
+      "kind": "function",
+      "summary": "值所佔的位元組數，含結尾空白；varchar 每字元 1 位元組、nvarchar 2 位元組；字元數用 LEN。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATALENGTH(N'書'), LEN(N'書')   -- 2, 1"
+        },
+        {
+          "id": "trailing-space-counts",
+          "title": "結尾空白算位元組",
+          "sql": "SELECT DATALENGTH('ab  '), LEN('ab  ')   -- 4, 2"
+        },
+        {
+          "id": "varchar-vs-nvarchar",
+          "title": "nvarchar 位元組雙倍",
+          "sql": "SELECT DATALENGTH('ab'), DATALENGTH(N'ab')   -- 2, 4"
+        },
+        {
+          "id": "null-input",
+          "title": "NULL 輸入",
+          "sql": "SELECT DATALENGTH(NULL)   -- NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datalength-transact-sql"
+    },
+    {
+      "name": "DIFFERENCE",
+      "kind": "function",
+      "summary": "兩個字串 SOUNDEX 的相似度，0 到 4；只對英文有意義。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DIFFERENCE('Smith', 'Smyth')   -- 4（最像）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/difference-transact-sql"
+    },
+    {
+      "name": "LEFT",
+      "kind": "function",
+      "summary": "從左邊取 length 個字元；長度超過整串回傳，NULL 輸入回傳 NULL；可搭配 CHARINDEX 找長度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LEFT('978-986', 3)   -- '978'"
+        },
+        {
+          "id": "length-exceeds",
+          "title": "長度超過字串",
+          "sql": "SELECT LEFT('ab', 10)   -- 'ab'"
+        },
+        {
+          "id": "null-input",
+          "title": "NULL 輸入",
+          "sql": "SELECT LEFT(NULL, 3)   -- NULL"
+        },
+        {
+          "id": "dynamic-length",
+          "title": "配合 CHARINDEX 找長度",
+          "sql": "SELECT LEFT('ISBN-978', CHARINDEX('-', 'ISBN-978') - 1)   -- 'ISBN'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/left-transact-sql"
+    },
+    {
+      "name": "LOWER",
+      "kind": "function",
+      "summary": "轉成小寫；比對時分不分大小寫其實是定序決定的。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LOWER('ISBN')   -- 'isbn'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/lower-transact-sql"
+    },
+    {
+      "name": "LTRIM",
+      "kind": "function",
+      "summary": "去掉開頭的空白；SQL Server 2022 起可指定要去掉的字元。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT '[' + LTRIM('  A') + ']'   -- '[A]'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/ltrim-transact-sql"
+    },
+    {
+      "name": "NCHAR",
+      "kind": "function",
+      "summary": "Unicode 碼位換成字元，收得下的範圍比 CHAR 大得多。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT NCHAR(26360)   -- N'書'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/nchar-transact-sql"
+    },
+    {
+      "name": "PATINDEX",
+      "kind": "function",
+      "summary": "找出第一次符合萬用字元樣式的位置，從 1 起算；找不到回傳 0。樣式前後要自己加 %。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT PATINDEX('%[0-9]%', 'ISBN978')   -- 5"
+        },
+        {
+          "id": "not-found",
+          "title": "找不到回傳 0",
+          "sql": "SELECT PATINDEX('%[0-9]%', 'ISBN')   -- 0"
+        },
+        {
+          "id": "missing-percent",
+          "title": "忘記加 % 的陷阱",
+          "sql": "SELECT PATINDEX('978', 'ISBN978'), PATINDEX('%978%', 'ISBN978')"
+        },
+        {
+          "id": "negated-class",
+          "title": "否定字元類別",
+          "sql": "SELECT PATINDEX('%[^0-9]%', '123ABC')   -- 4"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/patindex-transact-sql",
+      "references": [
+        "wildcards"
+      ]
+    },
+    {
+      "name": "QUOTENAME",
+      "kind": "function",
+      "summary": "包成合法識別字，動態 SQL 組表名要用它；超過 128 字元回傳 NULL，可換定界字元。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT QUOTENAME('Lib_Reader')   -- '[Lib_Reader]'"
+        },
+        {
+          "id": "escapes-bracket",
+          "title": "名稱裡有方括號",
+          "sql": "SELECT QUOTENAME('Weird]Name')   -- '[Weird]]Name]'"
+        },
+        {
+          "id": "custom-delimiter",
+          "title": "換成其他定界字元",
+          "sql": "SELECT QUOTENAME('O''Brien', '''')   -- 'O''Brien'"
+        },
+        {
+          "id": "too-long",
+          "title": "超過 128 字元回傳 NULL",
+          "sql": "SELECT QUOTENAME(REPLICATE('a', 129))   -- NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/quotename-transact-sql"
+    },
+    {
+      "name": "REPLACE",
+      "kind": "function",
+      "summary": "把所有出現的 find 換成 replaceWith；比對受定序影響。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT REPLACE('978-986-1', '-', '')   -- '9789861'"
+        },
+        {
+          "id": "null-arg-trap",
+          "title": "任何引數 NULL 全變 NULL",
+          "sql": "SELECT REPLACE('ABC', NULL, 'x')   -- NULL（任何引數是 NULL，整個結果就是 NULL）"
+        },
+        {
+          "id": "practical-use",
+          "title": "取代空白做識別字",
+          "sql": "DECLARE @Title nvarchar(50) = N'SQL 入門 教學';\nSELECT REPLACE(@Title, N' ', N'-')   -- 'SQL-入門-教學'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/replace-transact-sql"
+    },
+    {
+      "name": "REPLICATE",
+      "kind": "function",
+      "summary": "把字串重複 count 次；count 為負回傳 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT REPLICATE('0', 3) + '12'   -- '00012'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/replicate-transact-sql"
+    },
+    {
+      "name": "REVERSE",
+      "kind": "function",
+      "summary": "把字串反過來；代理對與組合字會被拆散。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT REVERSE('ABC')   -- 'CBA'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/reverse-transact-sql"
+    },
+    {
+      "name": "RIGHT",
+      "kind": "function",
+      "summary": "從右邊取 length 個字元；長度超過整串回傳，NULL 輸入回傳 NULL；補零常搭配 REPLICATE。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT RIGHT('00' + '7', 3)   -- '007'"
+        },
+        {
+          "id": "length-exceeds",
+          "title": "長度超過字串",
+          "sql": "SELECT RIGHT('ab', 10)   -- 'ab'"
+        },
+        {
+          "id": "null-input",
+          "title": "NULL 輸入",
+          "sql": "SELECT RIGHT(NULL, 3)   -- NULL"
+        },
+        {
+          "id": "after-delimiter",
+          "title": "取分隔字元之後",
+          "sql": "SELECT RIGHT('978-986', LEN('978-986') - CHARINDEX('-', '978-986'))   -- '986'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/right-transact-sql"
+    },
+    {
+      "name": "RTRIM",
+      "kind": "function",
+      "summary": "去掉結尾的空白；LEN 本來就忽略它們，DATALENGTH 不會。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATALENGTH(RTRIM('A  '))   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/rtrim-transact-sql"
+    },
+    {
+      "name": "SOUNDEX",
+      "kind": "function",
+      "summary": "英文發音碼，四個字元；中文與數字得不到有意義的結果。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SOUNDEX('Smith')   -- 'S530'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/soundex-transact-sql"
+    },
+    {
+      "name": "SPACE",
+      "kind": "function",
+      "summary": "count 個空白字元；超過 8000 個要自己用 REPLICATE。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT 'A' + SPACE(3) + 'B'   -- 'A   B'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/space-transact-sql"
+    },
+    {
+      "name": "STR",
+      "kind": "function",
+      "summary": "數值轉字串並靠右對齊，小數會四捨五入，不足位數補空白。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT '[' + STR(3.7, 5, 1) + ']'   -- '[  3.7]'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/str-transact-sql"
+    },
+    {
+      "name": "STRING_SPLIT",
+      "kind": "function",
+      "summary": "依分隔字元拆成多列的資料表值函式，分隔字元只能一個字元。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT value FROM STRING_SPLIT('A,B,C', ',')   -- 三列：A、B、C"
+        },
+        {
+          "id": "ordinal-for-order",
+          "title": "順序要靠 ordinal",
+          "sql": "SELECT value, ordinal\nFROM STRING_SPLIT('A,B,C', ',', 1)\nORDER BY ordinal   -- 不加第三個引數就不保證順序（SQL Server 2022 起才有 enable_ordinal）"
+        },
+        {
+          "id": "keeps-whitespace",
+          "title": "不會自動去除空白",
+          "sql": "SELECT '[' + value + ']' FROM STRING_SPLIT('A, B, C', ',')   -- '[A]'、'[ B]'、'[ C]'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/string-split-transact-sql",
+      "references": [
+        "splitColumns"
+      ]
+    },
+    {
+      "name": "STUFF",
+      "kind": "function",
+      "summary": "從 start 刪掉 length 個字元再插入新字串；start 從 1 起算。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT STUFF('978986', 4, 0, '-')   -- '978-986'"
+        },
+        {
+          "id": "legacy-concat-vs-string-agg",
+          "title": "舊式串接改用 STRING_AGG",
+          "sql": "DECLARE @Copy TABLE (CopyNo varchar(10));\nINSERT INTO @Copy VALUES ('A01'), ('A02'), ('A03');\nSELECT STUFF((\n  SELECT ', ' + CopyNo FROM @Copy ORDER BY CopyNo FOR XML PATH('')\n), 1, 2, '')   -- 'A01, A02, A03'；SQL Server 2017 起改用 STRING_AGG 更直覺"
+        },
+        {
+          "id": "delete-only",
+          "title": "new 給空字串等於刪除",
+          "sql": "SELECT STUFF('2026-09-08', 5, 3, '')   -- '2026-08'（砍掉月份，只留年與日）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/stuff-transact-sql"
+    },
+    {
+      "name": "TRANSLATE",
+      "kind": "function",
+      "summary": "把來源字元逐一對應換掉，兩份字元清單長度必須一樣。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TRANSLATE('[1,2]', '[]', '()')   -- '(1,2)'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/translate-transact-sql"
+    },
+    {
+      "name": "TRIM",
+      "kind": "function",
+      "summary": "預設去掉頭尾空白；SQL Server 2017 起可用 FROM 指定字元集合，逐字元比對，不是去掉子字串。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT '[' + TRIM('  A  ') + ']'   -- '[A]'"
+        },
+        {
+          "id": "custom-charset",
+          "title": "FROM 指定字元集合",
+          "sql": "SELECT TRIM('-.' FROM '--ISBN978.')   -- 'ISBN978'"
+        },
+        {
+          "id": "charset-not-substring",
+          "title": "字元集合不是子字串",
+          "sql": "SELECT TRIM('AB' FROM 'ABABISBNAB')   -- 'ISBN'"
+        },
+        {
+          "id": "null-input",
+          "title": "NULL 輸入",
+          "sql": "SELECT TRIM(NULL)   -- NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/trim-transact-sql"
+    },
+    {
+      "name": "UNICODE",
+      "kind": "function",
+      "summary": "字串第一個字元的 Unicode 碼位；引數記得加 N 前置詞。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT UNICODE(N'書')   -- 26360"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/unicode-transact-sql"
+    },
+    {
+      "name": "UPPER",
+      "kind": "function",
+      "summary": "轉成大寫；只影響有大小寫之分的字元。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT UPPER('isbn')   -- 'ISBN'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/upper-transact-sql"
+    },
+    {
+      "name": "DATEFROMPARTS",
+      "kind": "function",
+      "summary": "由年月日組出 date；數字湊不成日期時整句失敗。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATEFROMPARTS(2026, 9, 8)   -- 2026-09-08"
+        },
+        {
+          "id": "invalid-date",
+          "title": "湊不成日期就報錯",
+          "sql": "SELECT DATEFROMPARTS(2026, 2, 30)   -- 錯誤：2 月沒有 30 日"
+        },
+        {
+          "id": "leap-day",
+          "title": "閏年才有 29 日",
+          "sql": "SELECT DATEFROMPARTS(2028, 2, 29)   -- 2028-02-29（閏年才有效，非閏年會報錯）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datefromparts-transact-sql"
+    },
+    {
+      "name": "DAY",
+      "kind": "function",
+      "summary": "取日，等於 DATEPART(DAY, date)，回傳整數。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DAY('2026-09-08')   -- 8"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/day-transact-sql"
+    },
+    {
+      "name": "GETDATE",
+      "kind": "function",
+      "summary": "目前的本機時間，datetime；精確度只到約 3.33 毫秒。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT GETDATE()   -- 2026-09-08 21:30:00.123"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/getdate-transact-sql",
+      "references": [
+        "currentDateTimes"
+      ]
+    },
+    {
+      "name": "GETUTCDATE",
+      "kind": "function",
+      "summary": "目前的 UTC 時間，datetime；不含時區位移。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT GETUTCDATE()   -- 2026-09-08 13:30:00.123"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/getutcdate-transact-sql",
+      "references": [
+        "currentDateTimes"
+      ]
+    },
+    {
+      "name": "ISDATE",
+      "kind": "function",
+      "summary": "字串轉得成日期就回傳 1；結果隨語言與 DATEFORMAT 改變。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ISDATE('2026-02-30')   -- 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/isdate-transact-sql"
+    },
+    {
+      "name": "MONTH",
+      "kind": "function",
+      "summary": "取月，等於 DATEPART(MONTH, date)；月份名稱用 DATENAME。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT MONTH('2026-09-08')   -- 9"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/month-transact-sql"
+    },
+    {
+      "name": "SWITCHOFFSET",
+      "kind": "function",
+      "summary": "換算成另一個時區位移，時間點不變，只換表示法。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SWITCHOFFSET(SYSDATETIMEOFFSET(), '+08:00')   -- 同一瞬間的台北時間"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/switchoffset-transact-sql"
+    },
+    {
+      "name": "SYSDATETIME",
+      "kind": "function",
+      "summary": "目前的本機時間，datetime2(7)，比 GETDATE 準得多。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SYSDATETIME()   -- 2026-09-08 21:30:00.1234567"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sysdatetime-transact-sql",
+      "references": [
+        "currentDateTimes"
+      ]
+    },
+    {
+      "name": "SYSDATETIMEOFFSET",
+      "kind": "function",
+      "summary": "目前的本機時間，含時區位移，型別是 datetimeoffset(7)。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SYSDATETIMEOFFSET()   -- 2026-09-08 21:30:00.1234567 +08:00"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sysdatetimeoffset-transact-sql",
+      "references": [
+        "currentDateTimes"
+      ]
+    },
+    {
+      "name": "SYSUTCDATETIME",
+      "kind": "function",
+      "summary": "目前的 UTC 時間，datetime2(7)；跨時區存時間用它。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SYSUTCDATETIME()   -- 2026-09-08 13:30:00.1234567"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sysutcdatetime-transact-sql",
+      "references": [
+        "currentDateTimes"
+      ]
+    },
+    {
+      "name": "TODATETIMEOFFSET",
+      "kind": "function",
+      "summary": "為沒有時區的時間掛上位移，時鐘上的數字不變。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TODATETIMEOFFSET(SYSDATETIME(), '+08:00')   -- 同樣的字面時間，改標時區"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/todatetimeoffset-transact-sql"
+    },
+    {
+      "name": "YEAR",
+      "kind": "function",
+      "summary": "取年，等於 DATEPART(YEAR, date)，回傳整數。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT YEAR('2026-09-08')   -- 2026"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/year-transact-sql"
+    },
+    {
+      "name": "ABS",
+      "kind": "function",
+      "summary": "絕對值；回傳型別跟著引數走，最小的負整數會溢位。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ABS(-3.5)   -- 3.5"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/abs-transact-sql"
+    },
+    {
+      "name": "CEILING",
+      "kind": "function",
+      "summary": "往上取整到最小的整數值，回傳型別不變。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CEILING(-1.2), CEILING(1.2)   -- -1, 2"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/ceiling-transact-sql"
+    },
+    {
+      "name": "EXP",
+      "kind": "function",
+      "summary": "e 的 number 次方，回傳 float；反運算是 LOG。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT EXP(1)   -- 2.71828182845905"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/exp-transact-sql"
+    },
+    {
+      "name": "FLOOR",
+      "kind": "function",
+      "summary": "往下取整到最大的整數值；負數會取得愈小。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT FLOOR(-1.2), FLOOR(1.2)   -- -2, 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/floor-transact-sql"
+    },
+    {
+      "name": "LOG",
+      "kind": "function",
+      "summary": "自然對數；第二個引數可指定底數，number 必須大於 0。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LOG(8, 2)   -- 3"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/log-transact-sql"
+    },
+    {
+      "name": "LOG10",
+      "kind": "function",
+      "summary": "以 10 為底的對數，等於 LOG(number, 10)。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LOG10(1000)   -- 3"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/log10-transact-sql"
+    },
+    {
+      "name": "POWER",
+      "kind": "function",
+      "summary": "number 的 exponent 次方；回傳型別跟著第一個引數走。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT POWER(2, 10)   -- 1024"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/power-transact-sql"
+    },
+    {
+      "name": "RAND",
+      "kind": "function",
+      "summary": "0 到 1 的亂數，整句只算一次；每一列要不同值用 NEWID。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT RAND(1)   -- 同一個 seed 每次都給同一個值"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/rand-transact-sql"
+    },
+    {
+      "name": "ROUND",
+      "kind": "function",
+      "summary": "四捨五入到 length 位；第三個引數非 0 就改成直接捨去。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ROUND(15.75, 1), ROUND(15.75, 1, 1)   -- 15.80, 15.70"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/round-transact-sql",
+      "references": [
+        "roundFunction"
+      ]
+    },
+    {
+      "name": "SIGN",
+      "kind": "function",
+      "summary": "正數回傳 1、零回傳 0、負數回傳 -1；NULL 仍是 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SIGN(-8), SIGN(0)   -- -1, 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sign-transact-sql"
+    },
+    {
+      "name": "SQRT",
+      "kind": "function",
+      "summary": "平方根，回傳 float；負數會讓整句失敗。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SQRT(9)   -- 3"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sqrt-transact-sql"
+    },
+    {
+      "name": "SQUARE",
+      "kind": "function",
+      "summary": "平方，回傳 float；等於 POWER(number, 2)。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SQUARE(3)   -- 9"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/square-transact-sql"
+    },
+    {
+      "name": "CHOOSE",
+      "kind": "function",
+      "summary": "依索引挑出第幾個值，從 1 起算；超出範圍回傳 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CHOOSE(2, '借出', '在架', '遺失')   -- '在架'"
+        },
+        {
+          "id": "out-of-range",
+          "title": "索引超出範圍",
+          "sql": "SELECT CHOOSE(5, '借出', '在架', '遺失') AS too_high, CHOOSE(0, '借出', '在架', '遺失') AS too_low   -- NULL, NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/logical-functions-choose-transact-sql"
+    },
+    {
+      "name": "ISNUMERIC",
+      "kind": "function",
+      "summary": "轉得成任何一種數值型別就回傳 1，連貨幣符號都算。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ISNUMERIC('$1'), ISNUMERIC('1e5')   -- 1, 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/isnumeric-transact-sql"
+    },
+    {
+      "name": "PARSE",
+      "kind": "function",
+      "summary": "依文化特性把字串轉成日期或數值；走 CLR，比 CONVERT 慢。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT PARSE('8/9/2026' AS date USING 'en-GB')   -- 2026-09-08"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/parse-transact-sql"
+    },
+    {
+      "name": "TRY_CAST",
+      "kind": "function",
+      "summary": "與 CAST 相同，但轉不過去時回傳 NULL 而不是整句失敗。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TRY_CAST('x' AS int)   -- NULL"
+        },
+        {
+          "id": "valid-succeeds",
+          "title": "轉得過去正常回傳",
+          "sql": "SELECT TRY_CAST('123' AS int)   -- 123"
+        },
+        {
+          "id": "date-format-fails",
+          "title": "月份不存在也回傳 NULL",
+          "sql": "SELECT TRY_CAST('2026-13-01' AS date)   -- NULL（月份 13 不存在，一樣轉不過去）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/try-cast-transact-sql"
+    },
+    {
+      "name": "TRY_PARSE",
+      "kind": "function",
+      "summary": "與 PARSE 相同，但轉不過去時回傳 NULL；同樣走 CLR。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TRY_PARSE('x' AS date USING 'en-GB')   -- NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/try-parse-transact-sql"
+    },
+    {
+      "name": "APP_NAME",
+      "kind": "function",
+      "summary": "連線自報的應用程式名稱，用戶端說什麼就是什麼。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT APP_NAME()   -- 'Microsoft SQL Server Management Studio'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/app-name-transact-sql"
+    },
+    {
+      "name": "BINARY_CHECKSUM",
+      "kind": "function",
+      "summary": "值的二進位檢查碼，大小寫不同就不同；要比對值用 CHECKSUM。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT BINARY_CHECKSUM('a'), BINARY_CHECKSUM('A')   -- 兩個值不一樣"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/binary-checksum-transact-sql"
+    },
+    {
+      "name": "CHECKSUM",
+      "kind": "function",
+      "summary": "值的檢查碼，受定序影響；不同的值也可能算出同一個碼。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CHECKSUM('a'), CHECKSUM('A')   -- 定序不分大小寫時相同"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/checksum-transact-sql"
+    },
+    {
+      "name": "DB_NAME",
+      "kind": "function",
+      "summary": "資料庫名稱，省略引數就是目前這一個。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DB_NAME()   -- 目前連線的資料庫"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/db-name-transact-sql"
+    },
+    {
+      "name": "HOST_NAME",
+      "kind": "function",
+      "summary": "用戶端自報的電腦名稱，同樣不保證是真的。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT HOST_NAME()   -- 用戶端連線時送來的名稱"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/host-name-transact-sql"
+    },
+    {
+      "name": "IDENT_CURRENT",
+      "kind": "function",
+      "summary": "指定資料表最後產生的識別值，不分工作階段與範圍。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IDENT_CURRENT('dbo.Loan')   -- 別人剛插入的值也算"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/ident-current-transact-sql"
+    },
+    {
+      "name": "NEWID",
+      "kind": "function",
+      "summary": "傳回隨機的 uniqueidentifier；當叢集索引鍵會造成分頁分割，每次呼叫都重新產生。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT NEWID()   -- 每一列都不同，ORDER BY 它等於隨機排序"
+        },
+        {
+          "id": "random-order",
+          "title": "隨機排序",
+          "sql": "SELECT CopyNo FROM dbo.Cat_BookCopy ORDER BY NEWID()"
+        },
+        {
+          "id": "reevaluated-per-call",
+          "title": "同一列呼叫兩次也不同",
+          "sql": "SELECT NEWID(), NEWID()   -- 兩欄不一樣"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/newid-transact-sql"
+    },
+    {
+      "name": "NEWSEQUENTIALID",
+      "kind": "function",
+      "summary": "遞增的 uniqueidentifier，只能寫在資料行的預設值裡。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "ALTER TABLE dbo.Copy ADD Tag uniqueidentifier DEFAULT NEWSEQUENTIALID()   -- 只能這樣用"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/newsequentialid-transact-sql"
+    },
+    {
+      "name": "OBJECT_ID",
+      "kind": "function",
+      "summary": "傳回物件的 object_id，查不到回傳 NULL；第二引數是型別代碼；暫存表要寫 tempdb..#t。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT OBJECT_ID('dbo.Loan', 'U')   -- 'U' 是資料表，查不到給 NULL"
+        },
+        {
+          "id": "not-found",
+          "title": "查不到回傳 NULL",
+          "sql": "SELECT OBJECT_ID('dbo.NoSuchTable')   -- NULL"
+        },
+        {
+          "id": "multiple-types",
+          "title": "同時比對多種型別",
+          "sql": "SELECT OBJECT_ID('dbo.Loan', 'U,V')   -- 符合其中一種就找到"
+        },
+        {
+          "id": "temp-table",
+          "title": "暫存表要加 tempdb..",
+          "sql": "CREATE TABLE #t (Id int);\nSELECT OBJECT_ID('#t') AS NotFound, OBJECT_ID('tempdb..#t') AS Found;\nDROP TABLE #t;\n-- NotFound 是 NULL（在目前資料庫找）；Found 有值（要加 tempdb.. 前綴）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/object-id-transact-sql",
+      "references": [
+        {
+          "title": "常見型別代碼",
+          "columns": ["代碼", "型別"],
+          "rows": [
+            ["U", "使用者資料表"],
+            ["V", "檢視"],
+            ["P", "SQL 預存程序"],
+            ["FN", "純量函式"]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OBJECT_NAME",
+      "kind": "function",
+      "summary": "由 object_id 反查物件名稱；找的是目前這個資料庫。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT OBJECT_NAME(OBJECT_ID('dbo.Loan'))   -- 'Loan'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/object-name-transact-sql"
+    },
+    {
+      "name": "SCHEMA_NAME",
+      "kind": "function",
+      "summary": "結構描述名稱，省略引數就是目前使用者的預設結構描述。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SCHEMA_NAME()   -- 'dbo'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/schema-name-transact-sql"
+    },
+    {
+      "name": "SCOPE_IDENTITY",
+      "kind": "function",
+      "summary": "目前範圍最後產生的識別值；@@IDENTITY 會被觸發程序插入蓋過，IDENT_CURRENT 只看該表。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "INSERT dbo.Loan (ReaderId) VALUES (1); SELECT SCOPE_IDENTITY()   -- 剛插入那列的值"
+        },
+        {
+          "id": "no-trigger-equal",
+          "title": "沒有觸發程序時相同",
+          "sql": "INSERT dbo.Lib_Tag (Name) VALUES ('A'); SELECT SCOPE_IDENTITY(), @@IDENTITY"
+        },
+        {
+          "id": "trigger-scenario",
+          "title": "觸發程序情境的差異",
+          "sql": "CREATE TABLE dbo.Lib_Tag (Id int IDENTITY, Name nvarchar(50));\nCREATE TABLE dbo.Lib_TagLog (Id int IDENTITY(100,1), TagId int);\nGO\nCREATE TRIGGER trg_Lib_Tag_Log ON dbo.Lib_Tag AFTER INSERT AS\n  INSERT INTO dbo.Lib_TagLog (TagId) SELECT Id FROM inserted;\nGO\nINSERT INTO dbo.Lib_Tag (Name) VALUES ('Fiction');\nSELECT SCOPE_IDENTITY() AS ScopeId, @@IDENTITY AS GlobalId, IDENT_CURRENT('dbo.Lib_Tag') AS CurrentId;\n-- ScopeId=1（Lib_Tag 這列的值）；GlobalId=100（被 Lib_TagLog 的識別值蓋過）；CurrentId=1（只看 Lib_Tag）\nDROP TABLE dbo.Lib_Tag; DROP TABLE dbo.Lib_TagLog;"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/scope-identity-transact-sql"
+    },
+    {
+      "name": "SUSER_SNAME",
+      "kind": "function",
+      "summary": "登入名稱，省略引數就是目前這個連線的登入。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SUSER_SNAME()   -- 目前連線的登入名稱"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/suser-sname-transact-sql"
+    },
+    {
+      "name": "USER_NAME",
+      "kind": "function",
+      "summary": "資料庫使用者名稱；與登入不是同一件事，登入用 SUSER_SNAME。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT USER_NAME()   -- 'dbo'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/user-name-transact-sql"
+    },
+    {
+      "name": "ERROR_LINE",
+      "kind": "function",
+      "summary": "CATCH 區塊裡出錯的那一行行號；其餘位置一律回傳 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_LINE() END CATCH   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/error-line-transact-sql"
+    },
+    {
+      "name": "ERROR_MESSAGE",
+      "kind": "function",
+      "summary": "CATCH 區塊裡的完整錯誤訊息；只在 CATCH 裡有值，區塊外一律 NULL，離開後也取不到。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_MESSAGE() END CATCH   -- 遇到除以零"
+        },
+        {
+          "id": "outside-catch",
+          "title": "CATCH 之外回傳 NULL",
+          "sql": "SELECT ERROR_MESSAGE()   -- NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/error-message-transact-sql"
+    },
+    {
+      "name": "ERROR_NUMBER",
+      "kind": "function",
+      "summary": "CATCH 區塊裡的錯誤編號，與 @@ERROR 看到的值相同。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_NUMBER() END CATCH   -- 8134"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/error-number-transact-sql"
+    },
+    {
+      "name": "ERROR_PROCEDURE",
+      "kind": "function",
+      "summary": "出錯的預存程序或觸發程序名稱；不在模組裡就是 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_PROCEDURE() END CATCH   -- NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/error-procedure-transact-sql"
+    },
+    {
+      "name": "ERROR_SEVERITY",
+      "kind": "function",
+      "summary": "錯誤嚴重性；11 以上才進得了 CATCH，20 以上會斷線。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_SEVERITY() END CATCH   -- 16"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/error-severity-transact-sql"
+    },
+    {
+      "name": "ERROR_STATE",
+      "kind": "function",
+      "summary": "錯誤狀態碼，用來分辨同一個錯誤編號的不同來源。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "BEGIN TRY SELECT 1/0 END TRY BEGIN CATCH SELECT ERROR_STATE() END CATCH   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/error-state-transact-sql"
+    },
+    {
+      "name": "ISJSON",
+      "kind": "function",
+      "summary": "字串是不是合法的 JSON；第二個引數可限定 ARRAY 或 OBJECT。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ISJSON('[1,2]', ARRAY)   -- 1；不是陣列就回傳 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/isjson-transact-sql"
+    },
+    {
+      "name": "JSON_MODIFY",
+      "kind": "function",
+      "summary": "改一個屬性後回傳新的 JSON 字串，原來的值不會被就地改掉。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT JSON_MODIFY('{\"n\":1}', '$.n', 2)   -- '{\"n\":2}'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/json-modify-transact-sql"
+    },
+    {
+      "name": "JSON_QUERY",
+      "kind": "function",
+      "summary": "取出物件或陣列，保留巢狀結構；指向純量值回傳 NULL（改用 JSON_VALUE）。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT JSON_QUERY('{\"a\":[1,2]}', '$.a')   -- '[1,2]'"
+        },
+        {
+          "id": "scalar-returns-null",
+          "title": "指向純量值回傳 NULL",
+          "sql": "SELECT JSON_QUERY('{\"a\":1}', '$.a')   -- NULL"
+        },
+        {
+          "id": "whole-document",
+          "title": "省略路徑取整份",
+          "sql": "SELECT JSON_QUERY('{\"a\":1,\"b\":2}')   -- 原樣整份回傳"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/json-query-transact-sql"
+    },
+    {
+      "name": "JSON_VALUE",
+      "kind": "function",
+      "summary": "取出純量值；指向物件或陣列回傳 NULL（改用 JSON_QUERY），lax 模式找不到路徑不報錯。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT JSON_VALUE('{\"n\":1}', '$.n')   -- '1'（是字串，不是整數）"
+        },
+        {
+          "id": "object-returns-null",
+          "title": "指向物件回傳 NULL",
+          "sql": "SELECT JSON_VALUE('{\"a\":{\"b\":1}}', '$.a')   -- NULL"
+        },
+        {
+          "id": "lax-missing-path",
+          "title": "lax 模式路徑不存在",
+          "sql": "SELECT JSON_VALUE('{\"a\":1}', '$.b')   -- NULL，不報錯"
+        },
+        {
+          "id": "strict-mode",
+          "title": "strict 模式路徑不存在會報錯",
+          "sql": "BEGIN TRY\n  SELECT JSON_VALUE('{\"a\":1}', 'strict $.b')\nEND TRY\nBEGIN CATCH\n  SELECT ERROR_MESSAGE()\nEND CATCH\n-- 被 CATCH 接住，不是回傳 NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/json-value-transact-sql"
+    },
+    {
+      "name": "OPENJSON",
+      "kind": "function",
+      "summary": "把 JSON 拆成資料列的資料表值函式；不給結構描述回傳三欄；需要相容性等級 130 以上。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT [key], value FROM OPENJSON('{\"a\":1}')   -- 一列：a、1"
+        },
+        {
+          "id": "array-input",
+          "title": "拆解陣列",
+          "sql": "SELECT [key], value FROM OPENJSON('[10,20,30]')   -- key 是 0/1/2"
+        },
+        {
+          "id": "with-schema",
+          "title": "WITH 展開成型別欄位",
+          "sql": "SELECT * FROM OPENJSON('{\"Id\":1}') WITH (Id int)   -- 一欄：Id=1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/openjson-transact-sql",
+      "references": [
+        "openJsonColumns",
+        "jsonValueTypes"
+      ]
+    },
+    {
+      "name": "ACOS",
+      "kind": "function",
+      "summary": "反餘弦，引數要在 -1 到 1 之間，回傳弧度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ACOS(1)   -- 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/acos-transact-sql"
+    },
+    {
+      "name": "APPROX_COUNT_DISTINCT",
+      "kind": "function",
+      "summary": "近似的相異值個數，誤差約 2%；資料量大時比 COUNT(DISTINCT) 省很多。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT APPROX_COUNT_DISTINCT(CopyNo) FROM dbo.Loan   -- 近似值，不保證等於實際個數"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/approx-count-distinct-transact-sql"
+    },
+    {
+      "name": "ASIN",
+      "kind": "function",
+      "summary": "反正弦，引數要在 -1 到 1 之間，回傳弧度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ASIN(0)   -- 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/asin-transact-sql"
+    },
+    {
+      "name": "ATAN",
+      "kind": "function",
+      "summary": "反正切，回傳弧度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ATAN(1)   -- 0.785398163397448（π/4）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/atan-transact-sql"
+    },
+    {
+      "name": "ATN2",
+      "kind": "function",
+      "summary": "兩個引數的反正切，分得出象限；ATAN 只有一個引數做不到。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ATN2(1, 1)   -- 0.785398163397448（π/4）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/atn2-transact-sql"
+    },
+    {
+      "name": "COL_LENGTH",
+      "kind": "function",
+      "summary": "資料行的長度（位元組）；nvarchar 是字元數的兩倍。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COL_LENGTH('dbo.Loan', 'CopyNo')   -- nvarchar(20) 得到 40"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/col-length-transact-sql"
+    },
+    {
+      "name": "COL_NAME",
+      "kind": "function",
+      "summary": "由 object_id 與 column_id 反查資料行名稱。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COL_NAME(OBJECT_ID('dbo.Loan'), 1)   -- 第一個資料行的名稱"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/col-name-transact-sql"
+    },
+    {
+      "name": "COLUMNPROPERTY",
+      "kind": "function",
+      "summary": "查資料行的屬性，例如 IsIdentity、IsComputed。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COLUMNPROPERTY(OBJECT_ID('dbo.Loan'), 'Id', 'IsIdentity')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/columnproperty-transact-sql"
+    },
+    {
+      "name": "COMPRESS",
+      "kind": "function",
+      "summary": "用 GZIP 壓成 varbinary(max)，解開要用 DECOMPRESS。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATALENGTH(COMPRESS(REPLICATE('a', 1000)))   -- 遠小於 1000"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/compress-transact-sql"
+    },
+    {
+      "name": "CONNECTIONPROPERTY",
+      "kind": "function",
+      "summary": "目前這條連線的屬性，例如 client_net_address。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CONNECTIONPROPERTY('client_net_address')   -- 用戶端位址"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/connectionproperty-transact-sql"
+    },
+    {
+      "name": "CONTEXT_INFO",
+      "kind": "function",
+      "summary": "這個工作階段用 SET CONTEXT_INFO 存的 128 個位元組。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CONTEXT_INFO()   -- 沒設定過就是 NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/context-info-transact-sql"
+    },
+    {
+      "name": "COS",
+      "kind": "function",
+      "summary": "餘弦，引數是弧度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COS(0)   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/cos-transact-sql"
+    },
+    {
+      "name": "COT",
+      "kind": "function",
+      "summary": "餘切，引數是弧度；0 會因為除以零而失敗。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT COT(1)   -- 0.642092615934331"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/cot-transact-sql"
+    },
+    {
+      "name": "CRYPT_GEN_RANDOM",
+      "kind": "function",
+      "summary": "加密強度的亂數位元組，長度自己指定。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CRYPT_GEN_RANDOM(4)   -- 4 個位元組的亂數"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/crypt-gen-random-transact-sql"
+    },
+    {
+      "name": "CUME_DIST",
+      "kind": "function",
+      "summary": "累積分布：小於或等於這一列的比例，值落在 0 到 1 之間。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CUME_DIST() OVER (ORDER BY LoanDate) FROM dbo.Loan   -- 最後一列一定是 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/cume-dist-transact-sql"
+    },
+    {
+      "name": "CURRENT_TIMEZONE",
+      "kind": "function",
+      "summary": "這台伺服器目前的時區名稱。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CURRENT_TIMEZONE()   -- 'Taipei Standard Time'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/current-timezone-transact-sql"
+    },
+    {
+      "name": "CURRENT_TIMEZONE_ID",
+      "kind": "function",
+      "summary": "這台伺服器目前的時區識別碼，可直接餵給 AT TIME ZONE。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SYSDATETIME() AT TIME ZONE CURRENT_TIMEZONE_ID()   -- 補上時區位移"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/current-timezone-id-transact-sql"
+    },
+    {
+      "name": "DATABASE_PRINCIPAL_ID",
+      "kind": "function",
+      "summary": "資料庫主體的識別碼，省略引數就是目前的使用者。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATABASE_PRINCIPAL_ID('dbo')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/database-principal-id-transact-sql"
+    },
+    {
+      "name": "DATABASEPROPERTYEX",
+      "kind": "function",
+      "summary": "查資料庫的屬性，例如 Collation、Recovery。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATABASEPROPERTYEX(DB_NAME(), 'Collation')   -- 目前資料庫的定序"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/databasepropertyex-transact-sql"
+    },
+    {
+      "name": "DATE_BUCKET",
+      "kind": "function",
+      "summary": "把時間歸到固定寬度的區間起點，用來分組。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATE_BUCKET(WEEK, 2, '2026-09-08')   -- 每兩週一格，回傳那一格的起點"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/date-bucket-transact-sql"
+    },
+    {
+      "name": "DATEDIFF_BIG",
+      "kind": "function",
+      "summary": "與 DATEDIFF 相同，但回傳 bigint，奈秒差不會溢位。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATEDIFF_BIG(NANOSECOND, '2026-01-01', '2026-09-08')   -- DATEDIFF 會溢位"
+        },
+        {
+          "id": "elapsed-minutes",
+          "title": "計算借閱時間轉分鐘",
+          "sql": "DECLARE @Loan TABLE (LoanId int, LoanDate datetime2, ReturnDate datetime2);\nINSERT INTO @Loan VALUES (1, '2026-09-01 09:00:00', '2026-09-08 09:00:00');\nSELECT DATEDIFF_BIG(MINUTE, LoanDate, ReturnDate) FROM @Loan   -- 10080（7 天）"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datediff-big-transact-sql"
+    },
+    {
+      "name": "DATETIME2FROMPARTS",
+      "kind": "function",
+      "summary": "用各個部分組出 datetime2，最後一個引數是小數秒位數。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATETIME2FROMPARTS(2026, 9, 8, 21, 30, 0, 0, 3)   -- 2026-09-08 21:30:00.000"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datetime2fromparts-transact-sql"
+    },
+    {
+      "name": "DATETIMEFROMPARTS",
+      "kind": "function",
+      "summary": "用各個部分組出 datetime，任何一段不合法就整句失敗。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATETIMEFROMPARTS(2026, 9, 8, 21, 30, 0, 0)   -- 2026-09-08 21:30:00.000"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datetimefromparts-transact-sql"
+    },
+    {
+      "name": "DATETIMEOFFSETFROMPARTS",
+      "kind": "function",
+      "summary": "用各個部分組出 datetimeoffset，位移寫成時與分兩段。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATETIMEOFFSETFROMPARTS(2026, 9, 8, 21, 30, 0, 0, 8, 0, 0)   -- +08:00"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datetimeoffsetfromparts-transact-sql"
+    },
+    {
+      "name": "DATETRUNC",
+      "kind": "function",
+      "summary": "把日期時間截到指定的單位，回傳型別跟著引數走。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DATETRUNC(MONTH, CONVERT(date, '2026-09-08'))   -- 2026-09-01"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/datetrunc-transact-sql"
+    },
+    {
+      "name": "DB_ID",
+      "kind": "function",
+      "summary": "資料庫的識別碼，省略引數就是目前這個資料庫。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DB_ID()   -- 目前資料庫的 database_id"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/db-id-transact-sql"
+    },
+    {
+      "name": "DECOMPRESS",
+      "kind": "function",
+      "summary": "解開 COMPRESS 的值，回傳 varbinary(max)，要自己轉回型別。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CAST(DECOMPRESS(COMPRESS('abc')) AS varchar(max))   -- 'abc'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/decompress-transact-sql"
+    },
+    {
+      "name": "DECRYPTBYPASSPHRASE",
+      "kind": "function",
+      "summary": "用密語解密；密語不對時回傳 NULL 而不是報錯。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT CAST(DECRYPTBYPASSPHRASE('key', @cipher) AS varchar(max))   -- 'abc'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/decryptbypassphrase-transact-sql"
+    },
+    {
+      "name": "DEGREES",
+      "kind": "function",
+      "summary": "弧度換成角度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT DEGREES(PI())   -- 180"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/degrees-transact-sql"
+    },
+    {
+      "name": "ENCRYPTBYPASSPHRASE",
+      "kind": "function",
+      "summary": "用密語加密成 varbinary(8000)；密語自己保管。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ENCRYPTBYPASSPHRASE('key', 'abc')   -- 每次執行的結果都不一樣"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/encryptbypassphrase-transact-sql"
+    },
+    {
+      "name": "FORMATMESSAGE",
+      "kind": "function",
+      "summary": "照樣板填入參數組出字串，類似 RAISERROR 格式化但不會丟出錯誤；印出 % 要寫 %%。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT FORMATMESSAGE('第 %d 本：%s', 3, 'Loan')   -- '第 3 本：Loan'"
+        },
+        {
+          "id": "literal-percent",
+          "title": "印出實際的 %",
+          "sql": "SELECT FORMATMESSAGE('折扣 100%%')   -- '折扣 100%'"
+        },
+        {
+          "id": "multiple-placeholders",
+          "title": "多個佔位符依序對應",
+          "sql": "SELECT FORMATMESSAGE('%s 借 %d 本', 'Lib_Reader001', 3)"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/formatmessage-transact-sql"
+    },
+    {
+      "name": "GREATEST",
+      "kind": "function",
+      "summary": "回傳最大的那一個值，NULL 一律忽略；2022 起才有。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT GREATEST(3, 7, NULL)   -- 7"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/logical-functions-greatest-transact-sql"
+    },
+    {
+      "name": "HASHBYTES",
+      "kind": "function",
+      "summary": "算雜湊值；2016 起只剩 SHA2_256 與 SHA2_512 值得用。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT HASHBYTES('SHA2_256', N'abc')   -- 32 個位元組"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/hashbytes-transact-sql"
+    },
+    {
+      "name": "HAS_PERMS_BY_NAME",
+      "kind": "function",
+      "summary": "目前這個登入對某個物件有沒有指定的權限。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT HAS_PERMS_BY_NAME('dbo.Loan', 'OBJECT', 'SELECT')   -- 1 代表有"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/has-perms-by-name-transact-sql"
+    },
+    {
+      "name": "HOST_ID",
+      "kind": "function",
+      "summary": "用戶端的處理序識別碼，配合 HOST_NAME 分得出同一台機器上的連線。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT HOST_ID()   -- 用戶端應用程式的處理序編號"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/host-id-transact-sql"
+    },
+    {
+      "name": "IDENT_INCR",
+      "kind": "function",
+      "summary": "識別資料行的遞增量。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IDENT_INCR('dbo.Loan')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/ident-incr-transact-sql"
+    },
+    {
+      "name": "IDENT_SEED",
+      "kind": "function",
+      "summary": "識別資料行的種子值，也就是第一列拿到的那個值。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IDENT_SEED('dbo.Loan')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/ident-seed-transact-sql"
+    },
+    {
+      "name": "INDEX_COL",
+      "kind": "function",
+      "summary": "索引第幾個鍵資料行的名稱。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT INDEX_COL('dbo.Loan', 1, 1)   -- 叢集索引的第一個鍵資料行"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/index-col-transact-sql"
+    },
+    {
+      "name": "INDEXPROPERTY",
+      "kind": "function",
+      "summary": "查索引的屬性，例如 IsClustered、IsUnique。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT INDEXPROPERTY(OBJECT_ID('dbo.Loan'), 'PK_Loan', 'IsClustered')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/indexproperty-transact-sql"
+    },
+    {
+      "name": "IS_MEMBER",
+      "kind": "function",
+      "summary": "目前的使用者是不是這個資料庫角色或 Windows 群組的成員。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IS_MEMBER('db_owner')   -- 1 代表是"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/is-member-transact-sql"
+    },
+    {
+      "name": "IS_OBJECTSIGNED",
+      "kind": "function",
+      "summary": "這個物件有沒有被指定的憑證或非對稱金鑰簽署。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IS_OBJECTSIGNED('OBJECT', OBJECT_ID('dbo.usp_Loan'), 'certificate', @thumbprint)"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/is-objectsigned-transact-sql"
+    },
+    {
+      "name": "IS_ROLEMEMBER",
+      "kind": "function",
+      "summary": "指定的主體是不是這個資料庫角色的成員。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IS_ROLEMEMBER('db_datareader')   -- 1 代表是"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/is-rolemember-transact-sql"
+    },
+    {
+      "name": "IS_SRVROLEMEMBER",
+      "kind": "function",
+      "summary": "指定的登入是不是這個伺服器角色的成員。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT IS_SRVROLEMEMBER('sysadmin')   -- 1 代表是"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/is-srvrolemember-transact-sql"
+    },
+    {
+      "name": "JSON_ARRAY",
+      "kind": "function",
+      "summary": "組出 JSON 陣列字串；2022 起才有。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT JSON_ARRAY(1, 'a', NULL)   -- '[1,\"a\"]'，NULL 預設略過"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/json-array-transact-sql"
+    },
+    {
+      "name": "JSON_OBJECT",
+      "kind": "function",
+      "summary": "組出 JSON 物件字串；2022 起才有。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT JSON_OBJECT('a': 1, 'b': NULL)   -- '{\"a\":1}'，NULL 預設略過"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/json-object-transact-sql"
+    },
+    {
+      "name": "JSON_PATH_EXISTS",
+      "kind": "function",
+      "summary": "路徑存不存在，回傳 1 或 0；2022 起才有。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT JSON_PATH_EXISTS('{\"a\":1}', '$.a')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/json-path-exists-transact-sql"
+    },
+    {
+      "name": "LEAST",
+      "kind": "function",
+      "summary": "回傳最小的那一個值，NULL 一律忽略；2022 起才有。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT LEAST(3, 7, NULL)   -- 3"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/logical-functions-least-transact-sql"
+    },
+    {
+      "name": "OBJECT_DEFINITION",
+      "kind": "function",
+      "summary": "模組的定義本文；加密過或沒有權限時回傳 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.usp_Loan'))   -- CREATE PROCEDURE ..."
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/object-definition-transact-sql"
+    },
+    {
+      "name": "OBJECTPROPERTY",
+      "kind": "function",
+      "summary": "查物件的屬性，例如 IsTable、TableHasPrimaryKey。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT OBJECTPROPERTY(OBJECT_ID('dbo.Loan'), 'TableHasPrimaryKey')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/objectproperty-transact-sql"
+    },
+    {
+      "name": "OBJECTPROPERTYEX",
+      "kind": "function",
+      "summary": "與 OBJECTPROPERTY 相同，但回傳 sql_variant，屬性也更多。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT OBJECTPROPERTYEX(OBJECT_ID('dbo.Loan'), 'BaseType')   -- 'U'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/objectpropertyex-transact-sql"
+    },
+    {
+      "name": "OBJECT_SCHEMA_NAME",
+      "kind": "function",
+      "summary": "由 object_id 反查結構描述名稱。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT OBJECT_SCHEMA_NAME(OBJECT_ID('dbo.Loan'))   -- 'dbo'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/object-schema-name-transact-sql"
+    },
+    {
+      "name": "ORIGINAL_LOGIN",
+      "kind": "function",
+      "summary": "最初連進來的那個登入，EXECUTE AS 切換過也不會變。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT ORIGINAL_LOGIN()   -- 切換身分之後仍然是原本那個登入"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/original-login-transact-sql"
+    },
+    {
+      "name": "PARSENAME",
+      "kind": "function",
+      "summary": "取四段式名稱的第幾段；1 是最右邊的物件名稱。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT PARSENAME('LibArchive.dbo.Loan', 2)   -- 'dbo'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/parsename-transact-sql"
+    },
+    {
+      "name": "PERCENTILE_CONT",
+      "kind": "function",
+      "summary": "百分位數，落在兩列之間時內插；中位數就是 0.5。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CopyNo) OVER () FROM dbo.Loan"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/percentile-cont-transact-sql"
+    },
+    {
+      "name": "PERCENTILE_DISC",
+      "kind": "function",
+      "summary": "百分位數，一定回傳資料裡真的存在的值，不內插。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY CopyNo) OVER () FROM dbo.Loan"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/percentile-disc-transact-sql"
+    },
+    {
+      "name": "PERCENT_RANK",
+      "kind": "function",
+      "summary": "相對排名，值落在 0 到 1；第一列一定是 0。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT PERCENT_RANK() OVER (ORDER BY LoanDate) FROM dbo.Loan   -- (排名-1)/(列數-1)"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/percent-rank-transact-sql"
+    },
+    {
+      "name": "PI",
+      "kind": "function",
+      "summary": "圓周率。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT PI()   -- 3.14159265358979"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/pi-transact-sql"
+    },
+    {
+      "name": "RADIANS",
+      "kind": "function",
+      "summary": "角度換成弧度；整數引數會得到截斷過的整數。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT RADIANS(180.0)   -- 3.141592653589793"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/radians-transact-sql"
+    },
+    {
+      "name": "SCHEMA_ID",
+      "kind": "function",
+      "summary": "結構描述的識別碼，省略引數就是預設結構描述。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SCHEMA_ID('dbo')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/schema-id-transact-sql"
+    },
+    {
+      "name": "SERVERPROPERTY",
+      "kind": "function",
+      "summary": "查執行個體的屬性，例如 ProductVersion、Edition。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SERVERPROPERTY('ProductVersion')   -- '16.0.4165.4'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/serverproperty-transact-sql"
+    },
+    {
+      "name": "SESSION_CONTEXT",
+      "kind": "function",
+      "summary": "讀這個工作階段用 sp_set_session_context 存的值。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SESSION_CONTEXT(N'ReaderId')   -- 沒設定過就是 NULL"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/session-context-transact-sql"
+    },
+    {
+      "name": "SIN",
+      "kind": "function",
+      "summary": "正弦，引數是弧度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SIN(0)   -- 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sin-transact-sql"
+    },
+    {
+      "name": "SMALLDATETIMEFROMPARTS",
+      "kind": "function",
+      "summary": "用各個部分組出 smalldatetime，精確度只到分鐘。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SMALLDATETIMEFROMPARTS(2026, 9, 8, 21, 30)   -- 2026-09-08 21:30:00"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/smalldatetimefromparts-transact-sql"
+    },
+    {
+      "name": "SQL_VARIANT_PROPERTY",
+      "kind": "function",
+      "summary": "查 sql_variant 值的基底型別、精確度這些屬性。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SQL_VARIANT_PROPERTY(CAST(1 AS sql_variant), 'BaseType')   -- 'int'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/sql-variant-property-transact-sql"
+    },
+    {
+      "name": "STATS_DATE",
+      "kind": "function",
+      "summary": "統計資料上一次更新的時間。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT STATS_DATE(OBJECT_ID('dbo.Loan'), 1)   -- 第一份統計資料的時間"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/stats-date-transact-sql"
+    },
+    {
+      "name": "STRING_ESCAPE",
+      "kind": "function",
+      "summary": "逸出特殊字元，type 目前只支援 json。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT STRING_ESCAPE('a/b', 'json')   -- 'a\\/b'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/string-escape-transact-sql"
+    },
+    {
+      "name": "SUSER_ID",
+      "kind": "function",
+      "summary": "登入的識別碼，省略引數就是目前這個連線的登入。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SUSER_ID()   -- 目前登入的 principal_id"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/suser-id-transact-sql"
+    },
+    {
+      "name": "SUSER_NAME",
+      "kind": "function",
+      "summary": "由登入識別碼反查名稱；SUSER_SNAME 吃的是 SID。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SUSER_NAME(1)   -- 'sa'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/suser-name-transact-sql"
+    },
+    {
+      "name": "SUSER_SID",
+      "kind": "function",
+      "summary": "登入的 SID，省略引數就是目前這個連線的登入。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT SUSER_SID('sa')   -- 0x01"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/suser-sid-transact-sql"
+    },
+    {
+      "name": "TAN",
+      "kind": "function",
+      "summary": "正切，引數是弧度。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TAN(0)   -- 0"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/tan-transact-sql"
+    },
+    {
+      "name": "TIMEFROMPARTS",
+      "kind": "function",
+      "summary": "用各個部分組出 time，最後一個引數是小數秒位數。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TIMEFROMPARTS(21, 30, 0, 0, 0)   -- 21:30:00"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/timefromparts-transact-sql"
+    },
+    {
+      "name": "TYPE_ID",
+      "kind": "function",
+      "summary": "型別的識別碼，查不到回傳 NULL。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TYPE_ID('nvarchar')   -- 231"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/type-id-transact-sql"
+    },
+    {
+      "name": "TYPE_NAME",
+      "kind": "function",
+      "summary": "由型別識別碼反查名稱。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TYPE_NAME(231)   -- 'nvarchar'"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/type-name-transact-sql"
+    },
+    {
+      "name": "TYPEPROPERTY",
+      "kind": "function",
+      "summary": "查型別的屬性，例如 Precision、Scale、AllowsNull。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT TYPEPROPERTY('int', 'Precision')   -- 10"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/typeproperty-transact-sql"
+    },
+    {
+      "name": "USER_ID",
+      "kind": "function",
+      "summary": "資料庫使用者的識別碼，省略引數就是目前的使用者。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "SELECT USER_ID('dbo')   -- 1"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/user-id-transact-sql"
+    },
+    {
+      "name": "XACT_STATE",
+      "kind": "function",
+      "summary": "交易狀態：1 可以認可、-1 只能回復、0 沒有交易。",
+      "examples": [
+        {
+          "id": "basic",
+          "title": "基本用法",
+          "sql": "IF XACT_STATE() = -1 ROLLBACK TRANSACTION   -- CATCH 裡先問這一句"
+        }
+      ],
+      "docsUrl": "https://learn.microsoft.com/sql/t-sql/functions/xact-state-transact-sql"
+    }
+  ]
+}

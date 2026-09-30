@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using SqlAssist.Core.Localization;
 using SqlAssist.Metadata.Formatting;
 
 namespace SqlAssist.Metadata.Model;
@@ -19,13 +20,15 @@ public sealed class SqlObjectDetail
         IReadOnlyList<SqlColumnInfo>? columns = null,
         IReadOnlyList<SqlParameterInfo>? parameters = null,
         string? definition = null,
-        string? description = null)
+        string? description = null,
+        SqlObjectImplementation implementation = SqlObjectImplementation.TransactSql)
     {
         Object = objectInfo ?? throw new ArgumentNullException(nameof(objectInfo));
         Columns = columns ?? NoColumns;
         Parameters = parameters ?? NoParameters;
         Definition = definition;
         Description = description;
+        Implementation = implementation;
     }
 
     public SqlObjectInfo Object { get; }
@@ -59,6 +62,16 @@ public sealed class SqlObjectDetail
     /// 那裡是要寫回 <c>sp_addextendedproperty</c> 的整批屬性。
     /// </remarks>
     public string? Description { get; }
+
+    /// <summary>
+    /// 這一次查到的物件本文用什麼寫成。
+    /// </summary>
+    /// <remarks>
+    /// 放在明細而不是 <see cref="SqlObjectInfo"/> 上：物件描述有好幾條路建出來（建議清單、
+    /// SQL Search、父物件），各自都要記得帶型別代碼的話，漏掉的那一條會安靜地退回
+    /// 「加密或沒有權限」。明細只有一條載入路徑，由定義查詢自己帶回來。
+    /// </remarks>
+    public SqlObjectImplementation Implementation { get; }
 
     /// <summary>
     /// 組出給預覽窗格與滑鼠停留提示使用的文字。
@@ -103,7 +116,7 @@ public sealed class SqlObjectDetail
     private string BuildColumnPreview()
     {
         var builder = new StringBuilder();
-        builder.Append(Object.Kind.ToDisplayName()).Append(' ').AppendLine(Object.QualifiedName);
+        builder.AppendLine(Object.Kind.ToDisplayTitle(Object.QualifiedName));
 
         if (Columns.Count == 0)
         {
@@ -128,7 +141,7 @@ public sealed class SqlObjectDetail
     private string BuildSignaturePreview()
     {
         var builder = new StringBuilder();
-        builder.Append(Object.Kind.ToDisplayName()).Append(' ').AppendLine(Object.QualifiedName);
+        builder.AppendLine(Object.Kind.ToDisplayTitle(Object.QualifiedName));
 
         if (Parameters.Count == 0)
         {
@@ -136,7 +149,7 @@ public sealed class SqlObjectDetail
         }
 
         builder.AppendLine();
-        builder.AppendLine("Parameters");
+        builder.AppendLine(SqlKindText.Parameters);
 
         foreach (var parameter in Parameters)
         {

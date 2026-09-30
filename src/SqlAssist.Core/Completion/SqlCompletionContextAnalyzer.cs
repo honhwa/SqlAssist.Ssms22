@@ -23,11 +23,26 @@ public static class SqlCompletionContextAnalyzer
 
         var tokenStart = FindTokenStart(textBeforeCaret);
 
-        if (!SqlLexicalContext.IsCode(textBeforeCaret, tokenStart))
+        if (SqlLexicalContext.IsCode(textBeforeCaret, tokenStart))
         {
-            return new SqlCompletionContext(false, tokenStart, string.Empty, CompletionTarget.Any);
+            // 片語之後的片段要把開頭的字接上原文再問一次（SuggestionContextFilter），只有那時用得到原文。
+            var context = AnalyzeToken(textBeforeCaret, tokenStart);
+
+            return context.ClausePhrase is null ? context : context.WithTextBeforeCaret(textBeforeCaret);
         }
 
+        // 字串與註解裡什麼都不補；方括號裡是例外——那裡放的是名稱，左方括號本身就是
+        // 名稱的第一個字元。從左方括號起算照一般的名稱分析，前方的位置、限定字與
+        // 目標都與沒打方括號時相同，差別只在清單與提交（見 SqlCompletionContext.Bracketed）。
+        var bracket = SqlIdentifier.FindOpenBracket(textBeforeCaret);
+
+        return bracket < 0
+            ? Inert(tokenStart)
+            : AnalyzeToken(textBeforeCaret, bracket).AsBracketed();
+    }
+
+    private static SqlCompletionContext AnalyzeToken(string textBeforeCaret, int tokenStart)
+    {
         // 小老鼠開頭的詞元不必看位置，也不必看前導關鍵字：它要的東西只有兩種，
         // 而兩種都與周圍的文法無關。
         if (tokenStart < textBeforeCaret.Length && textBeforeCaret[tokenStart] == '@')
@@ -35,15 +50,14 @@ public static class SqlCompletionContextAnalyzer
             return AnalyzeVariable(textBeforeCaret, tokenStart);
         }
 
-        // 數字開頭的詞元是一個數值常值：T-SQL 的一般識別字不能以數字開頭，
+        // 數值常值裡沒有東西可補：T-SQL 的一般識別字不能以數字開頭，
         // 所以清單裡沒有一項會是對的。位置分析在這裡也幫不上忙——運算子之後
         // 一律是 Any，於是 SET Quantity = Quantity - 10 打到 10 的時候整個目錄
         // 進場，模糊比對撈回 LOG10，而使用者順手按下 Enter 就把數字換成了
-        // 一個函式名稱。擋數值常值與 SqlCompletionTriggers.IsIdentifierLike
-        // 不讓 1.5 的點號彈出物件清單是同一條理由。
-        if (tokenStart < textBeforeCaret.Length && char.IsDigit(textBeforeCaret[tokenStart]))
+        // 一個函式名稱。
+        if (IsInNumericLiteral(textBeforeCaret, tokenStart))
         {
-            return new SqlCompletionContext(false, tokenStart, string.Empty, CompletionTarget.Any);
+            return Inert(tokenStart);
         }
 
         // 限定字之後（dbo.| 或 u.|）要的是名稱，關鍵字在那裡一個都不該出現，
@@ -53,19 +67,47 @@ public static class SqlCompletionContextAnalyzer
         // 各自再分析一次的話，每按一鍵就把游標前的整份指令碼掃兩遍。
         var textBeforeToken = textBeforeCaret.Substring(0, tokenStart);
         var tokens = SqlTokenizer.Tokenize(textBeforeToken);
-        var keywordPosition = SqlKeywordPositionAnalyzer.Analyze(tokens, textBeforeToken);
-        var prefix = textBeforeCaret.Substring(tokenStart);
+
+        if (QualifiesScalarVariable(textBeforeCaret, tokenStart, tokens))
+        {
+            return Inert(tokenStart);
+        }
+
+        var caret = SqlKeywordPositionAnalyzer.Analyze(tokens, textBeforeToken);
+        var keywordPosition = caret.Keywords;
+        var prefix = SqlIdentifier.UnquoteOpening(textBeforeCaret.Substring(tokenStart));
         var beforeToken = textBeforeToken.TrimEnd();
         var qualifierPath = ExtractQualifierPath(
             beforeToken,
             out var beforeQualifier,
             out var qualifierStart);
 
+        // 封閉的子句片語排在其他封閉清單之前：片語比對的是游標前的整條尾巴，
+        // CREATE INDEX … WITH ( 是索引選項，只看「WITH 緊接著左括號」會當成資料表提示。
+        // 名字那一格也在它之後問：片語說得出這裡要什麼，就不是使用者要取的名字。
+        if (caret.Phrase is { IsClosed: true } closedPhrase)
+        {
+            return new SqlCompletionContext(
+                SqlCompletionSlot.Grammar,
+                tokenStart,
+                prefix,
+                CompletionTarget.ClauseKeyword,
+                keywordPosition: keywordPosition,
+                clausePhrase: closedPhrase);
+        }
+
         // 引數與提示的封閉清單同樣排在「這裡不接受任何關鍵字」之前：
         // 那幾個位置除了清單上的字沒有別的東西是對的。
         if (SqlArgumentPosition.TryResolve(tokens, out var argumentTarget))
         {
-            return new SqlCompletionContext(isValid: true, tokenStart, prefix, argumentTarget);
+            return new SqlCompletionContext(SqlCompletionSlot.Grammar, tokenStart, prefix, argumentTarget);
+        }
+
+        // 名單只有伺服器知道的那幾種（定序、語言、時區）同理；片語認得出 SET LANGUAGE 與
+        // AT TIME ZONE，但剖析器在那一格什麼名稱都收，片語給不出字，也就不封閉。
+        if (SqlInstanceList.TryResolve(textBeforeToken, tokens, out var instanceList))
+        {
+            return new SqlCompletionContext(SqlCompletionSlot.Grammar, tokenStart, prefix, instanceList.Target);
         }
 
         // 型別的位置要排在「這裡不接受任何關鍵字」之前問：CAST(x AS | 在位置分析
@@ -73,24 +115,32 @@ public static class SqlCompletionContextAnalyzer
         //
         // 限定字要帶著走：DECLARE @t dbo.| 只該列出 dbo 的自訂型別，
         // 而內建型別沒有結構描述，會被結構描述過濾自己擋掉——dbo.INT 不是東西。
-        if (SqlDataTypePosition.IsDataTypeSlot(tokens))
+        // 片語也帶著：資料行定義裡的 PERIOD 在剖析器眼中也是資料行名稱，之後的 FOR 由片語給。
+        if (SqlDataTypePosition.IsDataTypeSlot(tokens, textBeforeToken))
         {
             return new SqlCompletionContext(
-                isValid: true,
+                SqlCompletionSlot.Grammar,
                 tokenStart,
                 prefix,
                 CompletionTarget.DataType,
                 qualifierPath,
-                qualifierStart: qualifierStart);
+                qualifierStart: qualifierStart,
+                clausePhrase: caret.Phrase);
         }
 
         // 這個位置文法上只能是使用者自己取的名字：衍生資料表的別名、AS 之後的別名、
-        // 變數與參數的名稱。清單裡沒有一項會是對的，而彈出來的唯一效果是使用者
-        // 順手按下 Enter，剛打的 a 被換成 ALTER PROCEDURE——那是要按復原才救得回來
-        // 的損失，而少一份清單只是少了幾個字母的補字。
-        if (keywordPosition == SqlKeywordPosition.None)
+        // CREATE 的物件名稱、CTE 名稱、SELECT … INTO 的新資料表。底下的目標判斷都在問
+        // 「要列哪一類既有物件」，對新名字沒有意義——CREATE PROCEDURE dbo. 的限定字
+        // 也一起丟掉，那裡沒有要查的東西。可能是名字的那一格照常往下走：清單以軟選開啟，
+        // 列什麼仍由位置決定。
+        if (caret.Slot == SqlCompletionSlot.Name)
         {
-            return new SqlCompletionContext(false, tokenStart, string.Empty, CompletionTarget.Any);
+            return new SqlCompletionContext(
+                SqlCompletionSlot.Name,
+                tokenStart,
+                prefix,
+                CompletionTarget.Any,
+                keywordPosition: keywordPosition);
         }
 
         // CREATE INDEX ix ON | 的 ON 後面是資料表，JOIN b ON | 的 ON 後面是述詞。
@@ -103,7 +153,7 @@ public static class SqlCompletionContextAnalyzer
         if (ddlOn >= 0)
         {
             return new SqlCompletionContext(
-                isValid: true,
+                caret.Slot,
                 tokenStart,
                 prefix,
                 CompletionTarget.DataSource,
@@ -112,13 +162,22 @@ public static class SqlCompletionContextAnalyzer
                 CompletionIntent.Reference,
                 columnSources: null,
                 keywordPosition,
-                qualifierStart: qualifierStart);
+                qualifierStart: qualifierStart,
+                clausePhrase: caret.Phrase);
         }
 
-        var target = DetermineTarget(
-            qualifierPath is null ? beforeToken : beforeQualifier,
-            out var targetKeywordStart,
-            out var intent);
+        // 目標問的是「要哪一類名稱」；位置說這一格寫不出任何名稱時問題不成立。只看前一兩個字面值的
+        // DetermineTarget 會把 AFTER INSERT, UPDATE 的 UPDATE 當成動詞，把整份關鍵字擋掉。
+        var targetKeywordStart = -1;
+        var intent = CompletionIntent.Reference;
+        var target = keywordPosition.AcceptsNames()
+            ? DetermineTarget(
+                qualifierPath is null ? beforeToken : beforeQualifier,
+                tokens,
+                textBeforeToken,
+                out targetKeywordStart,
+                out intent)
+            : CompletionTarget.Any;
 
         // FROM a, | 與 FROM a, LibArchive.| 都還在同一個資料來源清單裡，而
         // DetermineTarget 只認得游標前一、兩個詞元的字面值——那裡只有一個逗號。
@@ -134,27 +193,14 @@ public static class SqlCompletionContextAnalyzer
             target = CompletionTarget.DataSource;
         }
 
-        // 述詞起點也是一個「空前綴也要參與」的位置：ON 之後、WHERE 之後、
-        // 打完 AND 之後，使用者要的是欄位——而配對鍵更是他正要接的那幾筆。
-        // 少了這一條，空前綴時目標停在 Any，整份不參與，清單根本不出現。
-        //
-        // 有限定字的不算：那是欄位路徑，交給限定字解析（target 會是 Column）。
-        if (target == CompletionTarget.Any &&
-            qualifierPath is null &&
-            SqlKeywordPositionAnalyzer.IsPredicateStart(keywordPosition))
-        {
-            target = CompletionTarget.Predicate;
-        }
-
-        // 接不接受別名問的是「游標前面那幾個字是什麼」，與目標是什麼無關：
-        // INSERT INTO 與 DROP TABLE 的目標同樣是 DataSource，文法上卻都不接受別名。
-        // 有路徑時看的是路徑之前的文字，因為「那幾段限定字」本身已經取代了名稱位置。
-        var mayAppendTableAlias = IsTableSourceNameSlot(qualifierPath is null ? beforeToken : beforeQualifier);
-
-        var isValid = prefix.Length > 0 || target != CompletionTarget.Any || qualifierPath is not null;
+        // UPDATE t SET |、INSERT INTO t (| 要的是 t 的資料行：那是省略掉的限定字，
+        // 與 t.| 一樣只記下寫了什麼，別名要到看得見游標後方的全文分析才解得開。
+        var columnOwner = target == CompletionTarget.Any && qualifierPath is null
+            ? SqlColumnOwner.Find(tokens, keywordPosition)
+            : null;
 
         return new SqlCompletionContext(
-            isValid,
+            caret.Slot,
             tokenStart,
             prefix,
             target,
@@ -164,7 +210,9 @@ public static class SqlCompletionContextAnalyzer
             columnSources: null,
             keywordPosition,
             qualifierStart: qualifierStart,
-            mayAppendTableAlias: mayAppendTableAlias);
+            clausePhrase: caret.Phrase,
+            startsBatch: caret.StartsBatch,
+            columnOwner: columnOwner);
     }
 
     /// <summary>
@@ -192,8 +240,8 @@ public static class SqlCompletionContextAnalyzer
 
         var context = Analyze(sql.Substring(0, caretPosition));
 
-        // 游標在字串或註解裡，這一輪什麼都不建議，敘述有哪些資料來源也就無關。
-        if (!context.IsValid)
+        // 游標在字串、註解或名字那一格裡，這一輪什麼都不建議，敘述有哪些資料來源也就無關。
+        if (!SqlCompletionPolicy.OffersItems(context.Slot))
         {
             return context;
         }
@@ -219,25 +267,43 @@ public static class SqlCompletionContextAnalyzer
                 SqlScriptTableCollector.Collect(tokens)));
         }
 
-        // 定序只要「這份指令碼裡出現過哪些 COLLATE」，敘述有哪些資料來源與欄位
-        // 都無關，底下整趟範圍解析可以省下來。
-        if (context.Target == CompletionTarget.Collation)
+        // 執行個體名單與游標只要「這份指令碼寫過哪些」（COLLATE 之後、DECLARE c CURSOR），
+        // 敘述有哪些資料來源與欄位都無關，底下整趟範圍解析可以省下來。
+        if (SqlInstanceList.For(context.Target) is { } instanceList)
         {
-            return context.WithScriptSources(SqlScriptCollationSuggestions.Create(tokens));
+            return context.WithScriptSources(instanceList.ScriptValues(sql, tokens, caretPosition));
         }
 
-        var scope = SqlScopeAnalyzer.Analyze(tokens, caretPosition);
-        var resolver = new SqlColumnSourceResolver(tokens);
+        if (context.Target == CompletionTarget.Cursor)
+        {
+            return context.WithScriptSources(SqlScriptObjectSuggestions.Cursors(tokens));
+        }
+
+        var scope = SqlScopeAnalyzer.Analyze(sql, tokens, caretPosition);
+        var resolver = new SqlColumnSourceResolver(sql, tokens);
         var withScope = context.WithScopeSources(resolver.ResolveAvailable(scope.Tables));
+
+        if (context.ColumnOwner is { } owner && ResolveColumnOwner(owner, scope, resolver) is { } ownerColumns)
+        {
+            return withScope.AsColumnsOf(ownerColumns);
+        }
 
         if (context.QualifierPath is null)
         {
-            // CTE、暫存資料表與資料表變數只存在於這份指令碼裡，中繼資料查不到它們。
-            // 只在真的要列資料來源時才掃：這條路徑在每一次按鍵上，
-            // 而 FROM、JOIN 之後才是唯一用得到這一份的位置。
-            return context.Target == CompletionTarget.DataSource
-                ? withScope.WithScriptSources(SqlScriptDataSourceSuggestions.Create(tokens, resolver))
-                : withScope;
+            // CTE、暫存資料表、資料表變數與暫存程序只存在於這份指令碼裡，中繼資料查不到它們。
+            // 只在目標真的要這一類時才掃：這條路徑在每一次按鍵上。
+            //
+            // 別名也只存在於這一句裡，而且與欄位同格：欄位列得出來的地方就接得了
+            // 限定它們的 a.，位置過濾對兩者是同一條（AcceptsNames）。
+            return context.Target switch
+            {
+                CompletionTarget.DataSource =>
+                    withScope.WithScriptSources(SqlScriptObjectSuggestions.DataSources(tokens, resolver)),
+                CompletionTarget.Procedure =>
+                    withScope.WithScriptSources(SqlScriptObjectSuggestions.Procedures(tokens)),
+                CompletionTarget.Any => withScope.WithScriptSources(SqlScopeAliasSuggestions.Create(scope)),
+                _ => withScope
+            };
         }
 
         // 前方關鍵字已經指定了物件類別（FROM、JOIN、EXEC…），代表游標正在輸入
@@ -266,6 +332,28 @@ public static class SqlCompletionContextAnalyzer
     }
 
     /// <summary>
+    /// 攤平文法指定的資料行所屬資料表；解不開時回傳 null，清單照一般位置列。
+    /// </summary>
+    /// <remarks>
+    /// 與限定字同一條解法：單段的名稱先當別名問敘述範圍（<c>UPDATE l SET … FROM dbo.Loan l</c>），
+    /// 問不到才是它自己。
+    /// </remarks>
+    private static IReadOnlyList<SqlColumnSource>? ResolveColumnOwner(
+        SqlTableReference owner,
+        SqlStatementScope scope,
+        SqlColumnSourceResolver resolver)
+    {
+        var table = owner.SchemaName is null &&
+            owner.DatabaseName is null &&
+            owner.ServerName is null &&
+            scope.TryResolve(owner.ObjectName, out var found)
+                ? found
+                : owner;
+
+        return resolver.Resolve(table);
+    }
+
+    /// <summary>
     /// 游標停在一個小老鼠開頭的詞元上。
     /// </summary>
     /// <remarks>
@@ -284,7 +372,7 @@ public static class SqlCompletionContextAnalyzer
         if (prefix.Length >= 2 && prefix[1] == '@')
         {
             return new SqlCompletionContext(
-                isValid: true,
+                SqlCompletionSlot.Grammar,
                 tokenStart,
                 prefix,
                 CompletionTarget.GlobalVariable);
@@ -292,11 +380,12 @@ public static class SqlCompletionContextAnalyzer
 
         // 只吃詞元之前那一段：正在打的名字本身當然不算數，而這一段的詞法分析
         // 與一般位置的 SqlKeywordPositionAnalyzer 是同一個代價。
-        var tokens = SqlTokenizer.Tokenize(textBeforeCaret.Substring(0, tokenStart));
+        var textBeforeToken = textBeforeCaret.Substring(0, tokenStart);
+        var tokens = SqlTokenizer.Tokenize(textBeforeToken);
 
         if (SqlScriptVariableSuggestions.IsDeclarationSlot(tokens, tokens.Count))
         {
-            return new SqlCompletionContext(false, tokenStart, string.Empty, CompletionTarget.Any);
+            return new SqlCompletionContext(SqlCompletionSlot.Name, tokenStart, prefix, CompletionTarget.Any);
         }
 
         // INSERT INTO @rows 與 MERGE INTO @rows 提交之後要展開的是整句，與
@@ -306,8 +395,12 @@ public static class SqlCompletionContextAnalyzer
         //
         // 只收資料來源位置：EXEC dbo.p @ 的 @ 後面是引數而不是那句話的目標，
         // 在那裡帶著 ExecuteCall 會讓提交去展開一個變數。
-        var beforeToken = textBeforeCaret.Substring(0, tokenStart).TrimEnd();
-        var statementTarget = DetermineTarget(beforeToken, out var keywordStart, out var intent);
+        var statementTarget = DetermineTarget(
+            textBeforeToken.TrimEnd(),
+            tokens,
+            textBeforeToken,
+            out var keywordStart,
+            out var intent);
 
         if (statementTarget != CompletionTarget.DataSource)
         {
@@ -317,14 +410,63 @@ public static class SqlCompletionContextAnalyzer
 
         // EXEC dbo.usp_Renew @| 的位置除了他自己的變數，還要列出那個程序的參數。
         // 參數在中繼資料裡，這裡只記下他在呼叫誰。
+        var executedModule = SqlExecutedModule.Find(tokens);
+
         return new SqlCompletionContext(
-            isValid: true,
+            SqlCompletionSlot.Grammar,
             tokenStart,
             prefix,
             CompletionTarget.Variable,
             targetKeywordStart: keywordStart,
             intent: intent,
-            executedModule: SqlExecutedModule.Find(tokens));
+            executedModule: executedModule,
+            expectsScalar: ExpectsScalar(tokens, textBeforeToken, statementTarget, executedModule));
+    }
+
+    /// <summary>
+    /// 小老鼠這一格只收純量運算式，見 <see cref="SqlCompletionContext.ExpectsScalar"/>。
+    /// </summary>
+    /// <remarks>
+    /// 列的是整張資料表放得進來的位置，其餘一律算純量。反過來列純量位置的話
+    /// 永遠列不完：選取清單、WHERE、ON、SET 的右邊、CASE、運算子之後、函式引數……
+    /// 而漏掉的那一格就是一行執行不了的 SQL。
+    /// </remarks>
+    private static bool ExpectsScalar(
+        IReadOnlyList<SqlToken> tokens,
+        string textBeforeToken,
+        CompletionTarget statementTarget,
+        SqlExecutedModule? executedModule)
+    {
+        // FROM、JOIN、INTO、UPDATE、MERGE、USING 與 APPLY，以及 EXEC 的引數。
+        if (statementTarget is CompletionTarget.DataSource or CompletionTarget.TableFunction ||
+            executedModule is not null)
+        {
+            return false;
+        }
+
+        // DELETE @rows 與 INSERT @rows 省略了 FROM／INTO。DetermineTarget 不認這兩個字
+        // 單獨出現：一般位置裡它們後面要列的是 FROM、INTO 這些關鍵字，不是資料表。
+        if (tokens.Count > 0 &&
+            (tokens[tokens.Count - 1].IsKeyword("DELETE") || tokens[tokens.Count - 1].IsKeyword("INSERT")))
+        {
+            return false;
+        }
+
+        if (ContinuesDataSourceList(tokens, SqlKeywordPositionAnalyzer.Analyze(tokens, textBeforeToken).Keywords))
+        {
+            return false;
+        }
+
+        // 使用者自訂模組的引數可能是資料表值參數（dbo.fn(@rows)），內建函式的不會。
+        // 名稱不在內建目錄裡就當成自訂模組：包錯的 dbo.fn([@rows]) 會指到一個叫
+        // @rows 的資料行，而使用者要限定欄位時自己補方括號只多兩個字。
+        var call = SqlCallSignature.Resolve(textBeforeToken, textBeforeToken.Length);
+
+        return call is null ||
+            (!call.IsQualified &&
+             SqlFunctionCatalog.TryGetSignature(
+                 textBeforeToken.Substring(call.NameStart, call.NameEnd - call.NameStart),
+                 out _));
     }
 
     /// <summary>
@@ -358,8 +500,13 @@ public static class SqlCompletionContextAnalyzer
     /// <summary>
     /// 依游標前方的關鍵字判斷應該建議哪一類物件，並回報該關鍵字的起點。
     /// </summary>
+    /// <param name="text"><paramref name="textBeforeToken"/> 去掉尾端空白，或再剝掉限定字的那一段。</param>
+    /// <param name="tokens"><paramref name="textBeforeToken"/> 的詞元：FROM 要問它所屬的動詞。</param>
+    /// <param name="textBeforeToken">游標前、不含正在輸入的詞元的文字。</param>
     private static CompletionTarget DetermineTarget(
         string text,
+        IReadOnlyList<SqlToken> tokens,
+        string textBeforeToken,
         out int keywordStart,
         out CompletionIntent intent)
     {
@@ -367,6 +514,17 @@ public static class SqlCompletionContextAnalyzer
         // DROP TRIGGER、DROP SEQUENCE 各寫一條加長版比對。只砍尾端，前面每個詞元的
         // 位置都沒有位移，因此底下算出來的 keywordStart 仍然指得回原文。
         text = TrimTrailingIfExists(text);
+
+        // 游標名稱那一格：OPEN、CLOSE、DEALLOCATE、FETCH [… FROM]、WHERE CURRENT OF 之後，中間可以夾 GLOBAL。
+        // 判準與位置分析同一條（SqlStatementBoundaries.IntroducesCursor）；排在 FROM 之前，
+        // FETCH NEXT FROM 才不會被那一條收成「判不出名稱種類」。
+        intent = CompletionIntent.Reference;
+        keywordStart = FindPreviousTokenStart(text, text.Length);
+
+        if (IntroducesCursor(tokens, textBeforeToken, keywordStart))
+        {
+            return CompletionTarget.Cursor;
+        }
 
         // ALTER 之後要放進完整定義，因此與 EXEC 之類的單純參考分開表示。
         intent = CompletionIntent.AlterDefinition;
@@ -398,21 +556,10 @@ public static class SqlCompletionContextAnalyzer
 
         // INSERT INTO 之後選一張資料表，要的幾乎不會是「只把名稱補上」——那句話還沒寫完。
         // 光看 INTO 分不出來：SELECT … INTO #tmp 的 INTO 後面是一個還不存在的新名稱，
-        // 展開成 INSERT 骨架會蓋掉他正在取的名字。所以認的是 INSERT 這一個字。
-        //
-        // INTO 是選用關鍵字（INSERT dbo.Loan (…) VALUES (…)、INSERT @rows … 都合法），
-        // 所以單獨一個 INSERT 也要認。只認兩個字連著寫的話，省略 INTO 的人在那個位置
-        // 完全沒有清單、提交也只換到一個名稱，而畫面上看不出兩種寫法有什麼差別。
-        // MERGE 早就是這樣處理的（MERGE 與 MERGE INTO 各一條），這裡只是補上同一件事。
-        //
-        // 唯一的例外是 MERGE 的動作子句：WHEN NOT MATCHED THEN INSERT 的尾巴同樣是
-        // INSERT，但那個位置接下來是欄位清單（INTO 在那裡根本不能寫），
-        // 列一串資料表等於誤導。
+        // 展開成 INSERT 骨架會蓋掉他正在取的名字。所以認的是 INSERT INTO 這兩個字。
         intent = CompletionIntent.InsertStatement;
 
-        if (!IsMergeInsertAction(text) &&
-            (EndsWithKeywords(text, "INSERT", "INTO", out keywordStart) ||
-             EndsWithKeyword(text, "INSERT", out keywordStart)))
+        if (EndsWithKeywords(text, "INSERT", "INTO", out keywordStart))
         {
             return CompletionTarget.DataSource;
         }
@@ -468,9 +615,11 @@ public static class SqlCompletionContextAnalyzer
         // 這三個位置文法上只接得了既有的資料表。ALTER 家族的 PROCEDURE／FUNCTION／
         // TRIGGER 與 DROP 家族的 TRIGGER／SEQUENCE 都已經在這裡，只差資料表——
         // 少的那一條沒有任何症狀，只是使用者在最常改的位置沒有清單。
+        // EXEC … WITH RESULT SETS (AS OBJECT 取的是資料表、檢視或資料表值函式的資料行形狀。
         if (EndsWithKeywords(text, "ALTER", "TABLE", out keywordStart) ||
             EndsWithKeywords(text, "DROP", "TABLE", out keywordStart) ||
-            EndsWithKeywords(text, "TRUNCATE", "TABLE", out keywordStart))
+            EndsWithKeywords(text, "TRUNCATE", "TABLE", out keywordStart) ||
+            EndsWithKeywords(text, "AS", "OBJECT", out keywordStart))
         {
             return CompletionTarget.DataSource;
         }
@@ -499,8 +648,21 @@ public static class SqlCompletionContextAnalyzer
         // USING 與 FROM 是同一條文法（MERGE 的來源）。SqlKeywordPositionAnalyzer 與
         // SqlScopeAnalyzer 早就這樣歸類，只有這一份漏掉——症狀是 USING 之後完全沒有
         // 清單，而使用者看不出它和 FROM 之後有什麼不同。
-        if (EndsWithKeyword(text, "FROM", out keywordStart) ||
-            EndsWithKeyword(text, "JOIN", out keywordStart) ||
+        //
+        // FROM 另問它所屬的動詞：RESTORE … FROM、REVOKE … FROM 之後不是資料表，
+        // 判準與位置分析、範圍分析同一條（SqlStatementBoundaries.IntroducesDataSource）。
+        if (EndsWithKeyword(text, "FROM", out keywordStart))
+        {
+            if (IntroducesDataSource(tokens, textBeforeToken, keywordStart))
+            {
+                return CompletionTarget.DataSource;
+            }
+
+            keywordStart = -1;
+            return CompletionTarget.Any;
+        }
+
+        if (EndsWithKeyword(text, "JOIN", out keywordStart) ||
             EndsWithKeyword(text, "UPDATE", out keywordStart) ||
             EndsWithKeyword(text, "INTO", out keywordStart) ||
             EndsWithKeyword(text, "USING", out keywordStart))
@@ -510,6 +672,37 @@ public static class SqlCompletionContextAnalyzer
 
         keywordStart = -1;
         return CompletionTarget.Any;
+    }
+
+    /// <summary>從 <paramref name="keywordStart"/> 開始的 FROM 後面接資料來源。</summary>
+    private static bool IntroducesDataSource(IReadOnlyList<SqlToken> tokens, string textBeforeToken, int keywordStart)
+    {
+        var index = FindTokenAt(tokens, keywordStart);
+
+        // 文字與詞元對不起來（FROM 寫在尾端的註解裡），照舊當成資料來源。
+        return index < 0 || new SqlStatementBoundaries(textBeforeToken, tokens).IntroducesDataSource(index);
+    }
+
+    /// <summary>從 <paramref name="tokenStart"/> 開始的詞元之後是游標名稱。</summary>
+    private static bool IntroducesCursor(IReadOnlyList<SqlToken> tokens, string textBeforeToken, int tokenStart)
+    {
+        var index = FindTokenAt(tokens, tokenStart);
+
+        return index >= 0 && new SqlStatementBoundaries(textBeforeToken, tokens).IntroducesCursor(index);
+    }
+
+    /// <summary>從 <paramref name="start"/> 開始的詞元；文字與詞元對不起來時為 -1。</summary>
+    private static int FindTokenAt(IReadOnlyList<SqlToken> tokens, int start)
+    {
+        for (var index = tokens.Count - 1; index >= 0 && tokens[index].Start >= start; index--)
+        {
+            if (tokens[index].Start == start)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>剝掉尾端的 <c>IF EXISTS</c>；沒有的話原樣回傳。</summary>
@@ -523,24 +716,6 @@ public static class SqlCompletionContextAnalyzer
             ? text.Substring(0, start).TrimEnd()
             : text;
     }
-
-    /// <summary>
-    /// 這個 <c>INSERT</c> 是 MERGE 的動作子句，不是一句新的 <c>INSERT</c> 敘述。
-    /// </summary>
-    /// <remarks>
-    /// <c>WHEN NOT MATCHED THEN INSERT (欄位…) VALUES (…)</c> 的 <c>INSERT</c> 後面接的是
-    /// 欄位清單，而資料表名稱在那個位置文法上根本寫不出來——還把它當成一句新的敘述，
-    /// 等於在那裡列出一串使用者選了就會錯的資料表。
-    ///
-    /// 認 <c>THEN</c> 就夠，與 <c>SqlScopeAnalyzer.IsMergeAction</c> 認的是同一件事：
-    /// T-SQL 裡 <c>THEN</c> 只出現在 CASE 與 MERGE，而 CASE 的 <c>THEN</c> 後面是運算式，
-    /// <c>INSERT</c> 不是運算式。
-    ///
-    /// 不採用 <c>SqlScopeAnalyzer</c> 那個方法本身：它要的是整份敘述的詞元，
-    /// 而這裡手上只有游標前方那一段文字，兩者的輸入根本不同。
-    /// </remarks>
-    private static bool IsMergeInsertAction(string text) =>
-        EndsWithKeywords(text, "THEN", "INSERT", out _);
 
     private static bool EndsWithKeywords(string text, string first, string second, out int keywordStart)
     {
@@ -559,101 +734,6 @@ public static class SqlCompletionContextAnalyzer
 
         keywordStart = firstStart;
         return true;
-    }
-
-    /// <summary>
-    /// 游標是不是停在「資料來源的名稱」這一格上，也就是後面接一個別名也讀得通的位置。
-    /// </summary>
-    /// <remarks>
-    /// <c>FROM </c>、<c>JOIN </c>、<c>APPLY </c>、<c>USING </c>、<c>UPDATE </c>
-    /// 之後直接就是名稱；<c>FROM dbo.Loan, </c> 這種「逗號之後」也是。
-    ///
-    /// 逗號那條不能只看前一個詞元：<c>SELECT a, </c> 與 <c>VALUES (1, </c> 的逗號
-    /// 在文字上長得一樣。所以往左找第一個「足以決定這是清單」的關鍵字——
-    /// 看到 <c>FROM</c>／<c>JOIN</c>／<c>APPLY</c> 就是資料來源清單，
-    /// 看到 <c>SELECT</c>／<c>VALUES</c>／<c>WHERE</c> 這些就不是。
-    ///
-    /// 名稱已經寫完、正準備打別名的位置（<c>FROM dbo.Loan </c>）回傳 false：
-    /// 那時使用者要的是自己打別名或直接往下寫，不是再被塞一個。
-    /// </remarks>
-    private static bool IsTableSourceNameSlot(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return false;
-        }
-
-        var trimmed = text.TrimEnd();
-
-        if (EndsWithKeyword(trimmed, "FROM", out _) ||
-            EndsWithKeyword(trimmed, "JOIN", out _) ||
-            EndsWithKeyword(trimmed, "APPLY", out _) ||
-            EndsWithKeyword(trimmed, "USING", out _) ||
-            EndsWithKeyword(trimmed, "UPDATE", out _))
-        {
-            return true;
-        }
-
-        if (!trimmed.EndsWith(",", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var tokens = SqlTokenizer.Tokenize(trimmed);
-
-        // 從倒數第二個詞元(也就是逗號)往左找，跳過逗號自己。
-        for (var index = tokens.Count - 2; index >= 0; index--)
-        {
-            var word = tokens[index].Text;
-
-            if (IsTableSourceAnchor(word))
-            {
-                return true;
-            }
-
-            if (IsNonSourceListKeyword(word))
-            {
-                return false;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsTableSourceAnchor(string word)
-    {
-        return string.Equals(word, "FROM", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "JOIN", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "APPLY", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// 逗號清單裡「不會接資料表」的那幾個關鍵字，看到就可以停止往左找。
-    /// </summary>
-    /// <remarks>
-    /// 這份名單是往安全的方向漏的：漏掉一個的後果是別名多補在那個位置，
-    /// 而多寫一個的後果是資料來源位置認不出來、功能安靜地不作用。
-    /// 所以只列真的有把握的。
-    /// </remarks>
-    private static bool IsNonSourceListKeyword(string word)
-    {
-        return string.Equals(word, "SELECT", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "WHERE", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "IN", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "INTO", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "ON", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "SET", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "VALUES", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "MERGE", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "INSERT", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "UPDATE", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "DELETE", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "TABLE", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "HAVING", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "GROUP", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "ORDER", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "UNION", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(word, "WITH", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool EndsWithKeyword(string text, string keyword, out int keywordStart)
@@ -721,9 +801,7 @@ public static class SqlCompletionContextAnalyzer
                     break;
                 }
 
-                parts.Insert(0, beforeDot
-                    .Substring(openingBracket + 1, beforeDot.Length - openingBracket - 2)
-                    .Replace("]]", "]"));
+                parts.Insert(0, SqlIdentifier.Unquote(beforeDot.Substring(openingBracket)));
                 remaining = beforeDot.Substring(0, openingBracket).TrimEnd();
                 continue;
             }
@@ -765,6 +843,79 @@ public static class SqlCompletionContextAnalyzer
     /// 兩邊各寫一份的話，分岔的症狀是某些字元之後清單該開卻不開。
     /// </remarks>
     public static bool IsIdentifierCharacter(char value) => IsTokenCharacter(value);
+
+    private static SqlCompletionContext Inert(int tokenStart)
+    {
+        return new SqlCompletionContext(SqlCompletionSlot.Inert, tokenStart, string.Empty, CompletionTarget.Any);
+    }
+
+    /// <summary>
+    /// 游標落在一個數值常值裡：正在打的詞元以數字開頭，或者點號前面那一段以數字開頭。
+    /// </summary>
+    /// <remarks>
+    /// 後者是 <c>1.</c> 與 <c>Price &gt; 12.</c>：數字在點號前面，文字上與
+    /// <c>dbo.</c> 一樣是「限定字加點號」（<c>1.e5</c> 的 <c>e</c> 也是）。當成限定字的話，平台自己在點號
+    /// 觸發時清單就以限定字 <c>1</c> 開出來了。
+    ///
+    /// 方括號裡的不算：連結伺服器可以直接以位址命名（<c>[192.0.2.10].</c>），
+    /// 方括號已經把「這是識別字」說完了——而它在這裡本來就走不到數字那一格，
+    /// 往回找詞元起點時第一個字元是 <c>]</c>。
+    /// </remarks>
+    private static bool IsInNumericLiteral(string text, int tokenStart)
+    {
+        if (tokenStart < text.Length && char.IsDigit(text[tokenStart]))
+        {
+            return true;
+        }
+
+        return FindSegmentBeforeDot(text, tokenStart) is { Length: > 0 } segment &&
+            char.IsDigit(segment[0]);
+    }
+
+    /// <summary>
+    /// 點號前面是一個變數，而它不是這份指令碼宣告過的資料表變數。
+    /// </summary>
+    /// <remarks>
+    /// 與數值常值同一類：文字上是「限定字加點號」，其實不是限定字。純量變數後面的點號
+    /// 是 xml 型別的方法呼叫（<c>@x.value(</c>、<c>@x.nodes(</c>），當成限定字的話
+    /// 點號一打就以結構描述 <c>@x</c> 開出整個資料庫的物件清單。
+    ///
+    /// 資料表變數例外：<c>@rows.</c> 之後要的正是它的資料行。分辨靠的是宣告
+    /// （<c>DECLARE @rows TABLE (…)</c>），而宣告必然寫在使用之前，游標前方的詞元就夠。
+    /// 名冊只在點號前面真的是變數時才收，一般的限定字不付這一趟。
+    /// </remarks>
+    private static bool QualifiesScalarVariable(string text, int tokenStart, IReadOnlyList<SqlToken> tokens)
+    {
+        return FindSegmentBeforeDot(text, tokenStart) is { Length: > 0 } segment &&
+            segment[0] == '@' &&
+            !SqlScriptTableCollector.Collect(tokens).ContainsKey(segment);
+    }
+
+    /// <summary>游標前方緊接著「一段名稱加點號」時回傳那一段，否則 null。</summary>
+    private static string? FindSegmentBeforeDot(string text, int tokenStart)
+    {
+        var index = SkipWhitespaceBackward(text, tokenStart);
+
+        if (index == 0 || text[index - 1] != '.')
+        {
+            return null;
+        }
+
+        var segmentEnd = SkipWhitespaceBackward(text, index - 1);
+        var segmentStart = FindPreviousTokenStart(text, segmentEnd);
+
+        return text.Substring(segmentStart, segmentEnd - segmentStart);
+    }
+
+    private static int SkipWhitespaceBackward(string text, int end)
+    {
+        while (end > 0 && char.IsWhiteSpace(text[end - 1]))
+        {
+            end--;
+        }
+
+        return end;
+    }
 
     private static int FindTokenStart(string text)
     {

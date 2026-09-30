@@ -1,3 +1,4 @@
+using System;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
 
@@ -17,6 +18,50 @@ public static class SqlInsertionText
         SqlCompletionContext context,
         SqlAssistSettings settings)
     {
+        var text = BuildUnbracketed(suggestion, context, settings);
+
+        return context.Bracketed ? BracketName(text, suggestion.DisplayText) : text;
+    }
+
+    /// <summary>
+    /// 使用者自己打了左方括號：選中的這個名稱一定寫成方括號。
+    /// </summary>
+    /// <remarks>
+    /// 左方括號是使用者對<b>這一段</b>下的決定，不是對整份設定：插入文字前面由程式
+    /// 補上的限定字（結構描述、欄位前的別名）照設定寫，所以 <c>FROM [Lib</c> 在
+    /// 「補上結構描述」開著時寫成 <c>dbo.[Lib_Reader]</c>。
+    ///
+    /// 插入文字的最後一段必然是這筆建議的名稱（不論本來包不包），只換那一段；
+    /// 認不出來的形狀原樣留著，寧可少包一次也不拼出一個不存在的名稱。
+    /// </remarks>
+    private static string BracketName(string text, string name)
+    {
+        var quoted = SqlIdentifier.Quote(name);
+
+        if (text.EndsWith(quoted, StringComparison.Ordinal) ||
+            !text.EndsWith(name, StringComparison.Ordinal))
+        {
+            return text;
+        }
+
+        return text.Substring(0, text.Length - name.Length) + quoted;
+    }
+
+    private static string BuildUnbracketed(
+        SqlSuggestion suggestion,
+        SqlCompletionContext context,
+        SqlAssistSettings settings)
+    {
+        // 資料表變數在純量位置唯一能做的事是限定欄位（SELECT [@rows].CopyNo），
+        // 而那裡的寫法只有方括號這一種。照原樣寫出 @rows 的話，使用者接著打的
+        // 點號與欄位會被讀成純量變數，執行起來是「必須宣告純量變數」。
+        if (suggestion.Kind == SuggestionKind.Variable &&
+            suggestion.Tag is SqlScriptTable &&
+            context.ExpectsScalar)
+        {
+            return QuoteQualifier(suggestion.DisplayText, settings);
+        }
+
         if (CarriesOwnInsertionText(suggestion.Kind))
         {
             return suggestion.InsertionText;
@@ -41,31 +86,13 @@ public static class SqlInsertionText
             return objectName;
         }
 
-        string insertionText;
-
         if (!NeedsSchema(context, settings) ||
             string.IsNullOrWhiteSpace(suggestion.SchemaName))
         {
-            insertionText = objectName;
-        }
-        else
-        {
-            insertionText = Quote(suggestion.SchemaName!, settings) + "." + objectName;
+            return objectName;
         }
 
-        var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
-
-        // 資料表值函式在「補上括號」開啟時不在這裡接別名：別名要接在右括號<b>之後</b>，
-        // 而那個位置還沒寫出來——括號由提交那一次編輯補上（只補空括號），
-        // 或由展開器連引數一起補（連引數一起補），兩條都要等寫完才接得上。
-        // 這裡是「不補括號」那一條，名稱後面就是最後一個位置。
-        if (aliasSuffix is not null &&
-            (suggestion.Kind != SuggestionKind.TableFunction || !settings.ExpandFunctionCall))
-        {
-            return insertionText + aliasSuffix;
-        }
-
-        return insertionText;
+        return Quote(suggestion.SchemaName!, settings) + "." + objectName;
     }
 
     /// <summary>
@@ -78,7 +105,7 @@ public static class SqlInsertionText
     /// <c>[@@ROWCOUNT]</c>。
     ///
     /// 寫成 <c>switch</c> 而不是一串 <c>||</c>：這個方法在建立清單時每一筆建議都
-    /// 走一遍，列舉的 <c>switch</c> 讓編譯器有機會編成一次跳躍表而不是十一次比較；
+    /// 走一遍，列舉的 <c>switch</c> 讓編譯器有機會編成一次跳躍表而不是一串比較；
     /// 新增一種建議時，該不該進這份名單也只有這裡要看。
     /// </remarks>
     private static bool CarriesOwnInsertionText(SuggestionKind kind)
@@ -96,6 +123,9 @@ public static class SqlInsertionText
             SuggestionKind.DatePart => true,
             SuggestionKind.TableHint => true,
             SuggestionKind.QueryHint => true,
+            SuggestionKind.Alias => true,
+            SuggestionKind.InstanceListValue => true,
+            SuggestionKind.InstanceListValueInUse => true,
             _ => false
         };
     }
@@ -136,7 +166,9 @@ public static class SqlInsertionText
     ///
     /// 反過來，開著「一律加方括號」也不代表什麼都包得下去：指令碼自己宣告的名稱
     /// 不在這個設定的管轄內（<see cref="SqlIdentifier.IsScriptScoped"/>）。
-    /// <c>[#tmp]</c> 合法卻不是任何人會手寫的樣子，而 <c>[@rows]</c> 根本不合法。
+    /// <c>[#tmp]</c> 合法卻不是任何人會手寫的樣子，而 <c>FROM [@rows]</c> 指到的是
+    /// 一張叫 <c>@rows</c> 的資料表。寫在欄位前面的限定字是另一回事，見
+    /// <see cref="QuoteQualifier"/>。
     /// </remarks>
     public static string Quote(string name, SqlAssistSettings settings)
     {
@@ -146,19 +178,90 @@ public static class SqlInsertionText
     }
 
     /// <summary>
-    /// 把欄位名稱冠上限定字；讀不出限定字時就只有名稱本身。
+    /// 執行個體名單上的值（定序、語言、時區）寫進指令碼的樣子。
     /// </summary>
     /// <remarks>
-    /// 需要它的地方有三處：資料表欄位、子查詢與 CTE 的欄位、以及配對鍵的兩側。
-    /// 三處都要「照同一份設定跳脫、讀不到限定字就只寫名稱」這一條規則，
-    /// 各寫一次的話，改設定時會漏掉其中一處。
+    /// 這些不是物件名稱，「插入物件時加上方括號」管不到它們：定序加了方括號是語法錯誤，
+    /// 語言只在形狀不合時才包（<c>[Português (Brasil)]</c>），時區一定是字串常值。
+    /// 樣子由名單決定（<see cref="SqlInstanceList.Form"/>），建立建議時算一次，
+    /// 之後 <see cref="Build"/> 原樣送出。
     /// </remarks>
-    public static string Qualify(string name, string? qualifier, SqlAssistSettings settings)
+    public static string InstanceListValue(string name, SqlInstanceValueForm form)
     {
-        var quoted = Quote(name, settings);
+        if (name is null)
+        {
+            throw new ArgumentNullException(nameof(name));
+        }
 
-        return qualifier is null
-            ? quoted
-            : Quote(qualifier, settings) + "." + quoted;
+        return form switch
+        {
+            SqlInstanceValueForm.Identifier => SqlIdentifier.QuoteIfNeeded(name),
+            SqlInstanceValueForm.String => SqlStringLiteral.Quote(name),
+            _ => name
+        };
+    }
+
+    /// <summary>
+    /// 寫在欄位前面的限定字（<c>限定字.欄位</c> 的前半段）。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="Quote"/> 只差資料表變數：當資料來源時只能寫 <c>@rows</c>，
+    /// 當限定字時只能寫 <c>[@rows]</c>，<c>@rows.CopyNo</c> 會被讀成純量變數。
+    /// 欄位建議、萬用字元展開與清單裡的資料表變數都寫限定字，三處各判斷一次的話，
+    /// 漏掉的那一處就是一行執行不了的 SQL。
+    /// </remarks>
+    public static string QuoteQualifier(string name, SqlAssistSettings settings)
+    {
+        return SqlIdentifier.IsVariable(name)
+            ? SqlIdentifier.Quote(name)
+            : Quote(name, settings);
+    }
+
+    /// <summary>
+    /// 欄位建議寫進編輯器的樣子：名稱照 <see cref="Quote"/>，限定字照
+    /// <see cref="QuoteQualifier"/>。
+    /// </summary>
+    /// <param name="qualifier">要補在欄位前面的別名或資料表名稱；不需要限定時為 null。</param>
+    /// <remarks>
+    /// 欄位的插入文字在建立建議時就定案，之後 <see cref="Build"/> 原樣送出，
+    /// 所以這條規則必須在建立那一端共用同一份。
+    /// </remarks>
+    public static string Column(string name, string? qualifier, SqlAssistSettings settings)
+    {
+        var column = Quote(name, settings);
+
+        return qualifier is null ? column : QuoteQualifier(qualifier, settings) + "." + column;
+    }
+
+    /// <summary>
+    /// 使用者自己打的限定字寫在欄位前面不成立時，提交欄位要連它一起改寫成的樣子。
+    /// </summary>
+    /// <param name="suggestion">提交的那一筆建議。</param>
+    /// <param name="context">
+    /// 提交當下的上下文。只需要游標前文：限定字與它的起點都在那裡。
+    /// </param>
+    /// <param name="written">緩衝區裡從限定字起點到插入點的原文，含點號。</param>
+    /// <returns>改寫後的那一段（含點號）；原文本來就成立時為 null。</returns>
+    /// <remarks>
+    /// 只有一種不成立：資料表變數沒加方括號（<c>@rows.</c>）。欄位清單照樣列得出來
+    /// ——使用者要的是那張表的欄位，這件事沒有歧義——但提交之後的
+    /// <c>@rows.CopyNo</c> 執行不了，所以提交時一起換成 <c>[@rows].</c>。
+    /// 只改寫<b>文字對得上</b>的那一段：限定字與原文開頭不一致時代表中間夾了
+    /// 認不得的東西，寧可照舊。
+    /// </remarks>
+    public static string? RewriteWrittenQualifier(
+        SqlSuggestion suggestion,
+        SqlCompletionContext context,
+        string written)
+    {
+        if (suggestion.Kind != SuggestionKind.Column ||
+            context.Qualifier is not { } qualifier ||
+            !SqlIdentifier.IsVariable(qualifier) ||
+            !written.StartsWith(qualifier, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return SqlIdentifier.Quote(qualifier) + written.Substring(qualifier.Length);
     }
 }
