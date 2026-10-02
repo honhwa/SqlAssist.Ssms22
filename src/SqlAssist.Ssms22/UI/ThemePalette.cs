@@ -36,10 +36,11 @@ internal static class ThemePalette
         }
 
         var dimForeground = highContrast || !Readable(dim, Colors.Transparent) ? foreground : dim;
-        // 命中自成一組色票，不借 AccentBackground：那一份同時是開關「開著」與核取方塊打勾的底，
-        // 共用的話一邊為了對比調整、另一邊跟著變；而且它是 Tint(0.12)，對比不足時還會把 alpha
-        // 逐次折半，退到幾乎看不見——「有沒有標出來」正是使用者唯一要從命中讀到的事。
-        var matches = MatchPalette.Create(accent, background, foreground, highContrast, selection);
+        // 命中自成一組色票，而且是固定的螢光筆黃，連強調色的色相都不借：那一份同時是開關「開著」
+        // 與核取方塊打勾的底，共用的話一邊為了對比調整、另一邊跟著變；而且它是 Tint(0.12)，
+        // 對比不足時還會把 alpha 逐次折半，退到幾乎看不見——「有沒有標出來」正是使用者唯一要
+        // 從命中讀到的事。
+        var matches = MatchPalette.Create(background, foreground, highContrast, selection);
         var colors = new Dictionary<ThemeBrush, Color>
         {
             [ThemeBrush.ListBackground] = background,

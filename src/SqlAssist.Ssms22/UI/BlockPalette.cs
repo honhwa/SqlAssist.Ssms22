@@ -20,25 +20,33 @@ internal static class BlockPalette
         var range = highContrast ? Colors.Transparent : Tint(graphic, background, text, 0.12);
         var hint = highContrast ? background : ThemeColorMath.Composite(Tint(graphic, background, text, 0.06), background);
         var globalInk = ReadOptionalColor(settings?.BlockKeywordForeground);
-        var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground);
+        var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground, symbol: false);
         // 細項只覆寫指定通道；留空或無效值繼承全域「原始基準值」，再依實際背景校正。
         var symbol = Endpoint(ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk, settings?.BlockSymbolBackground,
-            ReadColor(settings?.BlockKeywordBackground, accent));
+            symbol: true, ReadColor(settings?.BlockKeywordBackground, accent));
 
-        (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, Color? defaultBackground = null)
+        (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, bool symbol, Color? defaultBackground = null)
         {
             // 端點面積小，採實色高亮而非區間淡底；分類標籤才能改字色，marker 前景其實是框線。
             if (highContrast) return (background, text);
 
             var seed = ReadColor(backgroundPreference, defaultBackground ?? accent);
 
-            // 一個顏色都沒自訂時，端點與搜尋命中是同一類東西（小面積實色標記），走同一層推導：
-            // 底色定在深的那一側、字色走最淺的那一端。各算各的那一版在深色佈景上會變成亮底灰字，
-            // 因為佈景強調色的明度跟著佈景翻轉，而字色只推到剛好 4.5 就停。
+            // 一個顏色都沒自訂時，端點走標記層的推導而不是直接拿強調色當底色：強調色的明度跟著
+            // 佈景翻轉，而字色只推到剛好 4.5 就停，深色佈景上會變成亮底灰字。
             if (explicitInk is null && seed == accent)
             {
-                var marked = TextMarkColors.Fill(seed, background, TextMarkColors.Strong);
-                return (TextMarkColors.Ink(marked, text), marked);
+                // 符號——括號、方括號、字串引號——與搜尋命中是同一類東西：小面積、要跳出來、
+                // 與 SQL 的意思無關，所以走同一組固定的螢光筆黃。關鍵字端點讀的是「這是哪一層
+                // 區塊」，跟著主題強調色走。
+                if (symbol)
+                {
+                    var yellow = TextMarkColors.HighlightFill(background);
+                    return (TextMarkColors.DarkInk(yellow, text), yellow);
+                }
+
+                var dark = TextMarkColors.DarkFill(seed, background, TextMarkColors.Strong);
+                return (TextMarkColors.LightInk(dark, text), dark);
             }
 
             // 使用者指定過顏色就以他指定的為準，只做對比校正；套標記層的亮度帶等於把他挑的顏色改掉。

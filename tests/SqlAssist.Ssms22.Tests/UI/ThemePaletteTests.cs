@@ -98,8 +98,9 @@ public sealed class ThemePaletteTests
         Assert.True(ThemeColorMath.Contrast(colors[ThemeBrush.MatchCurrentForeground], current) >= 4.5);
 
         // 門檻與推導的規範值在 MatchPaletteTests；這裡只驗工具窗這一份確實照它填出來。
-        Assert.True(ThemeColorMath.Contrast(current, background) >= TextMarkColors.MinimumSeparation);
-        Assert.True(ThemeColorMath.Contrast(match, background) >= TextMarkColors.MinimumSeparation);
+        // 命中是螢光筆組，門檻比關鍵字端點那一組低，理由見 TextMarkColors.HighlightSeparation。
+        Assert.True(ThemeColorMath.Contrast(current, background) >= TextMarkColors.HighlightSeparation);
+        Assert.True(ThemeColorMath.Contrast(match, background) >= TextMarkColors.HighlightSeparation);
 
         // 兩級必須是兩個看得出差別的東西。非高對比的差別是同一個色相的半透明與實色，讀的是
         // 亮度；高對比換成兩個系統色，白與黃的亮度本來就接近，分得出來靠的是色相——對比比值

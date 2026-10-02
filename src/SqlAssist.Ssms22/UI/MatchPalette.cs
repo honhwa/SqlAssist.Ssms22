@@ -11,7 +11,11 @@ namespace SqlAssist.Ssms22.UI;
 /// 視窗的兩塊看起來不是同一件事。
 ///
 /// 底色怎麼調、字色往哪一端走、兩級怎麼分，全部在 <see cref="TextMarkColors"/>；這裡只負責
-/// 說「命中有兩級、哪一級配哪一個強度」，以及高對比下換成哪一組系統色。
+/// 說「命中有兩級、哪一級是哪一級」，以及高對比下換成哪一組系統色。
+///
+/// 命中和符號端點是同一類東西——小面積、要跳出來、與 SQL 的意思無關——走同一組<b>固定亮黃</b>，
+/// 不從強調色推導。借強調色的那一版，同一個搜尋字在淺色主題是深紫底、在深色主題是亮紫底，
+/// 而使用者要從命中讀到的只有「這幾處對上了」。
 ///
 /// <b>兩級都蓋掉底下的語法著色。</b>把一般命中做成「淡到讓語法著色仍讀得出來」的那一版，等於
 /// 要求底色與最淡的那個分類色維持 4.5:1，而校正只能把底色往表面推——推完的結果就是一層幾乎
@@ -40,21 +44,20 @@ internal readonly struct MatchPalette
     /// <summary>目前停在那一處的字色。</summary>
     public Color CurrentForeground { get; }
 
-    /// <param name="accent">主題強調色。</param>
     /// <param name="surface">這個表面自己的底色。</param>
     /// <param name="foreground">這個表面自己的前景色；讀得到就留著，讀不到才換。</param>
     /// <param name="selection">高對比下的系統選取色與配對文字。</param>
     public static MatchPalette Create(
-        Color accent, Color surface, Color foreground, bool highContrast,
+        Color surface, Color foreground, bool highContrast,
         (Color Background, Color Foreground) selection)
     {
         // 高對比沒有中間色可調：一般命中用反白，目前那一處用系統選取色。兩者都是實色、都合規，
         // 而且差的是色相不是明度——明度在那裡本來就只有兩級。
         if (highContrast) return new MatchPalette(foreground, surface, selection.Background, selection.Foreground);
 
-        var (current, match) = TextMarkColors.Pair(accent, surface);
+        var (current, match) = TextMarkColors.HighlightPair(surface);
         return new MatchPalette(
-            match, TextMarkColors.Ink(match, foreground),
-            current, TextMarkColors.Ink(current, foreground));
+            match, TextMarkColors.DarkInk(match, foreground),
+            current, TextMarkColors.DarkInk(current, foreground));
     }
 }

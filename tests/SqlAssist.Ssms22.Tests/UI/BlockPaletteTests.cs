@@ -67,6 +67,32 @@ public sealed class BlockPaletteTests
     [InlineData("light")]
     [InlineData("dark")]
     [InlineData("mango")]
+    [InlineData("plum")]
+    [InlineData("cool-breeze")]
+    [InlineData("forest")]
+    public void 符號端點未自訂時預設是螢光筆黃配深字(string mode)
+    {
+        var shell = ThemePaletteTests.ColorsFor(mode);
+        var background = shell[ThemeBrush.ListBackground];
+        var colors = BlockPalette.Create(background, shell[ThemeBrush.ListForeground],
+            shell[ThemeBrush.AccentBorder], null, false);
+
+        var fill = colors[ThemeBrush.BlockSymbolBackground];
+        Assert.True(ThemeColorMath.Luminance(fill) >= TextMarkColors.MinimumHighlightLuminance);
+        Assert.True(ThemeColorMath.Contrast(fill, background) >= TextMarkColors.HighlightSeparation);
+        Assert.True(ThemeColorMath.Contrast(Colors.Black, fill) >= 4.5);
+        Assert.True(ThemeColorMath.Luminance(colors[ThemeBrush.BlockSymbolForeground]) < ThemeColorMath.Luminance(fill));
+
+        // 關鍵字端點讀的是「這是哪一層區塊」，仍走強調色推導的深色組，不跟著變黃。
+        var keyword = colors[ThemeBrush.BlockKeywordBackground];
+        Assert.True(ThemeColorMath.Luminance(keyword) <= TextMarkColors.MaximumDarkLuminance + 0.01);
+        Assert.NotEqual(keyword, fill);
+    }
+
+    [Theory]
+    [InlineData("light")]
+    [InlineData("dark")]
+    [InlineData("mango")]
     [InlineData("forest")]
     public void 端點字色保持指定值並調整背景以維持可讀(string mode)
     {
