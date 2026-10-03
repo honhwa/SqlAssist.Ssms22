@@ -205,6 +205,14 @@ internal sealed class SqlAssistCompletionCommandHandler :
     /// 回傳 false：改寫大寫與補上結尾字元都只動已經在緩衝區裡的文字，
     /// 使用者輸入的字元仍然交給編輯器插入，其他擴充也還看得到這次按鍵。
     ///
+    /// 建議清單開著時，這個功能只有「包夾選取範圍」讓開：那一條會自己插入兩個
+    /// 字元，等於吃掉這次按鍵，而它可能是清單的提交鍵——吞掉就提交不了。
+    /// 補上結尾字元不吞按鍵（它只多插一個字元就把這次按鍵交還），而清單開著正是
+    /// 最需要它的地方：<c>WHERE Status = </c> 之後打引號時，開著的是前面那個
+    /// <c>WHERE </c> 建立的清單；<c>Status</c> 是一般的識別字、<c>=</c> 之後的
+    /// 文法位置沒有東西可列，兩者都不會重開它，於是整段值的輸入都在清單開著
+    /// 的情況下發生。跳過結尾字元同理，它跳過的是一個自己補的字元。
+    ///
     /// 這裡只用字元本身做第一層篩選，而那條規則與重開清單的判斷共用同一份
     /// （<see cref="SqlCompletionTriggers.MayChangeContext"/>）：篩掉的字元
     /// 連排程都不必，而放行的字元不代表一定會重開。真正的判斷在
@@ -230,17 +238,12 @@ internal sealed class SqlAssistCompletionCommandHandler :
                     args.SubjectBuffer,
                     args.TypedChar);
 
-                // 建議清單開著時一律讓開：那一次 TypeChar 可能是提交鍵，
-                // 吞掉它等於提交不了；而在 session 中途插字元也會讓適用範圍失準。
-                if (Broker.GetSession(args.TextView) is not null)
-                {
-                    return false;
-                }
-
+                // 建議清單開著只影響「包夾選取範圍」一條，理由見上面的 remarks。
                 return SqlAutoPairing.TryHandleTypedCharacter(
                     args.TextView,
                     args.SubjectBuffer,
-                    args.TypedChar);
+                    args.TypedChar,
+                    completionListOpen: Broker.GetSession(args.TextView) is not null);
             },
             fallback: false);
 
@@ -267,16 +270,16 @@ internal sealed class SqlAssistCompletionCommandHandler :
     /// Backspace 刪掉開頭字元時，把自動補上的另一半一起收掉。
     /// </summary>
     /// <remarks>
-    /// 參與條件與 TypeChar 完全相同（Snippet 欄位、建議清單各自讓開），
-    /// 兩邊分岔的症狀是「補得出來卻收不掉」：打了左括號馬上後悔按 Backspace，
-    /// 右括號留在原地。
+    /// 參與條件與 TypeChar 相同：片段欄位 session 開著時讓開，那裡的緩衝區不是
+    /// 使用者的。建議清單不讓開——Backspace 不可能是提交鍵（提交走的是 Tab 與
+    /// Enter），而補上結尾字元既然不讓開，這裡讓開就會變成「補得出來卻收不掉」：
+    /// 打了引號馬上後悔按 Backspace，另一半留在原地。
     /// </remarks>
     public bool ExecuteCommand(BackspaceKeyCommandArgs args, CommandExecutionContext executionContext)
     {
         return SqlAssistPlatformGuard.Run(
             "處理 Backspace 按鍵",
             () => SqlSnippetExpansionController.Peek(args.TextView)?.HasActiveSession != true
-                && Broker.GetSession(args.TextView) is null
                 && SqlAutoPairing.TryHandleBackspace(args.TextView, args.SubjectBuffer),
             fallback: false);
     }

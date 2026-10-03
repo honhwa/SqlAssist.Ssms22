@@ -36,6 +36,13 @@ internal static class SqlAutoPairing
     /// <summary>
     /// 使用者即將輸入 <paramref name="typedCharacter"/>。
     /// </summary>
+    /// <param name="completionListOpen">
+    /// 建議清單開著。只有「包夾選取範圍」一條會因為它讓開——那一條會自己插入
+    /// 兩個字元並回報已處理，等於吃掉這次按鍵，而那一次 TypeChar 可能是清單的
+    /// 提交鍵。另外兩條交還按鍵的方式不變：補上結尾字元只多插一個字元，
+    /// 跳過結尾字元只是把游標移過一個自己補的字元，兩者都仍然把這次按鍵交給
+    /// 編輯器，清單開著照做。
+    /// </param>
     /// <returns>
     /// <c>true</c> 代表這次按鍵已經處理完（跳過結尾字元、或包夾了選取範圍），
     /// 呼叫端要吞掉它；<c>false</c> 代表字元仍由編輯器插入——補上結尾字元也走這一條。
@@ -43,7 +50,8 @@ internal static class SqlAutoPairing
     public static bool TryHandleTypedCharacter(
         ITextView textView,
         ITextBuffer buffer,
-        char typedCharacter)
+        char typedCharacter,
+        bool completionListOpen)
     {
         // 第一道篩選只看字元本身與開關：打字時絕大多數按鍵在這裡就結束，
         // 連游標與選取範圍都不必問。
@@ -56,7 +64,7 @@ internal static class SqlAutoPairing
 
         if (!textView.Selection.IsEmpty)
         {
-            return TrySurroundSelection(textView, buffer, typedCharacter);
+            return !completionListOpen && TrySurroundSelection(textView, buffer, typedCharacter);
         }
 
         var snapshot = caret.Snapshot;
