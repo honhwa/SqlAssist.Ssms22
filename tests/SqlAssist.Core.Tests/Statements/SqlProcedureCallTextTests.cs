@@ -211,6 +211,91 @@ public sealed class SqlProcedureCallTextTests
         Assert.Contains("@ReaderId = @ReaderId,", text, System.StringComparison.Ordinal);
     }
 
+    // ── 模組的參數名與我們的變數名 ──────────────────────────────────────
+
+    /// <remarks>
+    /// 撞名時只有<b>等號右邊</b>換名字。左邊是模組簽章裡的參數名，跟著改掉那一句就
+    /// 找不到對應的參數（錯誤 8145），而畫面上只看得出名字多了一個數字。
+    /// </remarks>
+    [Fact]
+    public void 撞名時只改等號右邊的變數()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter(
+                    "@LoanId",
+                    "int",
+                    isOutput: false,
+                    isOptional: false,
+                    defaultValue: null,
+                    variableName: "@LoanId1")
+            },
+            out _);
+
+        Assert.Equal(
+            "DECLARE @LoanId1 AS int = 0;\r\n" +
+            "EXEC dbo.usp_Loan_Renew @LoanId = @LoanId1 -- int",
+            text);
+    }
+
+    /// <remarks>
+    /// <c>SELECT</c> 段列的是<b>我們的變數</b>，不是模組的參數名：輸出參數的值只在
+    /// 變數裡，把模組的參數名寫在那裡會列出一個不存在的變數。
+    /// </remarks>
+    [Fact]
+    public void 撞名的輸出參數SELECT列出變數名()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter(
+                    "@NewDueDate",
+                    "datetime2(7)",
+                    isOutput: true,
+                    isOptional: false,
+                    defaultValue: null,
+                    variableName: "@NewDueDate1")
+            },
+            out _);
+
+        Assert.Equal(
+            "DECLARE @NewDueDate1 AS datetime2(7) = NULL;\r\n" +
+            "EXEC dbo.usp_Loan_Renew @NewDueDate = @NewDueDate1 OUTPUT -- datetime2(7)\r\n" +
+            "\r\n" +
+            "SELECT @NewDueDate1 AS NewDueDate1;",
+            text);
+    }
+
+    /// <remarks>
+    /// 沒有撞名時兩邊同名，產出與從前逐字相同——多了這一格不該改變正常情況。
+    /// </remarks>
+    [Fact]
+    public void 沒撞名時變數名等於參數名()
+    {
+        var parameter = new SqlStatementParameter("@LoanId", "int", isOutput: false, isOptional: false);
+
+        Assert.Equal("@LoanId", parameter.Name);
+        Assert.Equal("@LoanId", parameter.VariableName);
+    }
+
+    /// <remarks>
+    /// 空字串要當成「沒指定」而不是把變數名清成空的：宣告會變成 <c>DECLARE  AS int</c>。
+    /// </remarks>
+    [Fact]
+    public void 變數名給空字串時退回參數名()
+    {
+        var parameter = new SqlStatementParameter(
+            "@LoanId",
+            "int",
+            isOutput: false,
+            isOptional: false,
+            defaultValue: null,
+            variableName: string.Empty);
+
+        Assert.Equal("@LoanId", parameter.VariableName);
+    }
+
     /// <remarks>
     /// 縮排裡有定位字元時，續行只補「EXEC 名稱 」那一段的寬度：
     /// 一個定位字元只算一個字元，把它算進續行的空白數就會歪掉。

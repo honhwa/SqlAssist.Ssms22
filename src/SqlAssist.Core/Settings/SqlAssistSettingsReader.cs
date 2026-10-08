@@ -148,6 +148,10 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.IncludeOptionalParameters,
                 defaults.IncludeOptionalParameters),
+            AvoidVariableNameCollision = Value(
+                source,
+                SqlAssistMonikers.AvoidVariableNameCollision,
+                defaults.AvoidVariableNameCollision),
             ExpandFunctionCall = Value(
                 source,
                 SqlAssistMonikers.ExpandFunctionCall,

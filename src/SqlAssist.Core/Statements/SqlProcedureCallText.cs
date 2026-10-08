@@ -84,13 +84,16 @@ public static class SqlProcedureCallText
 
         for (var index = 0; index < parameters.Count; index++)
         {
-            // 呼叫那一行傳的是變數名稱，OUTPUT 參數要再加一個 OUTPUT：
-            // 「把值接回來」是呼叫端的語意，只有寫在這一行的引數上才算數，
-            // 寫在宣告裡反而語法錯誤。
+            // 左邊是<b>模組的</b>參數名（簽章決定，不能改），右邊是<b>我們的</b>區域變數。
+            // 兩者平時同名，但撞名時只有右邊換名字——把左邊一起換掉會讓那一句找不到
+            // 對應的參數，而畫面上只看得出名字多了一個數字。
+            //
+            // OUTPUT 參數要再加一個 OUTPUT：「把值接回來」是呼叫端的語意，
+            // 只有寫在這一行的引數上才算數，寫在宣告裡反而語法錯誤。
             var parameter = parameters[index];
             assignments[index] = parameter.IsOutput
-                ? $"{parameter.Name} = {parameter.Name} OUTPUT"
-                : $"{parameter.Name} = {parameter.Name}";
+                ? $"{parameter.Name} = {parameter.VariableName} OUTPUT"
+                : $"{parameter.Name} = {parameter.VariableName}";
             var width = assignments[index].Length + (index == parameters.Count - 1 ? 0 : 1);
 
             if (width > widest)
@@ -206,7 +209,7 @@ public static class SqlProcedureCallText
     /// </remarks>
     private static string DeclarationHead(SqlStatementParameter parameter)
     {
-        return $"DECLARE {parameter.Name} AS {parameter.DataType}";
+        return $"DECLARE {parameter.VariableName} AS {parameter.DataType}";
     }
 
     /// <summary>宣告的初始值：模組的預設值優先，讀不到才依型別給預留值。</summary>
@@ -260,9 +263,9 @@ public static class SqlProcedureCallText
 
             written++;
             builder
-                .Append(parameter.Name)
+                .Append(parameter.VariableName)
                 .Append(" AS ")
-                .Append(parameter.Name.TrimStart('@'))
+                .Append(parameter.VariableName.TrimStart('@'))
                 .Append(written == outputs ? ";" : ",")
                 .Append(newLine)
                 .Append(indent)

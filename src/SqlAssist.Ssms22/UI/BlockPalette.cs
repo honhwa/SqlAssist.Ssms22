@@ -36,17 +36,16 @@ internal static class BlockPalette
             // 佈景翻轉，而字色只推到剛好 4.5 就停，深色佈景上會變成亮底灰字。
             if (explicitInk is null && seed == accent)
             {
-                // 符號——括號、方括號、字串引號——與搜尋命中是同一類東西：小面積、要跳出來、
-                // 與 SQL 的意思無關，所以走同一組固定的螢光筆黃。關鍵字端點讀的是「這是哪一層
-                // 區塊」，跟著主題強調色走。
-                if (symbol)
-                {
-                    var yellow = TextMarkColors.HighlightFill(background);
-                    return (TextMarkColors.DarkInk(yellow, text), yellow);
-                }
+                // 符號——括號、方括號、字串引號——的種子固定是金黃，不隨主題走：它與搜尋命中
+                // 讀的是同一件事（「這裡被劃起來了」），與 SQL 的意思無關。但它與命中分居明度軸
+                // 兩側——這裡是金底白字、命中是亮黃深字——兩者同色的話，「命中停在哪裡」與
+                // 「配對的兩端在哪裡」就疊成同一塊顏色。字色走 GoldInk 而不是 LightInk：底色
+                // 調亮之後淺色佈景的深字在金黃上讀得到，沿用「讀得到就留著」會變成黃底黑字。
+                if (symbol) return (TextMarkColors.GoldInk, TextMarkColors.GoldFill(background));
 
-                var dark = TextMarkColors.DarkFill(seed, background, TextMarkColors.Strong);
-                return (TextMarkColors.LightInk(dark, text), dark);
+                // 關鍵字端點讀的是「這是哪一層區塊」，跟著強調色走，字色留表面自己的前景。
+                var mark = TextMarkColors.DarkFill(seed, background, TextMarkColors.Strong);
+                return (TextMarkColors.LightInk(mark, text), mark);
             }
 
             // 使用者指定過顏色就以他指定的為準，只做對比校正；套標記層的亮度帶等於把他挑的顏色改掉。

@@ -75,6 +75,7 @@ public static class SqlAssistMonikers
     public const string ExpandMergeStatement = "sqlAssist.insertion.expandMergeStatement";
     public const string ExpandProcedureCall = "sqlAssist.insertion.expandProcedureCall";
     public const string IncludeOptionalParameters = "sqlAssist.insertion.includeOptionalParameters";
+    public const string AvoidVariableNameCollision = "sqlAssist.insertion.avoidVariableNameCollision";
     public const string ExpandFunctionCall = "sqlAssist.insertion.expandFunctionCall";
     public const string ExpandFunctionArguments = "sqlAssist.insertion.expandFunctionArguments";
 

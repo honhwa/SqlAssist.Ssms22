@@ -21,12 +21,18 @@ internal readonly struct SqlStatementSite
         string indent,
         string newLine,
         string statementText,
-        char nextCharacter)
+        char nextCharacter,
+        string batchText,
+        int batchTextStart,
+        int batchAnchor)
     {
         Indent = indent;
         NewLine = newLine;
         StatementText = statementText;
         NextCharacter = nextCharacter;
+        BatchText = batchText;
+        BatchTextStart = batchTextStart;
+        BatchAnchor = batchAnchor;
     }
 
     /// <summary>語句所在行的前導空白，原樣重複到展開出來的每一行。</summary>
@@ -52,6 +58,24 @@ internal readonly struct SqlStatementSite
     /// </remarks>
     public char NextCharacter { get; }
 
+    /// <summary>整份文件的文字，取的是同一份快照。</summary>
+    /// <remarks>
+    /// 有些判斷要看<b>語句之外</b>的文字：批次界線（<c>GO</c>）落在哪、同一個批次裡
+    /// 還有哪些變數。只看被換掉的那一段永遠答不出來——那一段裡沒有 <c>GO</c>。
+    /// 與 <see cref="StatementText"/> 取自同一份快照，<see cref="BatchAnchor"/>
+    /// 才對得回同一個座標系。
+    /// </remarks>
+    public string BatchText { get; }
+
+    /// <summary><see cref="BatchText"/> 裡第一個字元在文件中的位置；整份文件時是 0。</summary>
+    public int BatchTextStart { get; }
+
+    /// <summary>語句起點在 <see cref="BatchText"/> 裡的座標。</summary>
+    /// <remarks>
+    /// 批次是「包含這個位置的那一段 <c>GO</c> 區間」，因此要有這一格才問得出是哪一段。
+    /// </remarks>
+    public int BatchAnchor { get; }
+
     public static SqlStatementSite From(SnapshotSpan target)
     {
         var line = target.Snapshot.GetLineFromPosition(target.Start.Position);
@@ -69,7 +93,10 @@ internal readonly struct SqlStatementSite
             target.GetText(),
             target.End.Position < target.Snapshot.Length
                 ? target.Snapshot[target.End.Position]
-                : '\0');
+                : '\0',
+            target.Snapshot.GetText(),
+            0,
+            target.Start.Position);
     }
 }
 
@@ -150,8 +177,17 @@ internal interface ISqlCommitExpansion
     /// 只取插入的那一段會把跨資料庫那幾段寫丟——重組出來的整句仍然合法，
     /// 指的卻是目前連線裡同名的那個物件。
     /// </param>
+    /// <param name="bufferText">
+    /// 整個緩衝區的文字。整句展開除了被換掉的那一段之外，還要看所在批次的其餘內容
+    /// （<c>GO</c> 界線、同批次已存在的變數），而那不是 <see cref="SqlStatementSite.StatementText"/>
+    /// 答得出來的。搬移與改名不還原只插入名稱。
+    /// </param>
     /// <returns>要寫回去的內容；null 代表這一次不展開，維持只插入名稱。</returns>
-    TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName);
+    TextReplacement? Build(
+        SqlObjectDetail detail,
+        SqlStatementSite site,
+        string insertedName,
+        string bufferText);
 }
 
 /// <summary>
@@ -375,6 +411,9 @@ internal sealed class SqlCommitExpander
             return null;
         }
 
-        return expansion.Build(detail, SqlStatementSite.From(target), insertedName);
+        var site = SqlStatementSite.From(target);
+
+        // 緩衝區那一份與 site 同源（兩者都取自 target.Snapshot），批次座標因此對得上。
+        return expansion.Build(detail, site, insertedName, site.BatchText);
     }
 }

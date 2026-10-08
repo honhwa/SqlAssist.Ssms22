@@ -61,8 +61,9 @@ internal static class SqlLanguageSwitch
 
         // 設定頁的文字由殼層解析，走不到上面這一條；它只有「把註冊檔換成字面值」一條路，
         // 而殼層在套件載入之前就讀完註冊檔了——所以這一步排定的是下一次啟動要用的內容。
+        // 設定頁固定用來源語言（繁中），不跟著換語言，理由見 SettingsPageManifest。
         // 內容已經是這一份時它什麼都不做，所以每次接上設定都呼叫是安全的。
-        SettingsPageManifest.Apply(language, origin);
+        SettingsPageManifest.Apply(origin);
     }
 
     private static CultureInfo ReadHostCulture(IServiceProvider serviceProvider)

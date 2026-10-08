@@ -270,6 +270,21 @@ public sealed class SqlAssistSettings
     public bool IncludeOptionalParameters { get; init; } = true;
 
     /// <summary>
+    /// sqlAssist.insertion.avoidVariableNameCollision
+    /// </summary>
+    /// <remarks>
+    /// 展開出來的 <c>DECLARE @x AS …</c> 若與同一批次裡已經存在的同名變數撞上，
+    /// 第二句 <c>DECLARE</c> 不會有編譯錯誤，只是把前一句的值覆蓋掉——那一句跑得動，
+    /// 卻安靜地改掉了使用者原本的變數值。開著時展開端會把撞名的參數換成
+    /// <c>@x1</c>、<c>@x2</c>，直到不衝突為止。
+    ///
+    /// 比對範圍是<b>一個批次</b>（<c>GO</c> 之間），不是整份文件：跨過 <c>GO</c>
+    /// 之後同名的 <c>@變數</c> 是另一個變數，避開它只是讓名字多一個沒必要的後綴。
+    /// 判定在 <c>SqlVariableNames</c>。
+    /// </remarks>
+    public bool AvoidVariableNameCollision { get; init; } = true;
+
+    /// <summary>
     /// sqlAssist.insertion.expandFunctionCall
     /// </summary>
     /// <remarks>

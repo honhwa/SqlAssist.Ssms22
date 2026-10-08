@@ -38,7 +38,11 @@ internal sealed class SqlAlterStatementExpansion : ISqlCommitExpansion
 
     public string LeadingKeyword => "ALTER";
 
-    public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
+    public TextReplacement? Build(
+        SqlObjectDetail detail,
+        SqlStatementSite site,
+        string insertedName,
+        string bufferText)
     {
         if (detail.Definition is not { } definition)
         {
@@ -105,7 +109,11 @@ internal sealed class SqlInsertStatementExpansion : ISqlCommitExpansion
 
     public string LeadingKeyword => "INSERT";
 
-    public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
+    public TextReplacement? Build(
+        SqlObjectDetail detail,
+        SqlStatementSite site,
+        string insertedName,
+        string bufferText)
     {
         var columns = new List<SqlStatementColumn>(detail.Columns.Count);
 
@@ -186,7 +194,11 @@ internal sealed class SqlMergeStatementExpansion : ISqlCommitExpansion
 
     public string LeadingKeyword => "MERGE";
 
-    public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
+    public TextReplacement? Build(
+        SqlObjectDetail detail,
+        SqlStatementSite site,
+        string insertedName,
+        string bufferText)
     {
         var keys = new List<string>();
         var columns = new List<string>(detail.Columns.Count);
@@ -262,7 +274,14 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
 
     public string LeadingKeyword => "EXEC";
 
-    public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
+    /// <summary>因撞名而被換掉的變數，寫進診斷用；沒有撞名時為空清單。</summary>
+    internal IReadOnlyList<string> RenamedVariables { get; private set; } = Array.Empty<string>();
+
+    public TextReplacement? Build(
+        SqlObjectDetail detail,
+        SqlStatementSite site,
+        string insertedName,
+        string bufferText)
     {
         var defaults = SqlModuleParameterDefaults.Resolve(detail.Definition);
         var parameters = new List<SqlStatementParameter>(detail.Parameters.Count);
@@ -304,6 +323,8 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
             return null;
         }
 
+        AvoidNameCollisions(parameters, site);
+
         var text = SqlProcedureCallText.Build(
             ExecuteKeyword(site.StatementText),
             insertedName,
@@ -318,6 +339,64 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
             CompletionText.ExecuteExpanded(Object.QualifiedName, parameters.Count),
             caretOffset,
             parameters.Count);
+    }
+
+    /// <summary>
+    /// 把與所在批次撞名的參數換成沒人用過的名字。
+    /// </summary>
+    /// <remarks>
+    /// 判定與改名本身都在 <see cref="SqlVariableNames.Avoid"/>（純文字、可完整單元測試）；
+    /// 這裡只做兩件這一層才做得到的事——把批次座標算出來，以及把改了哪些名字記進診斷。
+    ///
+    /// 取的是<b>那一行</b>的批次，不是整份文件：範圍與就地改名同一條（<c>GO</c> 之間）。
+    /// 批次由 <c>EXEC</c> 那個關鍵字的位置決定，而它就在被追蹤的那一段裡。
+    /// </remarks>
+    private void AvoidNameCollisions(List<SqlStatementParameter> parameters, SqlStatementSite site)
+    {
+        if (!_settings.AvoidVariableNameCollision)
+        {
+            return;
+        }
+
+        var adjusted = SqlVariableNames.Avoid(
+            parameters,
+            site.BatchText,
+            site.BatchAnchor - site.BatchTextStart);
+
+        var renamed = new List<string>();
+
+        for (var index = 0; index < adjusted.Count; index++)
+        {
+            var before = parameters[index].VariableName;
+            var after = adjusted[index].VariableName;
+
+            if (string.Equals(before, after, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            renamed.Add($"{before}→{after}");
+            parameters[index] = adjusted[index];
+        }
+
+        if (renamed.Count == 0)
+        {
+            return;
+        }
+
+        RenamedVariables = renamed;
+        ReportRenames(renamed);
+    }
+
+    /// <remarks>
+    /// 訊息只有診斷紀錄看得到，固定繁中不進 resjson——與 <c>SqlVariableRename.Rename</c>
+    /// 的例外訊息同一條。字形分開寫是為了不讓在地化的掃描把它當成使用者看得到的字串。
+    /// </remarks>
+    [Localizable(false)]
+    private void ReportRenames(IReadOnlyList<string> renamed)
+    {
+        SqlAssistDiagnostics.Write(
+            $"{Object.QualifiedName} 的展開有 {renamed.Count} 個變數與同批次的變數同名，已改名：{string.Join("; ", renamed)}");
     }
 
     /// <summary>
@@ -408,7 +487,11 @@ internal sealed class SqlFunctionCallExpansion : ISqlCommitExpansion
     /// </remarks>
     public string LeadingKeyword => _insertedName;
 
-    public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
+    public TextReplacement? Build(
+        SqlObjectDetail detail,
+        SqlStatementSite site,
+        string insertedName,
+        string bufferText)
     {
         // 提交時已經補上一對空括號（那是「補上括號」那個開關的事，不等中繼資料），
         // 引數是蓋在它上面的第二次編輯。等待期間使用者可能已經自己在括號裡打了東西

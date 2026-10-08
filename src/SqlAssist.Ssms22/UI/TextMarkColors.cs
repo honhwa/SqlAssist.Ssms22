@@ -12,14 +12,16 @@ namespace SqlAssist.Ssms22.UI;
 /// 融入——底色淡、原本的文字顏色照舊讀得出來；這一類要的是跳出來——底色實、字色重算。
 /// 兩類混成一份的下場是差異檢視變成一整片深色塊，而命中仍然淡到看不見。面積決定屬於哪一類。
 ///
-/// 這一層有<b>兩組</b>，差別在底色落在明度軸的哪一側，以及顏色從哪裡來：
+/// 這一層有<b>兩組</b>，差別在底色落在明度軸的哪一側：
 ///
-/// <b>螢光筆組</b>是固定的亮黃配深字，用在搜尋命中與符號端點（括號、方括號、字串引號）。
-/// 它<b>不從強調色推導</b>：標記說的是「這一段被劃起來了」，與主題色無關，而在任何佈景上
-/// 螢光筆黃都是同一個意思；跟著強調色走的那一版，同一個搜尋字會隨主題變成紫的、綠的、藍的。
+/// <b>螢光筆組</b>是固定的亮黃配深字，用在搜尋命中的兩級。它<b>不從強調色推導</b>：命中說的
+/// 是「這幾處對上了」，與主題色無關，而在任何佈景上螢光筆黃都是同一個意思；跟著強調色走的
+/// 那一版，同一個搜尋字會隨主題變成紫的、綠的、藍的。
 ///
-/// <b>深色組</b>由強調色推導，用在關鍵字端點（BEGIN／END、TRY／CATCH、CASE）。那一組跟著
-/// 主題走是因為它讀的是「這是哪一層區塊」，而層級的色相本來就是主題的一部分。
+/// <b>深色組</b>是深底配淺字，用在區塊端點——符號（括號、方括號、字串引號）與關鍵字
+/// （BEGIN／END、TRY／CATCH、CASE）。種子有兩個來源：符號用固定的金黃（同樣不隨主題走，
+/// 理由與命中相同），關鍵字用主題強調色——後者讀的是「這是哪一層區塊」，而層級的色相本來
+/// 就是主題的一部分。
 ///
 /// 兩組都要在深色與淺色佈景上分得開、字色讀得到，但方向相反——螢光筆組是亮底深字，深色組是
 /// 暗底淺字——所以各有一組常數與各一條推導，門檻也不同。
@@ -55,6 +57,46 @@ internal static class TextMarkColors
     /// <summary>深色組的那一級：飽和，貼著亮度上限，讓它在整片內容裡最先被看到。</summary>
     public static MarkStrength Strong { get; } = new(MaximumDarkLuminance, 1.0);
 
+    /// <summary>符號端點的字色與底色至少要有的對比。</summary>
+    /// <remarks>
+    /// 比一般文字的 4.5 低，因為這一組賣的是「黃底白字」這一個固定組合，而白字要 4.5:1 的那一版
+    /// 會把底色鎖在亮度 0.183 以下——那個亮度帶的黃一定偏褐，實機上看起來不像黃底。端點面積只有
+    /// 一個字元，認得出來靠的是那一塊底色跳不跳，不是那一個字讀不讀得到；3:1 是 WCAG 給大字與
+    /// 圖形元件的門檻，白字在這個門檻上仍讀得出輪廓。
+    /// </remarks>
+    public const double GoldInkContrast = 3.0;
+
+    /// <summary>符號端點底色的亮度上限；由 <see cref="GoldInkContrast"/> 反推出來。</summary>
+    /// <remarks>
+    /// 白字 3:1 的邊界是 <c>1.05 / 3 - 0.05 = 0.30</c>；取 0.29 是留給 8 位元捨入的餘裕——貼著
+    /// 邊界取的那一版量到的是 2.997。調亮這一段換到的是<b>暗底上的分離度</b>（2.97 → 4.49）；亮底
+    /// 上反而從 4.70 降到 3.11，但仍遠過 <see cref="DarkSeparation"/>。真正的差別是壓在 0.183 以下
+    /// 的那一版會偏褐——實機上看起來不像黃底，而那正是「認不出來」的那一半。
+    /// </remarks>
+    public const double MaximumGoldLuminance = 0.29;
+
+    /// <summary>符號端點底色的種子：飽和的琥珀，壓深之後仍是金的。</summary>
+    /// <remarks>
+    /// 不能拿螢光筆那種淡黃去壓：淡黃的色度本來就低，按比例壓深之後剩下的更少，結果是一塊
+    /// 橄欖而不是金。種子得先夠飽和，壓深才留得住色相。
+    /// </remarks>
+    public static Color GoldSeed { get; } = Color.FromRgb(0xFF, 0xC0, 0x00);
+
+    /// <summary>符號端點的那一級：與 <see cref="Strong"/> 同一個強度，亮度上限收在白字讀得到的位置。</summary>
+    private static MarkStrength GoldStrength { get; } = new(MaximumGoldLuminance, 1.0);
+
+    /// <summary>符號端點的底色：金黃，壓到白字讀得到的位置。</summary>
+    public static Color GoldFill(Color surface) => DarkFill(GoldSeed, surface, GoldStrength);
+
+    /// <summary>符號端點底上的字色：固定白，不看這個表面原本的前景。</summary>
+    /// <remarks>
+    /// 刻意不走 <see cref="LightInk"/>：那一條是「讀得到就留著表面自己的前景」，而底色調亮到
+    /// <see cref="MaximumGoldLuminance"/> 之後，<b>淺色</b>佈景的深字在金黃上反而讀得到（約
+    /// 5.7:1），留著它就變成黃底黑字——同一個標記在兩套主題上是兩種組合。這一組要的是固定的
+    /// 黃底白字，所以兩個通道都定死。
+    /// </remarks>
+    public static Color GoldInk { get; } = Colors.White;
+
     /// <summary>螢光筆的底色與它所在表面至少要有的對比。</summary>
     /// <remarks>
     /// 比 <see cref="DarkSeparation"/> 低，因為這一組靠的是色相：白紙上的螢光筆看得到是因為它
@@ -69,7 +111,7 @@ internal static class TextMarkColors
     /// <summary>螢光筆底色的亮度上緣；再亮下去色相被白吃掉，同樣停在這裡。</summary>
     public const double MaximumHighlightLuminance = 0.85;
 
-    /// <summary>劃一層的螢光筆黃：一般的搜尋命中與符號端點。</summary>
+    /// <summary>劃一層的螢光筆黃：一般的搜尋命中。</summary>
     public static Color HighlightSeed { get; } = Color.FromRgb(0xFF, 0xE0, 0x66);
 
     /// <summary>同一支筆在同一處再劃一層：目前停在的那一處。</summary>
@@ -81,7 +123,7 @@ internal static class TextMarkColors
     public static Color HighlightCurrentSeed { get; } = Color.FromRgb(0xFF, 0xB9, 0x00);
 
     /// <summary>單獨一處螢光筆標記的底色：固定亮黃，只在表面也亮到分不開時才往遠離表面推。</summary>
-    public static Color HighlightFill(Color surface) => PushAway(HighlightSeed, surface, HighlightSeparation);
+    private static Color HighlightFill(Color surface) => PushAway(HighlightSeed, surface, HighlightSeparation);
 
     /// <summary>螢光筆的兩級底色：目前那一處與一般的命中。</summary>
     public static (Color Current, Color Match) HighlightPair(Color surface)
@@ -130,15 +172,16 @@ internal static class TextMarkColors
 
         // 落在與表面同一條亮度帶時要推開，而方向是**遠離表面**：表面比這一塊暗就往淺推，反之
         // 往深推。往固定方向推的那一版，在深色佈景上會先穿過表面的亮度再往黑走，推完是一塊
-        // 幾乎全黑、色相也沒了的方塊。往淺推守住 MaximumDarkLuminance——字讀不到是這一層唯一
-        // 不能讓的事，寧可對比停在門檻上由色度與字重補。
+        // 幾乎全黑、色相也沒了的方塊。往淺推守住這一級自己的亮度上限——字讀不到是這一層唯一
+        // 不能讓的事，寧可對比停在門檻上由色度與字重補。上限就是起始亮度，所以這一支實際上
+        // 只往深推。
         var surfaceLuminance = ThemeColorMath.Luminance(surface);
 
         for (var step = 0; step < 8 && ThemeColorMath.Contrast(fill, surface) < DarkSeparation; step++)
         {
             var current = ThemeColorMath.Luminance(fill);
             var next = surfaceLuminance < current
-                ? Math.Min(current * 1.6, MaximumDarkLuminance)
+                ? Math.Min(current * 1.6, strength.Luminance)
                 : current * 0.6;
             if (Math.Abs(next - current) < 0.0001 || next < 0.005) break;
             fill = WithLuminance(fill, next);

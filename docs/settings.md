@@ -33,6 +33,7 @@
 | | 在 MERGE INTO 之後展開完整的比對鍵與動作子句 | `true` |
 | | 在 EXEC 之後展開完整的參數清單 | `true` |
 | | EXEC 展開時包含選擇性參數 | `true` |
+| | EXEC 展開時避開同名的變數 | `true` |
 | | 選取自訂函式後補上括號 | `true` |
 | | 括號裡填入引數預留值 | `false` |
 | 物件結構 | 滑鼠停留時顯示物件結構 | `true` |
@@ -77,7 +78,8 @@ moniker 一律是 `sqlAssist.<分類>.<設定>`，例如
 `SqlAssistChrome.MotionEnabled`，不自行讀 Windows 偏好；高對比一律不播。
 
 「介面語言」管 SqlAssist 自製的一切文字，`auto` 依 SSMS 介面語言挑（中文用繁中，其餘英文），
-改了立即生效；設定頁與擴充功能清單不歸它管，固定跟隨 SSMS。各表面怎麼換見[在地化](localization.md#即時切換)。
+改了立即生效；設定頁不歸它管——設定頁由 SSMS 畫，固定顯示繁體中文，擴充功能清單則固定跟隨 SSMS。
+各表面見[在地化](localization.md#即時切換)。
 
 「SQL Memory」整頁由「啟用 SQL Memory」管，關掉時連背景整理都不跑。它預設開啟——空的
 SQL Memory 沒有人會去打開，功能的價值在它已經有資料；代價是不能安靜地開始記錄，所以

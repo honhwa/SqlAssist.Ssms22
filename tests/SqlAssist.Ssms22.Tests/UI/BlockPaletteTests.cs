@@ -31,7 +31,8 @@ public sealed class BlockPaletteTests
             Assert.Equal(Colors.White, palette[ThemeBrush.BlockKeywordForeground]);
             Assert.Equal(Colors.White, palette[ThemeBrush.BlockSymbolForeground]);
             Assert.True(ThemeColorMath.Contrast(Colors.White, palette[ThemeBrush.BlockKeywordBackground]) >= 4.5);
-            Assert.True(ThemeColorMath.Contrast(Colors.White, palette[ThemeBrush.BlockSymbolBackground]) >= 4.5);
+            // 符號那一組的底色刻意亮到白字過不了 4.5（要 4.5 只能把黃壓成褐色），門檻是它自己的 3:1。
+            Assert.True(ThemeColorMath.Contrast(Colors.White, palette[ThemeBrush.BlockSymbolBackground]) >= TextMarkColors.GoldInkContrast);
         }
     }
 
@@ -70,7 +71,7 @@ public sealed class BlockPaletteTests
     [InlineData("plum")]
     [InlineData("cool-breeze")]
     [InlineData("forest")]
-    public void 符號端點未自訂時預設是螢光筆黃配深字(string mode)
+    public void 符號端點未自訂時預設是金黃底配白字(string mode)
     {
         var shell = ThemePaletteTests.ColorsFor(mode);
         var background = shell[ThemeBrush.ListBackground];
@@ -78,12 +79,22 @@ public sealed class BlockPaletteTests
             shell[ThemeBrush.AccentBorder], null, false);
 
         var fill = colors[ThemeBrush.BlockSymbolBackground];
-        Assert.True(ThemeColorMath.Luminance(fill) >= TextMarkColors.MinimumHighlightLuminance);
-        Assert.True(ThemeColorMath.Contrast(fill, background) >= TextMarkColors.HighlightSeparation);
-        Assert.True(ThemeColorMath.Contrast(Colors.Black, fill) >= 4.5);
-        Assert.True(ThemeColorMath.Luminance(colors[ThemeBrush.BlockSymbolForeground]) < ThemeColorMath.Luminance(fill));
+        // 底色貼在金黃那一條帶的上緣：白字讀得到（3:1），但刻意不到 4.5——要 4.5 只能把黃壓成
+        // 褐色，而端點認得出來靠的是底色跳不跳，不是那一個字。字色是固定的白，不看這個表面的
+        // 前景，否則淺色佈景會留下它自己的深字，變成黃底黑字。
+        Assert.True(ThemeColorMath.Luminance(fill) <= TextMarkColors.MaximumGoldLuminance + 0.01);
+        Assert.Equal(TextMarkColors.GoldInk, colors[ThemeBrush.BlockSymbolForeground]);
+        Assert.True(ThemeColorMath.Contrast(Colors.White, fill) >= TextMarkColors.GoldInkContrast);
+        Assert.True(ThemeColorMath.Contrast(Colors.White, fill) < 4.5);
+        Assert.True(ThemeColorMath.Contrast(fill, background) >= TextMarkColors.DarkSeparation);
 
-        // 關鍵字端點讀的是「這是哪一層區塊」，仍走強調色推導的深色組，不跟著變黃。
+        // 種子是金黃，壓深之後色相還在：三個通道都一樣的灰、或藍比紅綠高的，都不是金。
+        Assert.True(fill.R > fill.B && fill.G > fill.B);
+
+        // 符號端點與搜尋命中現在分居明度軸兩側，底色不會撞在一起。
+        Assert.True(ThemeColorMath.Luminance(fill) < TextMarkColors.MinimumHighlightLuminance);
+
+        // 關鍵字端點讀的是「這是哪一層區塊」，仍走強調色推導的深色組，不跟著變金。
         var keyword = colors[ThemeBrush.BlockKeywordBackground];
         Assert.True(ThemeColorMath.Luminance(keyword) <= TextMarkColors.MaximumDarkLuminance + 0.01);
         Assert.NotEqual(keyword, fill);
