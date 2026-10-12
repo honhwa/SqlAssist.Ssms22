@@ -20,6 +20,7 @@
          早已沒有訊號價值——0.17.1 那次真正的版本問題就是被它蓋掉的。降為訊息，把關改由
          tools/Test-VsixPackage.ps1 直接讀產出組件的參考版本負責。 -->
     <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+    <Configurations>Debug;Release;debug_261012</Configurations>
   </PropertyGroup>
 
   <ItemGroup>
@@ -272,8 +273,7 @@
       把鍵換成該語言的字面值寫回安裝資料夾（見 docs/localization.md）。
       與上面的 Content 同源，不另外放一份會走樣的副本。
     -->
-    <EmbeddedResource Include="SqlAssist.registration.json"
-                      LogicalName="$(RootNamespace).SqlAssist.registration.json" />
+    <EmbeddedResource Include="SqlAssist.registration.json" LogicalName="$(RootNamespace).SqlAssist.registration.json" />
     <!--
       擴充管理員的圖示與預覽圖。直接連結 docs 底下那一張，不在這裡另存一份縮圖：
       同一張圖放兩份的下場一律是其中一份改了另一份沒改。
