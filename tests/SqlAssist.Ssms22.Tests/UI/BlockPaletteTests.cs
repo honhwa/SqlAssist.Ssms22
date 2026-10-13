@@ -130,15 +130,49 @@ public sealed class BlockPaletteTests
     }
 
     /// <remarks>
-    /// 引號本來就是符號端點的一部分，所以那一格自訂色仍然管它；兩個通道都留空時才各自走推導。
+    /// 引號端點走的是標記層的螢光筆，不是端點配色，所以「符號高亮」那一格的自訂值管不到它。
+    /// 兩態若同一個顏色，這一組就等於不存在。
     /// </remarks>
     [Fact]
-    public void 自訂符號色時引號端點跟著走()
+    public void 自訂符號色不影響引號端點()
     {
         var settings = new SqlAssistSettings { BlockSymbolForeground = "#FFFFFF", BlockSymbolBackground = "#303080" };
         var colors = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false, settings);
-        Assert.Equal(colors[ThemeBrush.BlockSymbolForeground], colors[ThemeBrush.BlockQuoteForeground]);
-        Assert.Equal(colors[ThemeBrush.BlockSymbolBackground], colors[ThemeBrush.BlockQuoteBackground]);
+        Assert.NotEqual(colors[ThemeBrush.BlockSymbolForeground], colors[ThemeBrush.BlockQuoteForeground]);
+        Assert.NotEqual(colors[ThemeBrush.BlockSymbolBackground], colors[ThemeBrush.BlockQuoteBackground]);
+        var defaults = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false);
+        Assert.Equal(defaults[ThemeBrush.BlockQuoteBackground], colors[ThemeBrush.BlockQuoteBackground]);
+        Assert.Equal(defaults[ThemeBrush.BlockQuoteForeground], colors[ThemeBrush.BlockQuoteForeground]);
+    }
+
+    /// <summary>引號端點與端點配色無關，自訂成一整塊同色時也不例外。</summary>
+    /// <remarks>
+    /// 實機回報的那一組值：全域字色 <c>#FFFF00</c>、符號前背景都填 <c>#FF00FF</c>。那時游標
+    /// 在字串內外會拿到同一個洋紅（前背景同色被拉開成暗紫 <c>#4D004D</c>），於是「亮黃」怎麼
+    /// 改都看不到。
+    /// </remarks>
+    [Fact]
+    public void 自訂洋紅符號色時引號端點仍是亮黃底深字()
+    {
+        var settings = new SqlAssistSettings
+        {
+            BlockKeywordForeground = "#FFFF00",
+            BlockSymbolForeground = "#FF00FF",
+            BlockSymbolBackground = "#FF00FF"
+        };
+        var colors = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false, settings);
+
+        var fill = colors[ThemeBrush.BlockQuoteBackground];
+        Assert.True(ThemeColorMath.Luminance(fill) >= TextMarkColors.MinimumHighlightLuminance);
+        Assert.True(ThemeColorMath.Contrast(colors[ThemeBrush.BlockQuoteForeground], fill) >= 4.5);
+        // 種子是黃的，壓深或調亮之後色相還在：藍比紅綠高的不是黃。
+        Assert.True(fill.R > fill.B && fill.G > fill.B);
+        // 自訂值仍留在括號那一組上，只是前背景同色（對比 1:1）會被拉開成暗紫 #4D004D——
+        // 實機看到的就是那一塊。引號那一格不跟著它走。
+        Assert.Equal(Color.FromRgb(255, 0, 255), colors[ThemeBrush.BlockSymbolForeground]);
+        var symbolFill = colors[ThemeBrush.BlockSymbolBackground];
+        Assert.NotEqual(fill, symbolFill);
+        Assert.True(symbolFill.R > symbolFill.G && symbolFill.B > symbolFill.G);
     }
 
     [Theory]

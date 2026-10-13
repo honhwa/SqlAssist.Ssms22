@@ -22,13 +22,22 @@ internal static class BlockPalette
         var globalInk = ReadOptionalColor(settings?.BlockKeywordForeground);
         var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground, EndpointKind.Keyword);
         // 細項只覆寫指定通道；留空或無效值繼承全域「原始基準值」，再依實際背景校正。
-        // 引號與括號共用同一格設定：自訂過就照自訂（引號本來就是符號端點的一部分），
-        // 兩個通道都留空時才各自走推導——括號是金黃，引號是亮黃。
         var symbolInk = ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk;
-        var symbolBackground = settings?.BlockSymbolBackground;
         var sharedFallback = ReadColor(settings?.BlockKeywordBackground, accent);
-        var symbol = Endpoint(symbolInk, symbolBackground, EndpointKind.Symbol, sharedFallback);
-        var quote = Endpoint(symbolInk, symbolBackground, EndpointKind.Quote, sharedFallback);
+        var symbol = Endpoint(symbolInk, settings?.BlockSymbolBackground, EndpointKind.Symbol, sharedFallback);
+        var quote = Quote();
+
+        // 引號端點「不」走端點那一支，也不受上面兩格自訂色影響。它只在游標進到字串裡面時
+        // 出現，賣的是「現在在字串裡」這個狀態，而不是「這兩個字元屬於哪一種端點」；跟著符號
+        // 那一格自訂色走的話，游標在字串內外會拿到同一個顏色，這一組就等於不存在——一個把
+        // 顏色選成 #FF00FF 的使用者看到的就是「兩態都是紫的，改了也沒反應」。
+        // 它是標記層的螢光筆：固定亮黃底配深字，與搜尋命中差一級（理由見 QuoteFill）。
+        (Color Foreground, Color Background) Quote()
+        {
+            if (highContrast) return (background, text);
+            var fill = TextMarkColors.QuoteFill(background);
+            return (TextMarkColors.DarkInk(fill, text), fill);
+        }
 
         (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, EndpointKind kind, Color? defaultBackground = null)
         {
@@ -47,14 +56,6 @@ internal static class BlockPalette
                 // 「配對的兩端在哪裡」就疊成同一塊顏色。字色走 GoldInk 而不是 LightInk：底色
                 // 調亮之後淺色佈景的深字在金黃上讀得到，沿用「讀得到就留著」會變成黃底黑字。
                 if (kind == EndpointKind.Symbol) return (TextMarkColors.GoldInk, TextMarkColors.GoldFill(background));
-
-                // 引號只在游標進到字串裡面時走這一組，而那時它與命中是同一個工作狀態（在字串裡
-                // 找一個值），所以用命中那一組的推導而不是端點的金黃：亮底深字，與命中差一級。
-                if (kind == EndpointKind.Quote)
-                {
-                    var quoteFill = TextMarkColors.QuoteFill(background);
-                    return (TextMarkColors.DarkInk(quoteFill, text), quoteFill);
-                }
 
                 // 關鍵字端點讀的是「這是哪一層區塊」，跟著強調色走，字色留表面自己的前景。
                 var mark = TextMarkColors.DarkFill(seed, background, TextMarkColors.Strong);
@@ -88,12 +89,14 @@ internal static class BlockPalette
         };
     }
 
-    /// <summary>端點的三種身分；差別只在「一個顏色都沒自訂」時預設走哪一支。</summary>
+    /// <summary>端點的兩種身分；差別只在「一個顏色都沒自訂」時預設走哪一支。</summary>
+    /// <remarks>
+    /// 字串引號端點不在這裡：它不是端點配色的一員，是標記層的螢光筆，見 <c>Quote</c>。
+    /// </remarks>
     private enum EndpointKind
     {
         Keyword,
-        Symbol,
-        Quote
+        Symbol
     }
 
     private static Color ReadColor(string? preference, Color fallback) =>
