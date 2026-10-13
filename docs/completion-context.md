@@ -3,7 +3,7 @@
 游標前方的文字決定清單裡剩下什麼：哪些位置只剩固定那幾個字、哪些位置要把整類項目
 拿掉、以及關鍵字在什麼時機自動變成大寫。判斷的出處是
 `Core/Completion/SqlCompletionContextAnalyzer`，它讀的是實際文字而不是任何宣告。
-清單本身怎麼排名與觸發見 [completion.md](completion.md)。
+排名與觸發見 [completion.md](completion.md)。
 
 ## 引數與提示的封閉清單
 
