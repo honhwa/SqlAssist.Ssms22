@@ -100,6 +100,47 @@ public sealed class BlockPaletteTests
         Assert.NotEqual(keyword, fill);
     }
 
+    /// <remarks>
+    /// 引號端點在游標進到字串裡面時才用這一組，所以它必須與命中分得開——字串的內容常常正好
+    /// 是搜尋命中，兩塊會出現在同一行。走的是螢光筆那一組（亮底深字），不是端點的金黃底白字。
+    /// </remarks>
+    [Theory]
+    [InlineData("light")]
+    [InlineData("dark")]
+    [InlineData("mango")]
+    [InlineData("plum")]
+    [InlineData("cool-breeze")]
+    [InlineData("forest")]
+    public void 引號端點未自訂時是亮黃底深字且與命中分得開(string mode)
+    {
+        var shell = ThemePaletteTests.ColorsFor(mode);
+        var background = shell[ThemeBrush.ListBackground];
+        var colors = BlockPalette.Create(background, shell[ThemeBrush.ListForeground],
+            shell[ThemeBrush.AccentBorder], null, false);
+
+        var fill = colors[ThemeBrush.BlockQuoteBackground];
+        Assert.True(ThemeColorMath.Luminance(fill) >= TextMarkColors.MinimumHighlightLuminance);
+        Assert.True(ThemeColorMath.Contrast(colors[ThemeBrush.BlockQuoteForeground], fill) >= 4.5);
+        Assert.True(ThemeColorMath.Contrast(fill, background) >= TextMarkColors.HighlightSeparation);
+        Assert.True(ThemeColorMath.Contrast(fill, shell[ThemeBrush.MatchBackground]) >= TextMarkColors.LevelSeparation);
+        Assert.NotEqual(colors[ThemeBrush.BlockSymbolBackground], fill);
+        Assert.NotEqual(colors[ThemeBrush.BlockKeywordBackground], fill);
+        // 種子是黃的，壓深或調亮之後色相還在：藍比紅綠高的不是黃。
+        Assert.True(fill.R > fill.B && fill.G > fill.B);
+    }
+
+    /// <remarks>
+    /// 引號本來就是符號端點的一部分，所以那一格自訂色仍然管它；兩個通道都留空時才各自走推導。
+    /// </remarks>
+    [Fact]
+    public void 自訂符號色時引號端點跟著走()
+    {
+        var settings = new SqlAssistSettings { BlockSymbolForeground = "#FFFFFF", BlockSymbolBackground = "#303080" };
+        var colors = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false, settings);
+        Assert.Equal(colors[ThemeBrush.BlockSymbolForeground], colors[ThemeBrush.BlockQuoteForeground]);
+        Assert.Equal(colors[ThemeBrush.BlockSymbolBackground], colors[ThemeBrush.BlockQuoteBackground]);
+    }
+
     [Theory]
     [InlineData("light")]
     [InlineData("dark")]
@@ -138,6 +179,7 @@ public sealed class BlockPaletteTests
         Assert.Equal(Colors.Yellow, colors[ThemeBrush.BlockKeywordBackground]);
         Assert.Equal(Colors.Black, colors[ThemeBrush.BlockKeywordForeground]);
         Assert.Equal(colors[ThemeBrush.BlockKeywordBackground], colors[ThemeBrush.BlockSymbolBackground]);
+        Assert.Equal(colors[ThemeBrush.BlockSymbolBackground], colors[ThemeBrush.BlockQuoteBackground]);
     }
 
     [Theory]

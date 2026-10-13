@@ -28,6 +28,24 @@ public sealed class SqlAutoAliasTests
     }
 
     /// <remarks>
+    /// 首字母拼出來剛好是保留字時退回名稱的第一個字母：<c>Archive_Shelf</c> 取成
+    /// <c>as</c>，寫進去的 <c>FROM dbo.Archive_Shelf as</c> 尾端就會被讀成 AS 關鍵字，
+    /// 而那個位置是語法錯誤。判準是「當成識別字書寫必須加方括號」那一份
+    /// （<c>SqlKeywordCatalog.IsReservedIdentifier</c>），不是整份關鍵字清單。
+    /// </remarks>
+    [Theory]
+    [InlineData("Archive_Shelf", "a")]
+    [InlineData("Item_State", "i")]
+    [InlineData("Order_Record", "o")]
+    [InlineData("Item_Note", "i")]
+    [InlineData("Tag_Order", "t")]
+    [InlineData("Archive_Note_Detail", "a")]
+    public void 別名是保留字時退回第一個字母(string name, string expected)
+    {
+        Assert.Equal(expected, SqlAutoAlias.Create(name));
+    }
+
+    /// <remarks>
     /// 函式前綴留著的話，每一個資料表值函式的別名都以 <c>f</c> 或 <c>t</c> 開頭，
     /// 而 <c>flbr</c> 與 <c>fll</c> 要看出差在哪裡得數到第三個字母。
     /// </remarks>

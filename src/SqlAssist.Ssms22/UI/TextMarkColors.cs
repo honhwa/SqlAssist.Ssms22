@@ -141,6 +141,16 @@ internal static class TextMarkColors
         return (current, match);
     }
 
+    /// <summary>引號端點的底色：命中那支筆再劃一層的那一級。</summary>
+    /// <remarks>
+    /// 引號端點只在游標進到字串裡面時換成這一組，而那時字串的內容常常正好是搜尋命中——兩塊
+    /// 出現在同一行，所以不能同一個顏色。不另找一支更亮的黃：亮度帶的上緣是
+    /// <see cref="MaximumHighlightLuminance"/>，白底還會把它往遠離表面的方向推，推完落在 0.79，
+    /// 那正是命中自己那一個亮度。往深的一階走才留得住差別，而「再劃一層」這一級已經有現成的
+    /// 推導，它順帶保證與命中差得開 <see cref="LevelSeparation"/>。
+    /// </remarks>
+    public static Color QuoteFill(Color surface) => HighlightPair(surface).Current;
+
     /// <summary>螢光筆底上的字色：固定的深字。</summary>
     /// <remarks>
     /// 這一組的底色是亮的，所以字色往深的那一端走，與 <see cref="LightInk"/> 正好相反。留著表面

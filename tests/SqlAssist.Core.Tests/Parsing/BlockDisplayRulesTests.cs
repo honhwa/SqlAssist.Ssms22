@@ -86,6 +86,27 @@ public sealed class BlockDisplayRulesTests
         Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockSameLineBackground = true }, false, true));
     }
 
+    /// <remarks>
+    /// 引號端點分成這兩種狀態顯示：游標夾在兩個引號之間時命中的是結尾那一個，停在引號左邊時
+    /// 命中的是開頭那一個。空字串兩者緊鄰，仍然分得開。
+    /// </remarks>
+    [Fact]
+    public void 停在結尾端點才算進到配對裡面()
+    {
+        const string sql = "SELECT ('abc')";
+        var matcher = new BlockMatcher(sql);
+        var opening = sql.IndexOf("'", System.StringComparison.Ordinal);
+        var closing = sql.LastIndexOf("'", System.StringComparison.Ordinal);
+        Assert.False(BlockDisplayRules.CaretAtClosing(matcher.FindPairAt(opening)!, opening));
+        Assert.True(BlockDisplayRules.CaretAtClosing(matcher.FindPairAt(closing)!, closing));
+
+        const string empty = "SELECT ''";
+        var emptyMatcher = new BlockMatcher(empty);
+        var first = empty.IndexOf("'", System.StringComparison.Ordinal);
+        Assert.False(BlockDisplayRules.CaretAtClosing(emptyMatcher.FindPairAt(first)!, first));
+        Assert.True(BlockDisplayRules.CaretAtClosing(emptyMatcher.FindPairAt(first + 1)!, first + 1));
+    }
+
     [Fact]
     public void 關閉CASE與括號不影響一般區塊()
     {

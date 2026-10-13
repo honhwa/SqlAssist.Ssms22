@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using SqlAssist.Core.Keywords;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
 
@@ -40,6 +41,15 @@ public static class SqlAutoAlias
     ///
     /// 名稱裡一個字母都沒有時（例如 <c>dbo.[2024]</c>）退回「去掉分隔符後的小寫」；
     /// 連一個字元都不剩就回傳空字串，由呼叫端決定要怎麼處理。
+    ///
+    /// 首字母拼出來剛好是保留字時退回名稱的第一個字母：<c>Archive_Shelf</c> 取成
+    /// <c>as</c>，寫出去的 <c>FROM dbo.Archive_Shelf as</c> 尾端會被讀成 AS 關鍵字，
+    /// 而 <c>AS as</c> 也一樣壞。判準用
+    /// <see cref="SqlKeywordCatalog.IsReservedIdentifier"/> 而不是整份關鍵字清單——
+    /// 像 <c>OUTPUT</c> 這種非保留字當別名完全合法，包起來只是多餘。
+    ///
+    /// 不改成方括號（<c>[as]</c>）：方括號是「非寫這個名字不可」才付的代價，而自動別名
+    /// 本來就是一個可以換的字，留那串字母只是為了省幾個辨識字元。
     /// </remarks>
     public static string Create(string sourceName)
     {
@@ -59,7 +69,7 @@ public static class SqlAutoAlias
 
         if (alias.Length > 0)
         {
-            return alias;
+            return AvoidReserved(alias, name);
         }
 
         return new string(
@@ -67,6 +77,31 @@ public static class SqlAutoAlias
                 .Where(char.IsLetterOrDigit)
                 .Select(char.ToLowerInvariant)
                 .ToArray());
+    }
+
+    /// <summary>
+    /// 首字母拼出來的字是保留字時，只留名稱的第一個字母。
+    /// </summary>
+    /// <remarks>
+    /// 留下的是第一段的頭一個字母而不是別的字母：它與被換掉的那串同源，
+    /// 使用者看得出這個別名是從哪個名稱來的。
+    /// </remarks>
+    private static string AvoidReserved(string alias, string name)
+    {
+        if (!SqlKeywordCatalog.IsReservedIdentifier(alias))
+        {
+            return alias;
+        }
+
+        foreach (var character in name)
+        {
+            if (char.IsLetter(character))
+            {
+                return char.ToLowerInvariant(character).ToString();
+            }
+        }
+
+        return alias;
     }
 
     /// <summary>

@@ -29,6 +29,13 @@ internal sealed class BlockViewState : IDisposable
     /// <summary>配對來自比目前文字舊的 snapshot；呈現層要平移座標而不是當成沒有配對。</summary>
     public bool IsStale { get; private set; }
     public BlockPair? SelectedPair { get; private set; }
+
+    /// <summary>游標停在選中配對的結尾端點上：已經進到裡面，而不是還待在它的左邊。</summary>
+    /// <remarks>
+    /// 字串引號的兩個端點靠這一格分狀態：游標夾在兩個引號之間時命中的是結尾那一個，
+    /// 停在引號左邊時命中的是開頭那一個——兩種拿到的是同一個配對。
+    /// </remarks>
+    public bool CaretInsidePair { get; private set; }
     public BlockPair? ContextPair { get; private set; }
     public BlockPair? RangePair { get; private set; }
     public event EventHandler<BlockChangedEventArgs>? Changed;
@@ -65,6 +72,7 @@ internal sealed class BlockViewState : IDisposable
     {
         if (_disposed || _view.IsClosed) return;
         var oldSelected = SelectedPair;
+        var oldInside = CaretInsidePair;
         var oldContext = ContextPair;
         var oldRange = RangePair;
         var oldSnapshot = Snapshot;
@@ -80,6 +88,7 @@ internal sealed class BlockViewState : IDisposable
         var lookup = valid ? BlockProjection.ToSource(position, Snapshot!) : 0;
         SelectedPair = valid ? Matcher?.FindPairAt(lookup) : null;
         if (SelectedPair is { } selected && !BlockDisplayRules.IsKindEnabled(selected.Kind, Settings)) SelectedPair = null;
+        CaretInsidePair = SelectedPair is { } paired && BlockDisplayRules.CaretAtClosing(paired, lookup);
         ContextPair = valid && Matcher is { } matcher &&
             (Settings.BlockContextHint || Settings.BlockGlyphs || Settings.BlockOverview || Settings.BlockRangeBackground)
             ? SelectedPair ?? BlockDisplayRules.FindContext(matcher, lookup, Settings) : null;
@@ -94,9 +103,10 @@ internal sealed class BlockViewState : IDisposable
                 : SelectedPair is { } endpoint && Accepts(endpoint) ? endpoint : null;
         }
 
-        // 同一端點內移動或同區塊內打量文字，不讓六個呈現層重建相同內容。
-        if (change == BlockChange.Caret && oldSelected == SelectedPair && oldContext == ContextPair &&
-            oldRange == RangePair && oldStale == IsStale &&
+        // 同一端點內移動或同區塊內打量文字，不讓六個呈現層重建相同內容。游標從同一對的開頭端點
+        // 移到結尾端點時配對是同一個，狀態卻換了，所以那一格也要比。
+        if (change == BlockChange.Caret && oldSelected == SelectedPair && oldInside == CaretInsidePair &&
+            oldContext == ContextPair && oldRange == RangePair && oldStale == IsStale &&
             oldSnapshot == Snapshot && ReferenceEquals(oldSettings, Settings)) return;
 
         if (Changed is not { } handlers) return;
@@ -120,6 +130,7 @@ internal sealed class BlockViewState : IDisposable
         Snapshot = null;
         IsStale = false;
         SelectedPair = null;
+        CaretInsidePair = false;
         ContextPair = null;
         RangePair = null;
     }

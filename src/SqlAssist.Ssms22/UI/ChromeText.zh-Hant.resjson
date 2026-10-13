@@ -2,7 +2,8 @@
   // 共用 UI 元件的文字：SQL Search、SQL Memory 與對話框都會用到。
   // ── 字型和色彩裡的項目名稱 ──
   "BlockEndpointFormat": "SqlAssist 配對端點預設",
-  "BlockSymbolFormat": "SqlAssist 配對括號與字串引號",
+  "BlockSymbolFormat": "SqlAssist 配對括號與方括號",
+  "BlockQuoteFormat": "SqlAssist 字串引號端點（游標在字串內）",
   "BlockRangeFormat": "SqlAssist 區塊區間背景",
   "ClickLinkFormat": "SqlAssist Ctrl＋點擊連結",
   // ── 主從區與預覽 ──

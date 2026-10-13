@@ -217,6 +217,26 @@ public sealed class SqlInsertionTextTests
     }
 
     /// <remarks>
+    /// 取名規則在 <c>SqlAutoAlias</c>，這裡只釘住提交時真的寫出那一串：別名是保留字時
+    /// 兩種樣式都會壞——<c>FROM dbo.Archive_Shelf as</c> 的尾端被讀成關鍵字，
+    /// <c>AS as</c> 也一樣。
+    /// </remarks>
+    [Theory]
+    [InlineData(SqlTableSourceAliasStyle.None, "dbo.Archive_Shelf a ")]
+    [InlineData(SqlTableSourceAliasStyle.As, "dbo.Archive_Shelf AS a ")]
+    public void 別名是保留字時寫出來的是另一個字(SqlTableSourceAliasStyle style, string expected)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = style,
+        };
+
+        Assert.Equal(expected, Build(Table("Archive_Shelf"), "SELECT * FROM |", settings));
+    }
+
+    /// <remarks>
     /// 這幾個位置一樣列資料表，文法上卻不接受別名——補上去是一句語法錯誤。
     /// 判斷不在 <c>Target</c> 上，見 <c>SqlCompletionContext.MayAppendTableAlias</c>。
     /// </remarks>

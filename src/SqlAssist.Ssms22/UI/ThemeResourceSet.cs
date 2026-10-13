@@ -60,7 +60,9 @@ internal enum ThemeBrush
     BlockKeywordForeground,
     BlockKeywordBackground,
     BlockSymbolForeground,
-    BlockSymbolBackground
+    BlockSymbolBackground,
+    BlockQuoteForeground,
+    BlockQuoteBackground
 }
 
 /// <summary>同一份動態資源供所有視窗與獨立 Popup 使用，不保存任何控制項參考。</summary>

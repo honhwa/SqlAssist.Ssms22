@@ -77,7 +77,9 @@ LibArchive」，而那個結構描述並不存在。關掉一個為了少打幾�
 在資料來源位置提交資料表、檢視或資料表值函式時，名稱後面再接一段 ` lr `：
 `FROM`、`JOIN`、`APPLY`、`USING`、`UPDATE` 之後，以及這些清單的逗號續列。
 寫不寫 `AS` 與要不要補由 `sqlAssist.insertion.tableSourceAliasStyle` 決定
-（`none`／`as`／`off`），取名與撞名加序號在 `Core/Completion/SqlAutoAlias`。
+（`none`／`as`／`off`），取名與撞名加序號在 `Core/Completion/SqlAutoAlias`：首字母拼出來
+剛好是保留字時退回第一個字母（`Archive_Shelf` 取成 `as` 會讓 `FROM t as` 尾端變成關鍵字，
+而 `a` 同樣唯一、不必加方括號）。
 函式名稱的 `fn_`／`ufn_`／`ifn_`／`tf_` 前綴先去掉再取首字母，否則每一個
 資料表值函式的別名都以 `f` 開頭，反而分不出 `lbr` 與 `ll`。
 

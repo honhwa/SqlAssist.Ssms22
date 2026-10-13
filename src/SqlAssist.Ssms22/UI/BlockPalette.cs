@@ -20,12 +20,17 @@ internal static class BlockPalette
         var range = highContrast ? Colors.Transparent : Tint(graphic, background, text, 0.12);
         var hint = highContrast ? background : ThemeColorMath.Composite(Tint(graphic, background, text, 0.06), background);
         var globalInk = ReadOptionalColor(settings?.BlockKeywordForeground);
-        var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground, symbol: false);
+        var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground, EndpointKind.Keyword);
         // 細項只覆寫指定通道；留空或無效值繼承全域「原始基準值」，再依實際背景校正。
-        var symbol = Endpoint(ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk, settings?.BlockSymbolBackground,
-            symbol: true, ReadColor(settings?.BlockKeywordBackground, accent));
+        // 引號與括號共用同一格設定：自訂過就照自訂（引號本來就是符號端點的一部分），
+        // 兩個通道都留空時才各自走推導——括號是金黃，引號是亮黃。
+        var symbolInk = ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk;
+        var symbolBackground = settings?.BlockSymbolBackground;
+        var sharedFallback = ReadColor(settings?.BlockKeywordBackground, accent);
+        var symbol = Endpoint(symbolInk, symbolBackground, EndpointKind.Symbol, sharedFallback);
+        var quote = Endpoint(symbolInk, symbolBackground, EndpointKind.Quote, sharedFallback);
 
-        (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, bool symbol, Color? defaultBackground = null)
+        (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, EndpointKind kind, Color? defaultBackground = null)
         {
             // 端點面積小，採實色高亮而非區間淡底；分類標籤才能改字色，marker 前景其實是框線。
             if (highContrast) return (background, text);
@@ -36,12 +41,20 @@ internal static class BlockPalette
             // 佈景翻轉，而字色只推到剛好 4.5 就停，深色佈景上會變成亮底灰字。
             if (explicitInk is null && seed == accent)
             {
-                // 符號——括號、方括號、字串引號——的種子固定是金黃，不隨主題走：它與搜尋命中
+                // 符號——括號、方括號——的種子固定是金黃，不隨主題走：它與搜尋命中
                 // 讀的是同一件事（「這裡被劃起來了」），與 SQL 的意思無關。但它與命中分居明度軸
                 // 兩側——這裡是金底白字、命中是亮黃深字——兩者同色的話，「命中停在哪裡」與
                 // 「配對的兩端在哪裡」就疊成同一塊顏色。字色走 GoldInk 而不是 LightInk：底色
                 // 調亮之後淺色佈景的深字在金黃上讀得到，沿用「讀得到就留著」會變成黃底黑字。
-                if (symbol) return (TextMarkColors.GoldInk, TextMarkColors.GoldFill(background));
+                if (kind == EndpointKind.Symbol) return (TextMarkColors.GoldInk, TextMarkColors.GoldFill(background));
+
+                // 引號只在游標進到字串裡面時走這一組，而那時它與命中是同一個工作狀態（在字串裡
+                // 找一個值），所以用命中那一組的推導而不是端點的金黃：亮底深字，與命中差一級。
+                if (kind == EndpointKind.Quote)
+                {
+                    var quoteFill = TextMarkColors.QuoteFill(background);
+                    return (TextMarkColors.DarkInk(quoteFill, text), quoteFill);
+                }
 
                 // 關鍵字端點讀的是「這是哪一層區塊」，跟著強調色走，字色留表面自己的前景。
                 var mark = TextMarkColors.DarkFill(seed, background, TextMarkColors.Strong);
@@ -69,8 +82,18 @@ internal static class BlockPalette
             [ThemeBrush.BlockKeywordForeground] = keyword.Foreground,
             [ThemeBrush.BlockKeywordBackground] = keyword.Background,
             [ThemeBrush.BlockSymbolForeground] = symbol.Foreground,
-            [ThemeBrush.BlockSymbolBackground] = symbol.Background
+            [ThemeBrush.BlockSymbolBackground] = symbol.Background,
+            [ThemeBrush.BlockQuoteForeground] = quote.Foreground,
+            [ThemeBrush.BlockQuoteBackground] = quote.Background
         };
+    }
+
+    /// <summary>端點的三種身分；差別只在「一個顏色都沒自訂」時預設走哪一支。</summary>
+    private enum EndpointKind
+    {
+        Keyword,
+        Symbol,
+        Quote
     }
 
     private static Color ReadColor(string? preference, Color fallback) =>

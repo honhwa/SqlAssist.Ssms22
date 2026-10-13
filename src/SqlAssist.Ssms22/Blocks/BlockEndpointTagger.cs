@@ -38,6 +38,7 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
     private readonly ThemeRefreshQueue _queue;
     private readonly ClassificationTag? _keyword;
     private readonly ClassificationTag? _symbol;
+    private readonly ClassificationTag? _quote;
     private ITagSpan<ClassificationTag>[] _tags = Array.Empty<ITagSpan<ClassificationTag>>();
     private bool _disposed;
     public event EventHandler<SnapshotSpanEventArgs>? TagsChanged;
@@ -51,6 +52,7 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
         _theme.AttachFormats(formats);
         _keyword = ResolveTag(types, BlockEndpointFormat.Keyword);
         _symbol = ResolveTag(types, BlockEndpointFormat.Symbol);
+        _quote = ResolveTag(types, BlockEndpointFormat.Quote);
         _queue = new ThemeRefreshQueue(view.VisualElement.Dispatcher,
             () => SqlAssistPlatformGuard.Probe("更新區塊端點配色", UpdateColors));
         _state.Changed += OnState;
@@ -97,6 +99,7 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
         if (_disposed || _view.IsClosed) return;
         Apply(BlockEndpointFormat.Keyword, ThemeBrush.BlockKeywordForeground, ThemeBrush.BlockKeywordBackground);
         Apply(BlockEndpointFormat.Symbol, ThemeBrush.BlockSymbolForeground, ThemeBrush.BlockSymbolBackground);
+        Apply(BlockEndpointFormat.Quote, ThemeBrush.BlockQuoteForeground, ThemeBrush.BlockQuoteBackground);
     }
 
     private void Apply(string name, ThemeBrush foreground, ThemeBrush background)
@@ -124,11 +127,20 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
         var pair = _state.Settings.BlockKeywordHighlight && source is not null ? _state.SelectedPair : null;
         var keyword = _keyword;
         var symbol = _symbol;
-        var next = pair is null || source is null || keyword is null || symbol is null ? Array.Empty<ITagSpan<ClassificationTag>>() :
+        var quote = _quote;
+
+        // 端點用哪一組分類：字串引號在游標進到裡面（夾在兩個引號之間）時換成引號那一組，其餘
+        // 照種類走。圖示與提示那一類呈現不受影響，這裡只管這兩個字元自己的底色。
+        ClassificationTag EndpointTag(BlockPair selected) =>
+            BlockDisplayRules.IsSymbol(selected.Kind)
+                ? (selected.Kind == BlockKind.String && _state.CaretInsidePair ? quote : symbol)
+                : keyword;
+
+        var next = pair is null || source is null || keyword is null || symbol is null || quote is null ? Array.Empty<ITagSpan<ClassificationTag>>() :
             pair.Opening.Concat(pair.Closing).Select(span => BlockProjection.Project(source, span, snapshot))
                 .Where(span => !span.IsEmpty)
                 .Select(span => (ITagSpan<ClassificationTag>)new TagSpan<ClassificationTag>(
-                    span, BlockDisplayRules.IsSymbol(pair.Kind) ? symbol : keyword)).ToArray();
+                    span, EndpointTag(pair))).ToArray();
         if (_tags.Length == next.Length && _tags.Select(t => (t.Span, t.Tag)).SequenceEqual(next.Select(t => (t.Span, t.Tag)))) return;
         var old = _tags;
         _tags = next;
@@ -140,7 +152,8 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
     private void OnTheme(object? sender, EventArgs args) => _queue.Request();
     private void OnFormat(object? sender, FormatItemsEventArgs args)
     {
-        if (EditorFormatChanges.Affects(args.ChangedItems, BlockEndpointFormat.Keyword, BlockEndpointFormat.Symbol)) _queue.Request();
+        if (EditorFormatChanges.Affects(args.ChangedItems, BlockEndpointFormat.Keyword, BlockEndpointFormat.Symbol) ||
+            EditorFormatChanges.Affects(args.ChangedItems, BlockEndpointFormat.Quote)) _queue.Request();
     }
     private void OnClosed(object sender, EventArgs args) => SqlAssistPlatformGuard.Run("關閉區塊端點分類", Dispose);
     public void Dispose()
