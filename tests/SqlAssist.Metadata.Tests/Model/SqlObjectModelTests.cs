@@ -254,6 +254,22 @@ public sealed class SqlObjectModelTests
         Assert.False(SqlIdentifier.IsScriptScoped(name));
     }
 
+    /// <remarks>
+    /// 暫存資料表與資料表變數在「不受方括號設定管轄」這一件事上是同一種，但
+    /// 「是不是一張接得上 <c>FROM</c> 的表」不是：<c>@rows</c> 要靠宣告才分辨得出來，
+    /// 而井號一個字元就說完了。自動別名問的是後者。
+    /// </remarks>
+    [Theory]
+    [InlineData("#tmp", true)]
+    [InlineData("##Shared", true)]
+    [InlineData("@rows", false)]
+    [InlineData("Lib_Reader", false)]
+    [InlineData("", false)]
+    public void 只有井號開頭算暫存資料表(string name, bool expected)
+    {
+        Assert.Equal(expected, SqlIdentifier.IsTemporaryTable(name));
+    }
+
     /// <summary>
     /// 沒有結構描述的物件只寫名稱本身。
     /// </summary>

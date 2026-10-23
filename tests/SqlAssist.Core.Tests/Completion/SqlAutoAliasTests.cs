@@ -73,6 +73,21 @@ public sealed class SqlAutoAliasTests
     }
 
     /// <remarks>
+    /// 井號既不是分隔符也不是字母，所以它只碰到第一段的頭：<c>#tmp</c> 只有一段，
+    /// 取到的是 <c>t</c>；<c>#LoanImport</c> 仍照大小寫交替切成兩段，取成 <c>li</c>。
+    /// 留著井號去取首字母的話會取到空字串，呼叫端於是整個放棄，暫存資料表在這個
+    /// 位置連一個別名都拿不到。
+    /// </remarks>
+    [Theory]
+    [InlineData("#tmp", "t")]
+    [InlineData("#LoanImport", "li")]
+    [InlineData("##Shared", "s")]
+    public void 暫存資料表的名稱照同一條規則取名(string name, string expected)
+    {
+        Assert.Equal(expected, SqlAutoAlias.Create(name));
+    }
+
+    /// <remarks>
     /// 名稱裡一個字母都沒有時退回「去掉分隔符後的小寫」：<c>[2024]</c> 這種名稱
     /// 在真實的資料庫裡存在，而沒有別名比一個不好看的別名糟。
     /// </remarks>

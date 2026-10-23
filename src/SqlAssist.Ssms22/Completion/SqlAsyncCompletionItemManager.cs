@@ -10,7 +10,9 @@ using Microsoft.VisualStudio.Text;
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Matching;
 using SqlAssist.Core.Notifications;
+using SqlAssist.Core.Parsing;
 using SqlAssist.Ssms22;
+using SqlAssist.Ssms22.Editor;
 
 namespace SqlAssist.Ssms22.Completion;
 
@@ -138,6 +140,16 @@ internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManage
         AsyncCompletionSessionDataSnapshot data,
         CancellationToken token)
     {
+        // 游標進了字串或註解，清單就沒有存在的理由，而這一份清單是游標還在程式碼
+        // 裡時開的：WHERE Name = 開的是欄位清單，接著打的那個單引號把游標帶進字串，
+        // 而平台在 session 開著時只會拿新文字重新篩選它——於是整個值的輸入過程都
+        // 掛著一份清單，打的字還會被模糊比對對到物件名稱上。回 null 讓平台收掉
+        // session，下一次建立清單時由來源那邊的 IsValid 擋住。
+        if (IsCaretInStringOrComment(session, data.Snapshot))
+        {
+            return null;
+        }
+
         var items = data.InitialSortedItemList;
         var selected = GetSelectedFilters(data);
         var pattern = FuzzyMatcher.NormalizePattern(GetTypedText(session, data));
@@ -307,6 +319,30 @@ internal sealed class SqlAsyncCompletionItemManager : IAsyncCompletionItemManage
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 游標是不是落在字串或註解裡。
+    /// </summary>
+    /// <remarks>
+    /// 位置要換算到<b>這一輪</b>的快照：篩選是非同步的，排進佇列之後使用者可能又打了
+    /// 一個字，而游標還停在舊快照上。
+    ///
+    /// 讀文字走 <see cref="SnapshotTextSource"/> 直接讀快照，不複製整份指令碼——
+    /// 這條路每一次按鍵都走得到，而大檔案上複製一份前文正是打字時感覺得到的卡頓。
+    /// </remarks>
+    private static bool IsCaretInStringOrComment(IAsyncCompletionSession session, ITextSnapshot snapshot)
+    {
+        var caret = session.TextView.Caret.Position.BufferPosition;
+
+        if (caret.Snapshot != snapshot)
+        {
+            caret = caret.TranslateTo(snapshot, PointTrackingMode.Positive);
+        }
+
+        return SqlLexicalContext.IsInStringOrComment(
+            new SnapshotTextSource(snapshot),
+            caret.Position);
     }
 
     /// <summary>

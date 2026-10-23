@@ -74,7 +74,7 @@ LibArchive」，而那個結構描述並不存在。關掉一個為了少打幾�
 
 ## 資料來源的自動別名
 
-在資料來源位置提交資料表、檢視或資料表值函式時，名稱後面再接一段 ` lr `：
+在資料來源位置提交資料表、檢視、資料表值函式或暫存資料表時，名稱後面再接一段 ` lr `：
 `FROM`、`JOIN`、`APPLY`、`USING`、`UPDATE` 之後，以及這些清單的逗號續列。
 寫不寫 `AS` 與要不要補由 `sqlAssist.insertion.tableSourceAliasStyle` 決定
 （`none`／`as`／`off`），取名與撞名加序號在 `Core/Completion/SqlAutoAlias`：首字母拼出來
@@ -85,6 +85,14 @@ LibArchive」，而那個結構描述並不存在。關掉一個為了少打幾�
 
 能不能接別名問的是 `SqlCompletionContext.MayAppendTableAlias`，不是 `Target`：
 `INSERT`／`INSERT INTO` 的目標表與 `DROP TABLE` 的名稱一樣是 `DataSource`，文法上卻都不接受別名。
+
+暫存資料表（`#`／`##` 開頭）也在這一份裡。它沒有結構描述可補、名稱又長，
+打 `li.ReaderId` 比打 `#LoanImport.ReaderId` 短，而且幾乎一定在同一段指令碼裡
+被引用第二次。它在清單上與 CTE、資料表變數共用 `ScriptDataSource` 這一類，
+所以放行與否看的是名稱形狀（`SqlIdentifier.IsTemporaryTable`），不是種類；
+另外兩種**刻意不補**：CTE 與資料表變數的名稱是使用者當場取的一兩個音節
+（`c`、`@rows`），再取一次別名只是讓同一句裡有兩個名字指同一個東西。
+取名規則不分這三種——`#tmp` 取成 `t` 是對的，只是後兩種不進來。
 
 別名一律接在**右括號之後**，而括號是提交當下才寫出來的，所以接的位置有三處，
 由 `SqlFunctionCallInsertion` 的模式一分為三：不補括號時 `SqlInsertionText`

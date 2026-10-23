@@ -9,7 +9,7 @@ using SqlAssist.Core.Settings;
 namespace SqlAssist.Core.Completion;
 
 /// <summary>
-/// 在資料來源位置提交資料表、檢視或資料表值函式時，替它取一個別名。
+/// 在資料來源位置提交資料表、檢視、資料表值函式或暫存資料表時，替它取一個別名。
 /// </summary>
 /// <remarks>
 /// 這支只做「取名」這件純文字的事。「現在這個位置是不是資料來源」由呼叫端先問
@@ -175,6 +175,9 @@ public static class SqlAutoAlias
     /// 資料表值函式在「展開函式呼叫」開著時不在這裡接別名——那一條路徑由
     /// <c>SqlFunctionCallExpansion</c> 負責把別名接到右括號之後，這裡再接一次
     /// 會變成 <c>fn() f f</c>。
+    ///
+    /// 哪些建議接得上由 <see cref="AcceptsAlias"/> 決定：資料表、檢視、資料表值函式，
+    /// 以及指令碼自己宣告的暫存資料表。CTE 與資料表變數不進來。
     /// </remarks>
     public static string? ComposeSuffix(
         SqlSuggestion suggestion,
@@ -203,7 +206,7 @@ public static class SqlAutoAlias
             return null;
         }
 
-        if (suggestion.Kind is not (SuggestionKind.Table or SuggestionKind.View or SuggestionKind.TableFunction))
+        if (!AcceptsAlias(suggestion))
         {
             return null;
         }
@@ -218,6 +221,33 @@ public static class SqlAutoAlias
         var keyword = style == SqlTableSourceAliasStyle.As ? "AS " : string.Empty;
 
         return $" {keyword}{alias} ";
+    }
+
+    /// <summary>
+    /// 這一筆建議指的是不是一張「接在 <c>FROM</c> 後面、也可以順便取別名」的表。
+    /// </summary>
+    /// <remarks>
+    /// 資料庫物件看種類就分得完。指令碼自己宣告的那一份不行：
+    /// <see cref="SuggestionKind.ScriptDataSource"/> 同時收暫存資料表、資料表變數與
+    /// CTE，而三者在這裡的答案不一樣。
+    ///
+    /// 暫存資料表的別名與資料表<b>同一個理由</b>：名稱前面帶著井號、沒有結構描述，
+    /// 打 <c>li.ReaderId</c> 比打 <c>#LoanImport.ReaderId</c> 短，而它幾乎一定會在
+    /// 同一段指令碼裡被引用第二次。
+    ///
+    /// 另外兩種<b>刻意不補</b>：CTE 與資料表變數的名稱是使用者當場取的一兩個音節
+    /// （<c>c</c>、<c>@rows</c>），而它們只在宣告它的那一段看得見——再取一個別名，
+    /// 同一句裡就有兩個名字指同一個東西，讀的人還要回頭確認哪一個是哪一個。
+    /// 取名規則本身不看這件事：<c>#tmp</c> 取成 <c>t</c> 是對的，只是這兩種不進來。
+    /// </remarks>
+    private static bool AcceptsAlias(SqlSuggestion suggestion)
+    {
+        return suggestion.Kind switch
+        {
+            SuggestionKind.Table or SuggestionKind.View or SuggestionKind.TableFunction => true,
+            SuggestionKind.ScriptDataSource => SqlIdentifier.IsTemporaryTable(suggestion.DisplayText),
+            _ => false,
+        };
     }
 
     /// <summary>

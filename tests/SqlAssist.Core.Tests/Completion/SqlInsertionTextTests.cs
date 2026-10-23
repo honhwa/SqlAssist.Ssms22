@@ -257,6 +257,52 @@ public sealed class SqlInsertionTextTests
     }
 
     /// <remarks>
+    /// 暫存資料表與資料表是同一個理由：名稱前面帶著井號，打 <c>li.</c> 比打
+    /// <c>#LoanImport.</c> 短，而它幾乎一定在同一段指令碼裡被引用第二次。它不在
+    /// 資料庫物件的清單裡，所以在建議項上走的是 <see cref="SuggestionKind.ScriptDataSource"/>
+    /// 那一支——只在這裡放行井號開頭，另外兩種仍然不補。
+    /// </remarks>
+    [Theory]
+    [InlineData("#LoanImport", SqlTableSourceAliasStyle.None, "#LoanImport li ")]
+    [InlineData("#LoanImport", SqlTableSourceAliasStyle.As, "#LoanImport AS li ")]
+    [InlineData("##Shared", SqlTableSourceAliasStyle.None, "##Shared s ")]
+    public void 暫存資料表也會自動補別名(string name, SqlTableSourceAliasStyle style, string expected)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = style,
+        };
+
+        var staging = new SqlSuggestion(name, name, "Temporary table", name, SuggestionKind.ScriptDataSource);
+
+        Assert.Equal(expected, Build(staging, "SELECT * FROM |", settings));
+    }
+
+    /// <remarks>
+    /// 同一份清單裡的另外兩種刻意不補：CTE 與資料表變數的名稱是使用者當場取的一兩個
+    /// 音節，再取一次別名只是讓同一句裡有兩個名字指同一個東西。少了這一條，
+    /// 把井號的判斷換成 <c>SqlIdentifier.IsScriptScoped</c> 不會有任何測試失敗。
+    /// </remarks>
+    [Theory]
+    [InlineData("ReaderList")]
+    [InlineData("@rows")]
+    public void 指令碼宣告的CTE與資料表變數不補別名(string name)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+        };
+
+        var source = new SqlSuggestion(name, name, "", "", SuggestionKind.ScriptDataSource);
+
+        Assert.Equal(name, Build(source, "SELECT * FROM |", settings));
+    }
+
+    /// <remarks>
     /// 逗號續列仍然是資料來源位置；撞名時往後加序號，否則 <c>FROM A a, B a</c>
     /// 兩張表會共用同一個別名，欄位限定字從此指到錯的那一張。
     /// </remarks>

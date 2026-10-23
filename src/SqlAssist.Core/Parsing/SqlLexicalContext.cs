@@ -16,6 +16,33 @@ public static class SqlLexicalContext
     }
 
     /// <summary>
+    /// 指定位置是否落在字串或註解裡——那裡面沒有任何東西該被建議。
+    /// </summary>
+    /// <remarks>
+    /// 這與 <see cref="IsCode"/> 不是同一個問題，不能互相取代：方括號與雙引號識別字
+    /// 同樣不算「一般程式碼」，但裡面放的<b>是</b>物件名稱，該照常建議；只有字串與
+    /// 兩種註解裡沒有任何東西可以補。用「不是程式碼」當判準的症狀，是使用者打
+    /// <c>FROM [Lib</c> 打到一半清單就被收掉。
+    ///
+    /// 問這句話的時機是清單<b>已經開著</b>的時候：<c>WHERE Name = </c> 開的是欄位
+    /// 清單，接著打的單引號讓游標進了字串，而平台只會拿新文字重新篩選那份清單。
+    /// </remarks>
+    public static bool IsInStringOrComment(ISqlTextSource sql, int position)
+    {
+        return GetState(sql, position) switch
+        {
+            SqlLexicalState.String or SqlLexicalState.LineComment or SqlLexicalState.BlockComment => true,
+            _ => false,
+        };
+    }
+
+    /// <summary>字串版本的多載。</summary>
+    public static bool IsInStringOrComment(string sql, int position)
+    {
+        return IsInStringOrComment(new SqlStringText(sql), position);
+    }
+
+    /// <summary>
     /// 判斷指定位置的語彙狀態。
     /// </summary>
     /// <remarks>

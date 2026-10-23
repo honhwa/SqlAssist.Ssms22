@@ -4,6 +4,7 @@ using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion.Data;
 using Microsoft.VisualStudio.Text.Editor;
 using SqlAssist.Core.Completion;
+using SqlAssist.Core.Parsing;
 using SqlAssist.Ssms22;
 using SqlAssist.Ssms22.Editor;
 using SqlAssist.Ssms22.Settings;
@@ -71,6 +72,19 @@ internal static class SqlCompletionReopen
         Schedule(textView, view =>
         {
             var caret = view.Caret.Position.BufferPosition;
+
+            // 游標進了字串或註解，開著的那一份清單就沒有存在的理由：它是游標還在
+            // 程式碼裡時建的（`WHERE Name = ` 開的是欄位清單），而平台在 session
+            // 開著時只會拿新文字重新篩選它——於是整個值的輸入過程都掛著一份清單。
+            // 收掉之後，下一次建立清單時由來源那邊的 IsValid 擋住。
+            if (SqlLexicalContext.IsInStringOrComment(
+                    new SnapshotTextSource(caret.Snapshot),
+                    caret.Position))
+            {
+                SqlAssistDiagnostics.Write("游標落在字串或註解裡，收掉建議清單");
+                broker.GetSession(view)?.Dismiss();
+                return;
+            }
 
             // 只取游標前方那一段：判斷用不到後面的文字，而分隔字元按得很勤，
             // 每一次都把整份指令碼複製一遍在大檔案上是白付的代價。
