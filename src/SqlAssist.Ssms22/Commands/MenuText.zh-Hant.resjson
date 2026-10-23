@@ -12,6 +12,7 @@
   "GoToDefinition": "移至定義",
   "ShowObjectStructure": "顯示游標處物件的結構",
   "RefreshSuggestions": "重新整理建議",
+  "RefreshCache": "重新整理快取",
   "SurroundWith": "以片段包住選取範圍",
   // 查詢視窗右鍵的貼上與就地改寫；InlineRenameKey 是就地改名的 F2 那一顆，只出現在鍵盤設定。
   "PasteAsInPredicate": "貼上為 IN 條件",

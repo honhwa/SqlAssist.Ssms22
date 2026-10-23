@@ -234,6 +234,21 @@
           <LocCanonicalName>SqlAssist.RefreshSuggestions</LocCanonicalName>
         </Strings>
       </Button>
+      <!--
+        放在「重新整理建議」的正下方：兩顆解的是同一種症狀（剛加完資料表、檢視或
+        資料表函式，編輯器還看不見它），差別只在使用者看到的是建議清單少了那一項，
+        還是物件名稱底下的紅色波浪線——後者是 SSMS 內建 IntelliSense 畫的，
+        讀的是另一份快取，只有這一顆會去動它。
+      -->
+      <Button guid="guidSqlAssistCommandSet" id="cmdidRefreshCache" priority="0x0210" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorActionsGroup" />
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Refresh Cache</ButtonText>
+          <CanonicalName>SqlAssist.RefreshCache</CanonicalName>
+          <LocCanonicalName>SqlAssist.RefreshCache</LocCanonicalName>
+        </Strings>
+      </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidSurroundWith" priority="0x0250" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
         <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
@@ -590,6 +605,14 @@
     <CommandPlacement guid="guidSqlAssistCommandSet" id="cmdidShowSqlSearch" priority="0x0120">
       <Parent guid="guidSqlAssistCommandSet" id="SqlAssistToolbarGroup" />
     </CommandPlacement>
+    <!--
+      查詢視窗右鍵也放一顆：紅色波浪線就長在文字底下，使用者的下一個動作是對它按右鍵。
+      走 CommandPlacement 而不是第二顆按鈕——外觀與工具選單那一顆相同，兩邊不必各留
+      一句選單文字。
+    -->
+    <CommandPlacement guid="guidSqlAssistCommandSet" id="cmdidRefreshCache" priority="0x0350">
+      <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+    </CommandPlacement>
   </CommandPlacements>
 
   <KeyBindings>
@@ -713,6 +736,7 @@
       <IDSymbol name="cmdidParenthesizeTop" value="0x0220" />
       <IDSymbol name="cmdidInlineRename" value="0x0221" />
       <IDSymbol name="cmdidInlineRenameKey" value="0x0222" />
+      <IDSymbol name="cmdidRefreshCache" value="0x0223" />
       <IDSymbol name="cmdidProbeResultGrid" value="0x0300" />
       <IDSymbol name="cmdidResultGridTempTable" value="0x0301" />
       <IDSymbol name="cmdidResultGridInPredicate" value="0x0302" />

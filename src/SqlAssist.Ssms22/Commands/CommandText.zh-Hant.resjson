@@ -21,6 +21,11 @@
   "ColorNotSaved": "色彩未儲存成功，請確認設定欄位的目前值及設定服務狀態後重試。",
   "SuggestionsRefreshed": "建議快取已清除；下次開啟建議清單或停留物件時會在背景重新載入。",
   "RefreshSuggestionsFailed": "重新整理建議失敗；原因已寫入診斷紀錄檔。",
+  // 「重新整理快取」的三種結果。第二句是最後手段：SqlAssist 那一半做完了，
+  // 原生那一半找不到命令，而使用者真正在意的是波浪線還在不在，所以必須說清楚。
+  "CacheRefreshed": "快取已重新整理；SqlAssist 會在下次開啟建議清單時重新載入，SSMS 內建的 IntelliSense 已重新讀取物件。",
+  "CacheRefreshedNativeUnavailable": "SqlAssist 的快取已清除，但找不到這個 SSMS 版本重新整理 IntelliSense 的命令；波浪線可能還在，原因已寫入診斷紀錄檔。",
+  "RefreshCacheFailed": "重新整理快取失敗；原因已寫入診斷紀錄檔。",
   // 就地編輯類命令的失敗句；與 SurroundFailed 同一個句型。
   "PasteValuesFailed": "貼上值清單失敗；原因已寫入診斷紀錄檔。",
   "RewriteFailed": "就地改寫失敗；原因已寫入診斷紀錄檔。",

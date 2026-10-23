@@ -9,6 +9,7 @@
   "GoToDefinition": "Go To Definition",
   "ShowObjectStructure": "Show Structure of Object at Cursor",
   "RefreshSuggestions": "Refresh Suggestions",
+  "RefreshCache": "Refresh Cache",
   "SurroundWith": "Surround Selection with Snippet",
   "PasteAsInPredicate": "Paste as IN Predicate",
   "PasteAsValues": "Paste as Value List",

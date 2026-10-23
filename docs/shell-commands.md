@@ -90,6 +90,30 @@ Ctrl+K, Ctrl+S——那條和絃在 SSMS 上解析得到的是內建行為，搶
 所以工具選單上的 SqlAssist 是純文字，與 VS 內建子選單一致；品牌識別在工具列、右鍵選單
 與關於視窗上。`tools/Test-CommandTable.ps1` 擋得下前者，後者只有這一段記錄得下來。
 
+## 刷新 SSMS 內建 IntelliSense 的物件快取
+
+物件名稱底下的紅色錯誤波浪線來自 SSMS 內建 IntelliSense 的物件快取。那份快取與
+SqlAssist 的分層快取是兩份（見[中繼資料](metadata.md)），清掉後者不會讓波浪線消失，
+所以要另有一顆命令去動它：**工具 → SqlAssist → 重新整理快取**
+（`SqlAssist.RefreshCache`，查詢視窗右鍵同一個入口）。
+
+那份快取沒有公開 API——`RadLangSvc` 的 `RefreshLocalCache` 與 `RefreshIntellisense`
+都是組件內部成員，命令表也只活在執行期。因此這顆命令執行殼層自己的
+「重新整理本機快取」，靠**命令名稱**找它（`Ssms22/Editor/SqlIntellisenseCache.cs`）：
+
+1. 先試 `SqlIntellisenseCacheNames.Candidates` 那幾個慣例名稱，命中就不必掃描。
+2. 都沒命中才列舉 `DTE.Commands`，比對名稱裡有沒有 `RefreshLocalCache`／
+   `RefreshIntellisense`。一個行程只掃一次，超過 200 毫秒會記一筆耗時。
+3. 兩者都找不到就只清 SqlAssist 那一半，並在狀態列說明波浪線可能還在。
+
+不寫死 GUID 與命令碼：SSMS 換版換掉的是識別碼，而名稱這一條的失效看得見——
+紀錄檔會寫「這個 SSMS 版本找不到那顆命令」；寫死的識別碼則會安靜地執行到別的命令，
+或什麼都不做。
+
+排查看紀錄檔那三句：`使用命令 X` 是走了候選名單；`列舉命令表找到 X` 代表候選名單
+跟不上，把那一個名字補進去就回到第一條路；`找不到那顆命令` 要先確認「編輯 →
+IntelliSense」選單裡還有沒有那一項。
+
 ## 改了命令表一定要重新安裝
 
 新增命令、選單項目或鍵繫結之後，**只部署 DLL 是沒有用的**。命令表雖然編譯在

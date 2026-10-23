@@ -71,6 +71,12 @@ internal sealed class SqlAssistCommands
             CommandIds.RefreshSuggestions,
             RefreshSuggestions,
             () => SqlAssistSettingsStore.Current.Enabled && ActiveSqlEditor.Current is not null);
+        // 與上面那一顆同樣只在有 SQL 編輯器時可用：原生那一半刷的是「這一個視窗」的物件快取，
+        // 沒有視窗就沒有東西可刷。
+        AddCommand(
+            CommandIds.RefreshCache,
+            RefreshCache,
+            () => SqlAssistSettingsStore.Current.Enabled && ActiveSqlEditor.Current is not null);
         // 全域鍵繫結（Ctrl+Alt+S）、殼層命令濾鏡與右鍵選單都要問狀態；沒有選取時
         // 回報停用，右鍵選單上那一項就是灰的，Ctrl+Alt+S 也照常落回殼層。
         AddCommand(
@@ -255,6 +261,7 @@ internal sealed class SqlAssistCommands
         CommandIds.GoToDefinition => MenuText.GoToDefinition,
         CommandIds.ShowObjectStructure => MenuText.ShowObjectStructure,
         CommandIds.RefreshSuggestions => MenuText.RefreshSuggestions,
+        CommandIds.RefreshCache => MenuText.RefreshCache,
         CommandIds.SurroundWith or CommandIds.SurroundWithFromTools => MenuText.SurroundWith,
         CommandIds.PasteAsInPredicate => MenuText.PasteAsInPredicate,
         CommandIds.PasteAsValues => MenuText.PasteAsValues,
@@ -813,6 +820,54 @@ internal sealed class SqlAssistCommands
             // 這條路徑綁著按鍵，失敗必須可見，但不應用對話框打斷編輯。
             SqlAssistDiagnostics.WriteAlways($"重新整理建議失敗：{exception}");
             SqlAssistStatusBar.Show(_package, CommandText.RefreshSuggestionsFailed);
+        }
+    }
+
+    /// <summary>
+    /// 清掉 SqlAssist 的快取，並要求 SSMS 重新整理內建 IntelliSense 的物件快取。
+    /// </summary>
+    /// <remarks>
+    /// 兩份一起清：使用者按下它的時機是「剛建完物件，編輯器還看不見」，而那時候
+    /// 建議清單與紅色波浪線各缺一半——前者缺的是 SqlAssist 的，後者缺的是原生的。
+    ///
+    /// 原生那一半找不到命令時仍然保留 SqlAssist 那一半，並且在狀態列說清楚波浪線
+    /// 可能還在：安靜地回一句「已完成」比沒有這顆命令更糟。
+    /// </remarks>
+    private void RefreshCache(object? sender, EventArgs eventArgs)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is null)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
+                return;
+            }
+
+            SqlMetadataService.InvalidateAll();
+            var result = SqlIntellisenseCache.Refresh(_package);
+            SqlAssistDiagnostics.WriteAlways($"使用者已要求重新整理快取：{result}");
+
+            SqlAssistStatusBar.Show(_package, result switch
+            {
+                SqlIntellisenseRefreshResult.Refreshed => CommandText.CacheRefreshed,
+                SqlIntellisenseRefreshResult.Unavailable => CommandText.CacheRefreshedNativeUnavailable,
+                _ => CommandText.RefreshCacheFailed,
+            });
+        }
+        catch (Exception exception)
+        {
+            // 同上：失敗必須看得見，但不應用對話框打斷編輯。
+            SqlAssistDiagnostics.WriteAlways($"重新整理快取失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, CommandText.RefreshCacheFailed);
         }
     }
 }

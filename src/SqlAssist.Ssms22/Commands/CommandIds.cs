@@ -190,6 +190,20 @@ internal static class CommandIds
     public const int InlineRename = 0x0221;
 
     /// <summary>
+    /// 清掉 SqlAssist 的中繼資料快取，並要求 SSMS 重新整理內建 IntelliSense 的物件快取。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="RefreshSuggestions"/> 分開而不是併進去：那一顆只清 SqlAssist 自己的
+    /// 分層快取（見 docs/metadata.md），而紅色錯誤波浪線畫的是 SSMS 內建 IntelliSense
+    /// 的判斷，它讀的是另一份快取。兩件事的入口分開，使用者才看得出哪一顆解掉哪一種症狀。
+    ///
+    /// 沒有鍵繫結：SSMS 自己的 Ctrl+Shift+R 已經是那件事的肌肉記憶，再綁一組只會讓
+    /// 兩者互相蓋掉；要綁的人走「選項 → 環境 → 鍵盤」，命令名稱是
+    /// <c>SqlAssist.RefreshCache</c>。
+    /// </remarks>
+    public const int RefreshCache = 0x0223;
+
+    /// <summary>
     /// 就地改名的 F2 鍵繫結；不出現在任何選單。
     /// </summary>
     /// <remarks>

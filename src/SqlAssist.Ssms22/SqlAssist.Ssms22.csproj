@@ -187,6 +187,15 @@
       <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.OLE.Interop.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!--
+      SSMS 內建 IntelliSense 的物件快取沒有公開 API（成員一律是 RadLangSvc 的組件內部），
+      只有殼層那顆「重新整理本機快取」命令動得到它。DTE 是唯一不必硬編 GUID 與命令碼
+      的入口：命令名稱在執行期問得到，SSMS 換版時失效的是名稱而不是命令碼。
+    -->
+    <Reference Include="EnvDTE">
+      <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\envdte.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Microsoft.VisualStudio.Threading">
       <HintPath>$(SsmsInstallDir)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Threading.17.x\Microsoft.VisualStudio.Threading.dll</HintPath>
       <Private>false</Private>
