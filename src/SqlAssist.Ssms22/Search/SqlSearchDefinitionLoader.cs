@@ -19,7 +19,7 @@ namespace SqlAssist.Ssms22.Search;
 /// 與 <see cref="SqlSearchActivation"/> 同一條路徑、同一組出處：
 /// <c>SqlMetadataCatalog.GetStructureAsync</c> 取第三／四層，
 /// <see cref="SqlObjectScript"/> 組指令碼（排版仍只有 <see cref="TSqlScriptRenderer"/> 一份）。
-/// 差別只在選項——這裡是唯讀的閱讀表面，用預覽那一組；F12 那一條要拿去執行，多蓋三項。
+/// 差別只在選項——這裡是唯讀的閱讀表面，用預覽那一組；F12 那一條要拿去執行，多蓋四項。
 ///
 /// <b>禁止</b>持有 <c>ISqlConnectionSource</c>：所有權在 <c>SqlMetadataCatalogRegistry</c>，
 /// 目錄一律向 <see cref="SqlSearchCatalogs"/> 要——清單搜哪一台，這裡就讀哪一台。

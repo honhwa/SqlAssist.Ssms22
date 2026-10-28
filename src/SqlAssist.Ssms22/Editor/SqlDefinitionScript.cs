@@ -15,7 +15,7 @@ namespace SqlAssist.Ssms22.Editor;
 /// <remarks>
 /// F12（<see cref="SqlDefinitionOpener"/>）與 SQL Search 的「移至定義」共用這一份。
 /// 兩條入口只差在那個物件是怎麼來的——一個是游標所在的識別字，一個是清單上選的那一列；
-/// 從結構開始的三步完全相同。各留一份的症狀是其中一份忘了可執行性那三個選項，
+/// 從結構開始的三步完全相同。各留一份的症狀是其中一份忘了可執行性那四個選項，
 /// 或忘了「緩衝區必須還是空的」那道守門，而後者會把指令碼蓋到使用者正在編輯的查詢上。
 ///
 /// 指令碼內容本身仍然只有 <c>Metadata/Formatting/SqlObjectScript</c> 一份，這裡只接線。
@@ -42,7 +42,7 @@ internal static class SqlDefinitionScript
                    structure.Object.QualifiedName,
                    documentName))
         {
-            // CreateForExecution 蓋掉的那三項是可執行性的要求，不是風格偏好；
+            // CreateForExecution 蓋掉的那四項是可執行性的要求，不是風格偏好；
             // 判斷只有那一份，這裡不重挑選項。
             return SqlObjectScript.BuildEditable(
                 structure,

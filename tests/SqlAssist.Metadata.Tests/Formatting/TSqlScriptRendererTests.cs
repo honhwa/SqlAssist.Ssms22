@@ -950,6 +950,85 @@ public sealed class TSqlScriptRendererTests
     }
 
     /// <remarks>
+    /// 這一份會被貼進一個新開的查詢視窗，而那個視窗連哪一個資料庫由使用者上一次的
+    /// 連線決定。少了這一行，從別的資料庫拿到的定義會在原來的資料庫裡執行。
+    /// </remarks>
+    [Fact]
+    public void 開頭依選項與資料庫名稱寫出USE()
+    {
+        var script = TSqlScriptRenderer.Default.Render(
+            LoanTableFixture.Create(),
+            new SqlScriptContext(
+                SqlScriptOptions.Fidelity with { IncludeUseDatabase = true },
+                newLine: "\n",
+                databaseName: "Library"));
+
+        Assert.StartsWith("USE [Library]\nGO\nCREATE TABLE", script);
+    }
+
+    /// <remarks>
+    /// 檔頭註解仍然在最前面：它是這份文字唯一的來源說明，而 <c>USE</c> 是可執行的
+    /// 敘述——兩者對調的話，存檔之後看不出這份指令碼是從哪台機器抓的。
+    /// </remarks>
+    [Fact]
+    public void USE排在檔頭註解之後()
+    {
+        var script = TSqlScriptRenderer.Default.Render(
+            LoanTableFixture.Create(),
+            new SqlScriptContext(
+                SqlScriptOptions.Fidelity with
+                {
+                    IncludeUseDatabase = true,
+                    IncludeHeaderComment = true
+                },
+                newLine: "\n",
+                serverName: "SQLLAB",
+                databaseName: "Library",
+                toolVersion: "SqlAssist 1.0"));
+
+        Assert.StartsWith("--", script);
+        Assert.True(
+            script.IndexOf("USE [Library]", StringComparison.Ordinal) <
+            script.IndexOf("CREATE TABLE", StringComparison.Ordinal));
+    }
+
+    /// <remarks>
+    /// 批次分隔關掉時它仍然要有自己的 <c>GO</c>：<c>USE</c> 在執行時才生效，
+    /// 同一個批次裡排在它後面的敘述在編譯時看到的還是原來的資料庫。
+    ///
+    /// 順便固定識別字的處理：關掉方括號之後，形狀不合法的名稱仍然要加括號，
+    /// 而 <c>USE My DB</c> 是一句語法錯誤。
+    /// </remarks>
+    [Fact]
+    public void 批次分隔關掉時USE仍自己一個批次並替名稱加括號()
+    {
+        var script = TSqlScriptRenderer.Default.Render(
+            LoanTableFixture.Create(),
+            new SqlScriptContext(
+                SqlScriptOptions.Minimal with { IncludeUseDatabase = true },
+                newLine: "\n",
+                databaseName: "My DB"));
+
+        Assert.StartsWith("USE [My DB]\nGO\nCREATE TABLE", script);
+    }
+
+    /// <remarks>
+    /// 查不到資料庫名稱時整段不寫：那時唯一的選擇是猜一個，而猜錯會把整份指令碼
+    /// 指到別的資料庫，比少這一行嚴重得多。
+    /// </remarks>
+    [Fact]
+    public void 沒有資料庫名稱時不寫USE()
+    {
+        var script = TSqlScriptRenderer.Default.Render(
+            LoanTableFixture.Create(),
+            new SqlScriptContext(
+                SqlScriptOptions.Fidelity with { IncludeUseDatabase = true },
+                newLine: "\n"));
+
+        Assert.StartsWith("CREATE TABLE", script);
+    }
+
+    /// <remarks>
     /// 關掉方括號之後仍然要替保留字加括號——那不是風格，少了它指令碼執行不了。
     /// </remarks>
     [Fact]

@@ -24,15 +24,20 @@ public sealed class SqlObjectScriptTests
         "SET ANSI_NULLS ON\r\nGO\r\nSET QUOTED_IDENTIFIER ON\r\nGO\r\n";
 
     /// <summary>F12 送進新查詢視窗用的那一組選項。</summary>
-    private static SqlScriptContext Execution(string? newLine) =>
+    /// <param name="databaseName">
+    /// 這個物件所屬的資料庫；null 代表這一次查不到，那時連 <c>USE</c> 都不寫。
+    /// </param>
+    private static SqlScriptContext Execution(string? newLine, string? databaseName = null) =>
         new(
             SqlScriptOptions.Fidelity with
             {
                 SetOptions = SqlSetOptionOutput.AlwaysOn,
                 BatchSeparation = SqlBatchSeparation.BetweenStatements,
-                ModuleStatement = SqlModuleStatement.Alter
+                ModuleStatement = SqlModuleStatement.Alter,
+                IncludeUseDatabase = true
             },
-            newLine: newLine);
+            newLine: newLine,
+            databaseName: databaseName);
 
     private static SqlObjectStructure Module(
         SqlObjectKind kind,
@@ -89,6 +94,79 @@ public sealed class SqlObjectScriptTests
 
         Assert.StartsWith(Header + "CREATE TABLE [dbo].[Lib_Reader]", script.Text);
         Assert.EndsWith("GO\r\n", script.Text);
+    }
+
+    /// <remarks>
+    /// 目的地是一個新開的查詢視窗，那個視窗連的是哪一個資料庫由使用者上一次的連線
+    /// 決定。少了這一行，一份從別的資料庫按 F12 拿到的定義會在原來的資料庫裡執行。
+    ///
+    /// <c>GO</c> 是這一段的重點之一：<c>USE</c> 在執行時才生效，同一個批次裡排在它
+    /// 後面的敘述在編譯時看到的仍然是原來的資料庫。
+    /// </remarks>
+    [Fact]
+    public void 開頭寫出USE與它自己那個批次()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", "CREATE PROCEDURE dbo.usp_LoanFinish\r\nAS\r\nSELECT 1;"),
+            Execution("\r\n", "Library"));
+
+        Assert.Equal(
+            "USE [Library]\r\nGO\r\n" + Header + "ALTER PROCEDURE dbo.usp_LoanFinish\r\nAS\r\nSELECT 1;\r\nGO\r\n",
+            script.Text);
+    }
+
+    /// <remarks>
+    /// 查不到資料庫名稱時唯一的選擇是猜一個，而猜錯會把整份指令碼指到別的資料庫。
+    /// 寧可少這一行——那份指令碼至少還在原來的資料庫裡，使用者看得出來。
+    /// </remarks>
+    [Fact]
+    public void 查不到資料庫名稱時不寫USE()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;"),
+            Execution("\r\n"));
+
+        Assert.DoesNotContain("USE ", script.Text);
+        Assert.StartsWith(Header, script.Text);
+    }
+
+    /// <remarks>
+    /// <c>USE</c> 是排在物件之前、自己不帶名稱的前置敘述。游標沒有跳過它，F12 一開
+    /// 就停在整份指令碼的最前面——那看起來像壞掉。
+    /// </remarks>
+    [Fact]
+    public void 游標跳過USE批次停在名稱之後()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", "CREATE PROCEDURE dbo.usp_LoanFinish\r\nAS\r\nSELECT 1;"),
+            Execution("\r\n", "Library"));
+
+        Assert.Equal(
+            "USE [Library]\r\nGO\r\n" + Header + "ALTER PROCEDURE dbo.usp_LoanFinish",
+            script.Text.Substring(0, script.CaretOffset));
+    }
+
+    /// <remarks>
+    /// 批次分隔關掉時 <c>USE</c> 仍然要有自己的 <c>GO</c>：那一段不是排版偏好，
+    /// 少了它後面的敘述就換不過資料庫。
+    /// </remarks>
+    [Fact]
+    public void 批次分隔關掉時USE仍然自己一個批次()
+    {
+        var script = SqlObjectScript.BuildEditable(
+            Module(SqlObjectKind.Procedure, "usp_LoanFinish", "CREATE PROCEDURE dbo.usp_LoanFinish AS SELECT 1;"),
+            new SqlScriptContext(
+                SqlScriptOptions.Fidelity with
+                {
+                    SetOptions = SqlSetOptionOutput.None,
+                    BatchSeparation = SqlBatchSeparation.None,
+                    ModuleStatement = SqlModuleStatement.Alter,
+                    IncludeUseDatabase = true
+                },
+                newLine: "\r\n",
+                databaseName: "Library"));
+
+        Assert.StartsWith("USE [Library]\r\nGO\r\n", script.Text);
     }
 
     /// <remarks>

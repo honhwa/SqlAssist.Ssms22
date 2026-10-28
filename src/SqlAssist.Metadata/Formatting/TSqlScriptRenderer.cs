@@ -41,6 +41,7 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
 
         var statements = new List<Statement>();
         AppendHeaderComment(statements, context);
+        AppendUseDatabase(statements, context);
 
         foreach (var structure in objects)
         {
@@ -103,6 +104,34 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
     }
 
     /// <summary>
+    /// 開頭的 <c>USE [資料庫]</c>，以及它自己那一個批次。
+    /// </summary>
+    /// <remarks>
+    /// 排在檔頭註解之後、所有物件之前。這一份指令碼多半會被貼進一個新開的查詢視窗，
+    /// 而那個視窗連的是哪一個資料庫由使用者上一次的連線決定：少了這一行，一份從別的
+    /// 資料庫按 F12 拿到的定義會在原來的資料庫裡執行，輕則找不到物件，重則在一個
+    /// 同名的資料表上改東西。
+    ///
+    /// 名稱走與其餘識別字同一份 <see cref="Identifier"/>，不自己拼一份：資料庫名稱
+    /// 可以是保留字、可以有空白，而少了方括號的 <c>USE My DB</c> 是一句語法錯誤。
+    ///
+    /// 查不到資料庫名稱時整段不寫，也不留一行空的 <c>USE</c>——那時唯一的選擇是猜，
+    /// 而猜錯會把整份指令碼指到別的地方去，比少這一行嚴重得多。
+    /// </remarks>
+    private static void AppendUseDatabase(List<Statement> statements, SqlScriptContext context)
+    {
+        if (!context.Options.IncludeUseDatabase || context.DatabaseName is not { Length: > 0 } database)
+        {
+            return;
+        }
+
+        statements.Add(new Statement(
+            "USE " + Identifier(database, context.Options),
+            batched: true,
+            requiresBatch: true));
+    }
+
+    /// <summary>
     /// 健檢的發現，寫成這個物件前面的一段註解。
     /// </summary>
     /// <remarks>
@@ -160,7 +189,14 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
 
         public bool Batched { get; }
 
-        /// <summary><c>CREATE TRIGGER</c> 這一族：語言規定它必須是批次裡的第一個敘述。</summary>
+        /// <summary>
+        /// 這一個敘述必須自己佔一個批次，不論批次分隔開著還是關著。
+        /// </summary>
+        /// <remarks>
+        /// 兩種情形：<c>CREATE TRIGGER</c> 這一族，語言規定它必須是批次裡的第一個敘述；
+        /// <c>USE</c> 則是換完資料庫才讓後面的東西編譯，同一個批次裡排在它後面的
+        /// 敘述看不到新的資料庫。
+        /// </remarks>
         public bool RequiresBatch { get; }
     }
 
@@ -1286,7 +1322,7 @@ public sealed class TSqlScriptRenderer : ISqlScriptRenderer
 
         foreach (var statement in statements)
         {
-            // 模組必須位於新批次開頭；只在它後面加 GO 無法隔開前面的 CREATE TABLE／SET。
+            // 模組與 USE 必須位於新批次開頭；只在它後面加 GO 無法隔開前面的 CREATE TABLE／SET。
             if (statement.RequiresBatch && batchHasStatement)
             {
                 builder.Append(context.Options.BatchSeparator).Append(context.NewLine);

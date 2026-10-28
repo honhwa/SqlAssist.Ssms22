@@ -36,12 +36,14 @@ var loan = new SqlObjectStructure(
         new SqlExtendedProperty(SqlExtendedPropertyLevel.Table, "MS_Description", "圖書館借閱紀錄")
     ]);
 
-// 與 SqlScriptPreferences.CreateForExecution 相同的三項強制覆寫。
+// 與 SqlScriptPreferences.CreateForExecution 相同的四項強制覆寫。這一份沒有資料庫
+// 名稱，所以 IncludeUseDatabase 開著也不會寫出 USE。
 var options = SqlScriptOptions.Fidelity with
 {
     SetOptions = SqlSetOptionOutput.FromCatalog,
     BatchSeparation = SqlBatchSeparation.BetweenStatements,
     ModuleStatement = SqlModuleStatement.Alter,
+    IncludeUseDatabase = true,
     IncludeExtendedProperties = true,
     IncludeHeaderComment = false,
     IncludeAnalyzerComments = false

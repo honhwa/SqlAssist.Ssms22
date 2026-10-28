@@ -29,12 +29,16 @@ internal static class SqlScriptPreferences
     /// 要拿去執行的那一份：F12 送進新查詢視窗的指令碼。
     /// </summary>
     /// <remarks>
-    /// 三項覆寫不是風格偏好，是可執行性的要求，所以不管使用者選了哪一組都要蓋掉：
+    /// 四項覆寫不是風格偏好，是可執行性的要求，所以不管使用者選了哪一組都要蓋掉：
     /// <c>ALTER PROCEDURE</c> 必須是批次裡的第一個敘述，少了 <c>GO</c> 就分不開；
     /// 計算資料行、篩選索引與索引檢視對那兩個 <c>SET</c> 的值有要求，
     /// 少了它們的 <c>CREATE TABLE</c> 在某些連線設定下會直接失敗；
     /// 而 F12 之後接著要做的事幾乎都是「改一下再執行」，給 <c>CREATE</c> 的話
     /// 每一次都要自己把第一個字改掉。
+    ///
+    /// 開頭的 <c>USE [資料庫]</c> 是第四項，理由也一樣：目的地是一個新開的查詢
+    /// 視窗，那個視窗連的是哪一個資料庫由使用者上一次的連線決定。少了這一行，
+    /// 一份從別的資料庫按 F12 拿到的定義會在原來的資料庫裡執行。
     ///
     /// <c>SetOptions</c> 蓋成 <see cref="SqlSetOptionOutput.FromCatalog"/> 而不是
     /// <see cref="SqlSetOptionOutput.AlwaysOn"/>：一張在 <c>OFF</c> 之下建起來的
@@ -60,7 +64,8 @@ internal static class SqlScriptPreferences
             {
                 SetOptions = SqlSetOptionOutput.FromCatalog,
                 BatchSeparation = SqlBatchSeparation.BetweenStatements,
-                ModuleStatement = SqlModuleStatement.Alter
+                ModuleStatement = SqlModuleStatement.Alter,
+                IncludeUseDatabase = true
             };
         }
 

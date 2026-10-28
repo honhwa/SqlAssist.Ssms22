@@ -186,6 +186,23 @@ public sealed record SqlScriptOptions
 
     public string BatchSeparator { get; init; } = "GO";
 
+    /// <summary>開頭寫一個 <c>USE [資料庫]</c>，後面接一個批次分隔符。</summary>
+    /// <remarks>
+    /// 只在拿得到資料庫名稱時才寫（<c>SqlScriptContext.DatabaseName</c> 那一格，
+    /// 由呼叫端從物件身上帶進來）。查不到就整段不寫：<c>USE []</c> 是語法錯誤，
+    /// 而猜一個名稱會讓整份指令碼跑到別的資料庫裡去。
+    ///
+    /// 這一段永遠自己一個批次，不受 <see cref="BatchSeparation"/> 影響。<c>USE</c> 在
+    /// 執行時才生效，同一個批次裡排在它後面的敘述在編譯時看到的仍然是原來的資料庫，
+    /// 於是「找不到物件」會在執行到那一句時才冒出來——而錯誤訊息指的是指令碼，
+    /// 不是這一行少掉的 <c>GO</c>。
+    ///
+    /// 預設關閉，只有 F12 那一條開啟：那份指令碼要拿去執行，而它落在一個新開的
+    /// 查詢視窗裡，那個視窗連的是哪一個資料庫由使用者上一次的連線決定。浮動預覽
+    /// 是唯讀的閱讀表面，多這一行只是讓它與物件的定義長得不一樣。
+    /// </remarks>
+    public bool IncludeUseDatabase { get; init; }
+
     public SqlSetOptionOutput SetOptions { get; init; } = SqlSetOptionOutput.None;
 
     public SqlExistenceCheck ExistenceCheck { get; init; } = SqlExistenceCheck.None;
