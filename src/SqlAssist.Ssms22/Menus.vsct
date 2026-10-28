@@ -42,6 +42,16 @@
       <Group guid="guidSqlAssistCommandSet" id="SqlAssistSettingsPageGroup" priority="0x0900" />
 
       <!--
+        只放「不出現在任何選單、但要能被殼層派送」的命令。這些命令沒有父選單，
+        畫進某個選單，而它沒有適合出現的地方。tools/Test-CommandTable.ps1 擋著。
+
+        這一組存在的理由是「同一個功能需要兩種狀態」。命令的可用狀態掛在 ID 上，
+        而 F2 在 SSMS 是「重新命名物件總管的節點」：鍵繫結只能用全域範圍，
+        要讓那一顆在鍵盤不在 SQL 編輯器時回報停用，就不能與右鍵選單那一顆共用 ID。
+      -->
+      <Group guid="guidSqlAssistCommandSet" id="SqlAssistKeyboardOnlyGroup" priority="0x0A00" />
+
+      <!--
         掛進 SSMS 查詢結果格線的右鍵選單。父選單是 SSMS 內部的命令表項目，不是
         公開的擴充契約，值的出處是 SQLEditors.dll：DisplaySqlResultsTabControl
         的 WndProc 收到 WM_CONTEXTMENU、確認作用中控制項是 GridControl 之後，
@@ -223,6 +233,21 @@
           <LocCanonicalName>SqlAssist.RefreshSuggestions</LocCanonicalName>
         </Strings>
       </Button>
+      <!--
+        放在「重新整理建議」的正下方：兩顆解的是同一種症狀（剛加完資料表、檢視或
+        資料表函式，編輯器還看不見它），差別只在使用者看到的是建議清單少了那一項，
+        還是物件名稱底下的紅色波浪線——後者是 SSMS 內建 IntelliSense 畫的，
+        讀的是另一份快取，只有這一顆會去動它。
+      -->
+      <Button guid="guidSqlAssistCommandSet" id="cmdidRefreshCache" priority="0x0210" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorActionsGroup" />
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Refresh Cache</ButtonText>
+          <CanonicalName>SqlAssist.RefreshCache</CanonicalName>
+          <LocCanonicalName>SqlAssist.RefreshCache</LocCanonicalName>
+        </Strings>
+      </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidSurroundWith" priority="0x0250" type="Button">
         <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
         <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
@@ -231,6 +256,88 @@
           <ButtonText>Surround Selection with Snippet</ButtonText>
           <CanonicalName>SqlAssist.SurroundWith</CanonicalName>
           <LocCanonicalName>SqlAssist.SurroundWith</LocCanonicalName>
+        </Strings>
+      </Button>
+      <!--
+        貼上的一對。兩者共用同一份實作，差別只在頭尾那兩個符號，所以排在一起、
+        中間不夾別的項目——使用者的選擇只有「要不要連 IN 與括號一起」，
+        而兩項相隔好幾行時就得來回讀第二次才知道自己在選什麼。
+
+        沒有鍵繫結：命令表的鍵繫結只能用全域範圍，而 Ctrl+V 那一族是使用者最常
+        按的鍵。用法本來就是「複製一欄值、在要放條件的地方按右鍵」，綁鍵只是多佔
+        一組快捷鍵；要綁的人走「選項 → 環境 → 鍵盤」。
+      -->
+      <Button guid="guidSqlAssistCommandSet" id="cmdidPasteAsInPredicate" priority="0x0300" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Paste as IN Predicate</ButtonText>
+          <CanonicalName>SqlAssist.PasteAsInPredicate</CanonicalName>
+          <LocCanonicalName>SqlAssist.PasteAsInPredicate</LocCanonicalName>
+        </Strings>
+      </Button>
+      <Button guid="guidSqlAssistCommandSet" id="cmdidPasteAsValues" priority="0x0310" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Paste as Value List</ButtonText>
+          <CanonicalName>SqlAssist.PasteAsValues</CanonicalName>
+          <LocCanonicalName>SqlAssist.PasteAsValues</LocCanonicalName>
+        </Strings>
+      </Button>
+      <!--
+        就地改寫的一對。兩者動的都是整段文字（有選取就只動選取），而且都會把游標留在
+        原地，所以排在一起、中間不夾別的項目；相隔好幾行時使用者得來回讀第二次才知道
+        自己在選什麼。
+
+        沒有鍵繫結：用法是「選一段、按右鍵、挑一個」，要綁鍵的人走
+        「選項 → 環境 → 鍵盤」，命令名稱是 SqlAssist.QualifySchema
+        與 SqlAssist.ParenthesizeTop。
+      -->
+      <Button guid="guidSqlAssistCommandSet" id="cmdidQualifySchema" priority="0x0320" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Qualify Schema (dbo.)</ButtonText>
+          <CanonicalName>SqlAssist.QualifySchema</CanonicalName>
+          <LocCanonicalName>SqlAssist.QualifySchema</LocCanonicalName>
+        </Strings>
+      </Button>
+      <Button guid="guidSqlAssistCommandSet" id="cmdidParenthesizeTop" priority="0x0330" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Parenthesize TOP</ButtonText>
+          <CanonicalName>SqlAssist.ParenthesizeTop</CanonicalName>
+          <LocCanonicalName>SqlAssist.ParenthesizeTop</LocCanonicalName>
+        </Strings>
+      </Button>
+      <!--
+        就地改名。右鍵選單這一顆與 F2 那一顆共用同一份實作，只有狀態不同；
+        為什麼要分成兩顆見上方 SqlAssistKeyboardOnlyGroup 的說明。
+      -->
+      <Button guid="guidSqlAssistCommandSet" id="cmdidInlineRename" priority="0x0340" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+        <Icon guid="guidSqlAssistIcons" id="bmpSqlAssistLogo" />
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Rename Variable in Place</ButtonText>
+          <CanonicalName>SqlAssist.InlineRename</CanonicalName>
+          <LocCanonicalName>SqlAssist.InlineRename</LocCanonicalName>
+        </Strings>
+      </Button>
+      <Button guid="guidSqlAssistCommandSet" id="cmdidInlineRenameKey" priority="0x0300" type="Button">
+        <Parent guid="guidSqlAssistCommandSet" id="SqlAssistKeyboardOnlyGroup" />
+        <CommandFlag>CommandWellOnly</CommandFlag>
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Rename Variable in Place (F2)</ButtonText>
+          <CanonicalName>SqlAssist.InlineRenameKey</CanonicalName>
+          <LocCanonicalName>SqlAssist.InlineRenameKey</LocCanonicalName>
         </Strings>
       </Button>
       <Button guid="guidSqlAssistCommandSet" id="cmdidManageSnippets" priority="0x0300" type="Button">
@@ -497,6 +604,14 @@
     <CommandPlacement guid="guidSqlAssistCommandSet" id="cmdidShowSqlSearch" priority="0x0120">
       <Parent guid="guidSqlAssistCommandSet" id="SqlAssistToolbarGroup" />
     </CommandPlacement>
+    <!--
+      查詢視窗右鍵也放一顆：紅色波浪線就長在文字底下，使用者的下一個動作是對它按右鍵。
+      走 CommandPlacement 而不是第二顆按鈕——外觀與工具選單那一顆相同，兩邊不必各留
+      一句選單文字。
+    -->
+    <CommandPlacement guid="guidSqlAssistCommandSet" id="cmdidRefreshCache" priority="0x0350">
+      <Parent guid="guidSqlAssistCommandSet" id="SqlAssistEditorContextGroup" />
+    </CommandPlacement>
   </CommandPlacements>
 
   <KeyBindings>
@@ -553,6 +668,21 @@
                 editor="guidVSStd97"
                 key1="S"
                 mod1="Control Alt" />
+    <!--
+      F2。與 F12 同一條命令表路徑，理由也相同：SSMS 的查詢視窗沒有可靠的編輯器範圍，
+      猜錯 GUID 的症狀是繫結安靜地不生效。全域一定註冊得上。
+
+      但這一條是全表搶鍵風險最高的一條：F2 在 SSMS 是「重新命名物件總管的節點」，
+      而「最後拿過焦點的 SQL 編輯器」與「現在有焦點的那一個」是兩件事。因此這一顆
+      不是綁在右鍵選單那一顆命令上，而是自己一顆（cmdidInlineRenameKey），狀態另外
+      要求鍵盤真的在編輯器上——停用的命令殼層不派送，物件總管那裡的 F2 就照常是
+      它原本的用途。改成與 cmdidInlineRename 共用 ID 的話，那個保護當場消失，
+      而且症狀是「在物件總管按 F2 改到查詢視窗裡的變數」，畫面上看不出關聯。
+    -->
+    <KeyBinding guid="guidSqlAssistCommandSet"
+                id="cmdidInlineRenameKey"
+                editor="guidVSStd97"
+                key1="VK_F2" />
   </KeyBindings>
 
   <Symbols>
@@ -570,6 +700,7 @@
       <IDSymbol name="SqlAssistSelectionActionsGroup" value="0x1320" />
       <IDSymbol name="SqlAssistSupportGroup" value="0x1400" />
       <IDSymbol name="SqlAssistSettingsPageGroup" value="0x1500" />
+      <IDSymbol name="SqlAssistKeyboardOnlyGroup" value="0x1510" />
       <IDSymbol name="SqlAssistResultGridCopyGroup" value="0x1610" />
       <IDSymbol name="SqlAssistResultGridActionsGroup" value="0x1620" />
       <IDSymbol name="SqlAssistResultGridDiagnosticsGroup" value="0x1630" />
@@ -605,6 +736,13 @@
       <IDSymbol name="cmdidResultGridCell" value="0x0304" />
       <IDSymbol name="cmdidResultGridMarkdown" value="0x0305" />
       <IDSymbol name="cmdidResultGridJson" value="0x0307" />
+      <IDSymbol name="cmdidQualifySchema" value="0x021F" />
+      <IDSymbol name="cmdidParenthesizeTop" value="0x0220" />
+      <IDSymbol name="cmdidPasteAsInPredicate" value="0x021D" />
+      <IDSymbol name="cmdidPasteAsValues" value="0x021E" />
+      <IDSymbol name="cmdidInlineRename" value="0x0221" />
+      <IDSymbol name="cmdidInlineRenameKey" value="0x0222" />
+      <IDSymbol name="cmdidRefreshCache" value="0x0223" />
     </GuidSymbol>
 
     <!--

@@ -4,12 +4,17 @@ using Xunit;
 
 namespace SqlAssist.Core.Tests.Statements;
 
+/// <remarks>
+/// 展開出來的是三段：所有參數的 <c>DECLARE</c>、只傳變數的 <c>EXEC</c>、
+/// 以及把 OUTPUT 參數列出來的 <c>SELECT</c>。理由見
+/// <see cref="SqlProcedureCallText"/>。
+/// </remarks>
 public sealed class SqlProcedureCallTextTests
 {
     private static readonly SqlStatementParameter[] Renew =
     {
         new("@LoanId", "int", isOutput: false, isOptional: false),
-        new("@Days", "int", isOutput: false, isOptional: true),
+        new("@Days", "int", isOutput: false, isOptional: true, "7"),
         new("@NewDueDate", "datetime2(7)", isOutput: true, isOptional: false)
     };
 
@@ -31,40 +36,142 @@ public sealed class SqlProcedureCallTextTests
     /// <remarks>
     /// 續行對齊到第一個參數所在的欄，每一列的 @ 因此落在同一個位置：
     /// 掃過去就知道有幾個參數、少填了哪一個。
+    ///
+    /// 值擺在 DECLARE 而不是呼叫上：呼叫那一行只留變數名稱，要改的值集中在一處，
+    /// 而且 <c>@Days</c> 拿到的是模組的預設值 <c>7</c> 而不是型別的預留值 <c>0</c>。
+    ///
+    /// <c>OUTPUT</c> 只寫在呼叫那一行——寫在宣告上是語法錯誤。
     /// </remarks>
     [Fact]
-    public void 續行對齊到第一個參數並補上OUTPUT的宣告()
+    public void 先宣告所有參數再具名呼叫()
     {
         var text = Build(Renew, out _);
 
         Assert.Equal(
-            "DECLARE @NewDueDate datetime2(7);\r\n" +
-            "EXEC dbo.usp_Loan_Renew @LoanId = 0,                     -- int\r\n" +
-            "                        @Days = 0,                       -- int，選擇性\r\n" +
-            "                        @NewDueDate = @NewDueDate OUTPUT -- datetime2(7)",
+            "DECLARE @LoanId AS int              = 0;\r\n" +
+            "DECLARE @Days AS int                = 7;\r\n" +
+            "DECLARE @NewDueDate AS datetime2(7) = NULL;\r\n" +
+            "EXEC dbo.usp_Loan_Renew @LoanId = @LoanId,               -- int\r\n" +
+            "                        @Days = @Days,                   -- int，選擇性\r\n" +
+            "                        @NewDueDate = @NewDueDate OUTPUT -- datetime2(7)\r\n" +
+            "\r\n" +
+            "SELECT @NewDueDate AS NewDueDate;",
             text);
     }
 
     /// <remarks>
-    /// OUTPUT 參數傳的必須是變數，光給字面值是語法錯誤；少了 DECLARE，
-    /// 展開出來的東西連編譯都過不了。
+    /// <c>OUTPUT</c> 是呼叫端的語意，不是變數宣告的一部分：
+    /// <c>DECLARE @x INT OUTPUT</c> 根本是語法錯誤。它只寫在 <c>EXEC</c> 那一行的引數上。
     /// </remarks>
     [Fact]
-    public void 沒有OUTPUT參數時不寫DECLARE()
+    public void 宣告不寫OUTPUT()
+    {
+        var text = Build(
+            new[] { new SqlStatementParameter("@rc", "int", isOutput: true, isOptional: false) },
+            out _);
+
+        Assert.StartsWith("DECLARE @rc AS int = 0;", text);
+        Assert.DoesNotContain("OUTPUT;", text, System.StringComparison.Ordinal);
+    }
+
+    /// <remarks>
+    /// 從前只有 OUTPUT 參數需要變數，所以只宣告那一種。現在呼叫端每一個都是變數，
+    /// 少宣告任何一個，那一句連編譯都過不了。
+    /// </remarks>
+    [Fact]
+    public void 沒有OUTPUT參數時仍宣告每一個參數()
     {
         var text = Build(
             new[] { new SqlStatementParameter("@ReaderId", "int", isOutput: false, isOptional: false) },
             out _);
 
-        Assert.Equal("EXEC dbo.usp_Loan_Renew @ReaderId = 0 -- int", text);
+        Assert.Equal(
+            "DECLARE @ReaderId AS int = 0;\r\n" +
+            "EXEC dbo.usp_Loan_Renew @ReaderId = @ReaderId -- int",
+            text);
+    }
+
+    /// <remarks>沒有輸出參數就不該多一個空的 SELECT。</remarks>
+    [Fact]
+    public void 沒有OUTPUT參數時不寫SELECT()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter("@ReaderId", "int", isOutput: false, isOptional: false),
+                new SqlStatementParameter("@TagId", "int", isOutput: false, isOptional: false)
+            },
+            out _);
+
+        Assert.DoesNotContain("SELECT", text, System.StringComparison.Ordinal);
+    }
+
+    /// <remarks>
+    /// OUTPUT 參數的值只在變數裡，SSMS 的「訊息」頁看不到；不 SELECT 出來，
+    /// 使用者就得到一個永遠讀不到的結果。
+    /// </remarks>
+    [Fact]
+    public void 輸出參數用SELECT列出來()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter("@ReaderId", "int", isOutput: false, isOptional: false),
+                new SqlStatementParameter("@Total", "decimal(18,2)", isOutput: true, isOptional: false),
+                new SqlStatementParameter("@Note", "nvarchar(200)", isOutput: true, isOptional: false)
+            },
+            out _);
+
+        Assert.EndsWith(
+            "SELECT @Total AS Total,\r\n" +
+            "       @Note AS Note;",
+            text);
+    }
+
+    /// <remarks>
+    /// <c>DECLARE @x AS INT</c> 與 <c>DECLARE @x INT</c> 都合法，寫 <c>AS</c> 是為了
+    /// 讓型別的位置在長度不一的參數名稱之間對齊起來。
+    /// </remarks>
+    [Fact]
+    public void 宣告的型別前一律寫AS()
+    {
+        var text = Build(
+            new[] { new SqlStatementParameter("@rc", "int", isOutput: true, isOptional: false) },
+            out _);
+
+        Assert.StartsWith("DECLARE @rc AS int = ", text);
+    }
+
+    /// <remarks>
+    /// 沒有預設值可讀時才退回型別的預留值；中間那一個仍要拿到模組寫的 <c>7</c>。
+    /// </remarks>
+    [Fact]
+    public void 有預設值就用預設值其餘依型別()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter("@Name", "nvarchar(50)", isOutput: false, isOptional: false),
+                new SqlStatementParameter("@Days", "int", isOutput: false, isOptional: true, "7"),
+                new SqlStatementParameter("@Note", "nvarchar(200)", isOutput: false, isOptional: true)
+            },
+            out _);
+
+        // 最寬的前綴是 @Note AS nvarchar(200)（30 字元），因此它後面只有一個空格。
+        // @Note 沒有預設值，走的是型別的預留值——nvarchar 是 N'' 而不是 NULL。
+        Assert.Contains("DECLARE @Name AS nvarchar(50)  = N'';", text, System.StringComparison.Ordinal);
+        Assert.Contains("DECLARE @Days AS int           = 7;", text, System.StringComparison.Ordinal);
+        Assert.Contains("DECLARE @Note AS nvarchar(200) = N'';", text, System.StringComparison.Ordinal);
     }
 
     [Fact]
-    public void 游標停在第一個參數的值上()
+    public void 游標停在第一個宣告的初始值上()
     {
         var text = Build(Renew, out var caretOffset);
 
-        Assert.Equal("0,", text.Substring(caretOffset, 2));
+        // DECLARE @LoanId AS int              = 0;
+        //                                       ^ 游標在這裡
+        Assert.Equal("0;", text.Substring(caretOffset, 2));
     }
 
     /// <remarks>
@@ -82,12 +189,117 @@ public sealed class SqlProcedureCallTextTests
             out _,
             keyword: keyword);
 
-        Assert.StartsWith(keyword + " dbo.usp_Loan_Renew ", text);
+        Assert.Contains($"\r\n{keyword} dbo.usp_Loan_Renew ", text, System.StringComparison.Ordinal);
+    }
+
+    /// <remarks>
+    /// OUTPUT 參數在呼叫那一行要寫 <c>OUTPUT</c>——少了它就只是一般的傳值，
+    /// 模組算出來的結果接不回來，而那一句執行得動。
+    /// </remarks>
+    [Fact]
+    public void 呼叫時OUTPUT參數帶OUTPUT()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter("@ReaderId", "int", isOutput: false, isOptional: false),
+                new SqlStatementParameter("@Total", "decimal(18,2)", isOutput: true, isOptional: false)
+            },
+            out _);
+
+        Assert.Contains("@Total = @Total OUTPUT", text, System.StringComparison.Ordinal);
+        Assert.Contains("@ReaderId = @ReaderId,", text, System.StringComparison.Ordinal);
+    }
+
+    // ── 模組的參數名與我們的變數名 ──────────────────────────────────────
+
+    /// <remarks>
+    /// 撞名時只有<b>等號右邊</b>換名字。左邊是模組簽章裡的參數名，跟著改掉那一句就
+    /// 找不到對應的參數（錯誤 8145），而畫面上只看得出名字多了一個數字。
+    /// </remarks>
+    [Fact]
+    public void 撞名時只改等號右邊的變數()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter(
+                    "@LoanId",
+                    "int",
+                    isOutput: false,
+                    isOptional: false,
+                    defaultValue: null,
+                    variableName: "@LoanId1")
+            },
+            out _);
+
+        Assert.Equal(
+            "DECLARE @LoanId1 AS int = 0;\r\n" +
+            "EXEC dbo.usp_Loan_Renew @LoanId = @LoanId1 -- int",
+            text);
+    }
+
+    /// <remarks>
+    /// <c>SELECT</c> 段列的是<b>我們的變數</b>，不是模組的參數名：輸出參數的值只在
+    /// 變數裡，把模組的參數名寫在那裡會列出一個不存在的變數。
+    /// </remarks>
+    [Fact]
+    public void 撞名的輸出參數SELECT列出變數名()
+    {
+        var text = Build(
+            new[]
+            {
+                new SqlStatementParameter(
+                    "@NewDueDate",
+                    "datetime2(7)",
+                    isOutput: true,
+                    isOptional: false,
+                    defaultValue: null,
+                    variableName: "@NewDueDate1")
+            },
+            out _);
+
+        Assert.Equal(
+            "DECLARE @NewDueDate1 AS datetime2(7) = NULL;\r\n" +
+            "EXEC dbo.usp_Loan_Renew @NewDueDate = @NewDueDate1 OUTPUT -- datetime2(7)\r\n" +
+            "\r\n" +
+            "SELECT @NewDueDate1 AS NewDueDate1;",
+            text);
+    }
+
+    /// <remarks>
+    /// 沒有撞名時兩邊同名，產出與從前逐字相同——多了這一格不該改變正常情況。
+    /// </remarks>
+    [Fact]
+    public void 沒撞名時變數名等於參數名()
+    {
+        var parameter = new SqlStatementParameter("@LoanId", "int", isOutput: false, isOptional: false);
+
+        Assert.Equal("@LoanId", parameter.Name);
+        Assert.Equal("@LoanId", parameter.VariableName);
+    }
+
+    /// <remarks>
+    /// 空字串要當成「沒指定」而不是把變數名清成空的：宣告會變成 <c>DECLARE  AS int</c>。
+    /// </remarks>
+    [Fact]
+    public void 變數名給空字串時退回參數名()
+    {
+        var parameter = new SqlStatementParameter(
+            "@LoanId",
+            "int",
+            isOutput: false,
+            isOptional: false,
+            defaultValue: null,
+            variableName: string.Empty);
+
+        Assert.Equal("@LoanId", parameter.VariableName);
     }
 
     /// <remarks>
     /// 縮排裡有定位字元時，續行只補「EXEC 名稱 」那一段的寬度：
     /// 一個定位字元只算一個字元，把它算進續行的空白數就會歪掉。
+    /// 縮排從第二行起才出現——第一行是使用者原本那一行，前面沒有任何前導文字。
     /// </remarks>
     [Fact]
     public void 定位字元縮排原樣重複()
@@ -102,8 +314,10 @@ public sealed class SqlProcedureCallTextTests
             indent: "\t");
 
         Assert.Equal(
-            "EXEC dbo.usp_Loan_Renew @ReaderId = 0, -- int\r\n" +
-            "\t                        @TagId = 0     -- int",
+            "DECLARE @ReaderId AS int = 0;\r\n" +
+            "\tDECLARE @TagId AS int    = 0;\r\n" +
+            "\tEXEC dbo.usp_Loan_Renew @ReaderId = @ReaderId, -- int\r\n" +
+            "\t                        @TagId = @TagId        -- int",
             text);
     }
 }

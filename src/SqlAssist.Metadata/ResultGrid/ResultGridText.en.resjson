@@ -21,6 +21,8 @@
   "InUnqualifiedNames": "Column names have no alias; qualify them yourself in multi-table queries.",
   "TempTableNoRequery": "Values come from data the results grid already fetched; the database is not queried again.",
   "TempTableNoServerType": "The server type of column \"{column}\" is unavailable, and CREATE TABLE can't be written without it. Expression columns sometimes have no type; giving the column an alias and running the query again usually fixes this.",
+  "PasteEmptyClipboard": "The clipboard has no usable values.",
+  "PasteMulticolumnClipboard": "The clipboard holds a multi-column (tab-separated) table. Copy a single column and try again.",
   "LiteralUnsupportedClrType": "CLR type {type} has no matching T-SQL literal form",
   "LiteralUnexpectedNumber": "the formatted number contains unexpected characters and can't be written safely as a literal",
   "LiteralTimeOutOfRange": "the time value is outside the time type's range of 0:00:00 to 23:59:59.9999999"

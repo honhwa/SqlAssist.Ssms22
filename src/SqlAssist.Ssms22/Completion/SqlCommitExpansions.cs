@@ -264,7 +264,7 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
 
     public TextReplacement? Build(SqlObjectDetail detail, SqlStatementSite site, string insertedName)
     {
-        var optional = SqlModuleParameterDefaults.Find(detail.Definition);
+        var defaults = SqlModuleParameterDefaults.Resolve(detail.Definition);
         var parameters = new List<SqlStatementParameter>(detail.Parameters.Count);
 
         foreach (var parameter in detail.Parameters)
@@ -275,11 +275,11 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 continue;
             }
 
-            var isOptional = optional.Contains(parameter.Name);
+            // 讀不到定義時 defaults 是空的，於是每個參數都算必填——寧可展開得多，
+            // 也不要因為讀不到定義就把該填的參數吞掉，那一句貼上去才是真的執行不了。
+            var isOptional = defaults.TryGetValue(parameter.Name, out var defaultValue);
 
-            // 省略選擇性參數是合法的呼叫方式，不是少展開一半。定義讀不到時
-            // optional 是空的，於是每個參數都算必填——寧可展開得多，也不要因為
-            // 讀不到定義就把該填的參數吞掉，那一句貼上去才是真的執行不了。
+            // 省略選擇性參數是合法的呼叫方式，不是少展開一半。
             if (isOptional && !_settings.IncludeOptionalParameters)
             {
                 continue;
@@ -289,7 +289,8 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 parameter.Name,
                 parameter.DataType,
                 parameter.IsOutput,
-                isOptional));
+                isOptional,
+                defaultValue));
         }
 
         // 沒有參數的程序展開起來與只插入名稱完全一樣，那就不必動它——
@@ -302,6 +303,8 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
                 $"{Object.QualifiedName} 沒有要展開的參數，維持只插入名稱");
             return null;
         }
+
+        AvoidNameCollisions(parameters, site);
 
         var text = SqlProcedureCallText.Build(
             ExecuteKeyword(site.StatementText),
@@ -317,6 +320,50 @@ internal sealed class SqlProcedureCallExpansion : ISqlCommitExpansion
             CompletionText.ExecuteExpanded(Object.QualifiedName, parameters.Count),
             caretOffset,
             parameters.Count);
+    }
+
+    /// <summary>
+    /// 把與所在批次撞名的參數換成沒人用過的名字。
+    /// </summary>
+    /// <remarks>
+    /// 判定與改名本身都在 <see cref="SqlVariableNames.Avoid"/>（純文字、可完整單元測試）；
+    /// 這裡只做兩件這一層才做得到的事——把批次座標算出來，以及把改了哪些名字記進診斷。
+    ///
+    /// 取的是<b>那一行</b>的批次，不是整份文件：範圍與就地改名同一條（<c>GO</c> 之間）。
+    /// 批次由 <c>EXEC</c> 那個關鍵字的位置決定，而它就在被追蹤的那一段裡。
+    /// </remarks>
+    private void AvoidNameCollisions(List<SqlStatementParameter> parameters, SqlStatementSite site)
+    {
+        if (!_settings.AvoidVariableNameCollision || site.BufferText is null)
+        {
+            return;
+        }
+
+        var adjusted = SqlVariableNames.Avoid(parameters, site.BufferText, site.Start);
+
+        var renamed = new List<string>();
+
+        for (var index = 0; index < adjusted.Count; index++)
+        {
+            var before = parameters[index].VariableName;
+            var after = adjusted[index].VariableName;
+
+            if (string.Equals(before, after, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            renamed.Add($"{before}→{after}");
+            parameters[index] = adjusted[index];
+        }
+
+        if (renamed.Count == 0)
+        {
+            return;
+        }
+
+        SqlAssistDiagnostics.Write(
+            $"{Object.QualifiedName} 的展開有 {renamed.Count} 個變數與同批次的變數同名，已改名：{string.Join("; ", renamed)}");
     }
 
     /// <summary>

@@ -305,8 +305,11 @@ public sealed class SqlCatalogEntityCompletionTests
             SqlAssistSettings settings,
             CancellationToken cancellationToken) => Nothing();
 
-        public IReadOnlyList<SqlSuggestion> PeekColumns(SqlTableReference table, string? qualifier, SqlAssistSettings settings) =>
-            Array.Empty<SqlSuggestion>();
+        public IReadOnlyList<SqlSuggestion> PeekColumns(
+            SqlTableReference table,
+            string? qualifier,
+            SqlAssistSettings settings,
+            bool indexKeysFirst = false) => Array.Empty<SqlSuggestion>();
 
         public Task WarmColumnsAsync(IReadOnlyList<SqlColumnSource> sources, CancellationToken cancellationToken) =>
             Task.CompletedTask;

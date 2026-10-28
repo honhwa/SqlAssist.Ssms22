@@ -350,6 +350,20 @@
       "description": "@InsertionUseSquareBracketsDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "additionalKeywords": [ "[]", "中括號", "bracket", "跳脫", "保留字" ]
     },
+    "sqlAssist.insertion.tableSourceAliasStyle": {
+      "type": "string",
+      "default": "none",
+      "order": 120,
+      "enum": [ "none", "as", "off" ],
+      "enumItemLabels": [
+        "@InsertionTableSourceAliasStyleItemNone;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+        "@InsertionTableSourceAliasStyleItemAs;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+        "@InsertionTableSourceAliasStyleItemOff;{b386e18d-f34b-4db4-a40d-b9092a31d89f}"
+      ],
+      "title": "@InsertionTableSourceAliasStyleTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "description": "@InsertionTableSourceAliasStyleDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "additionalKeywords": [ "alias", "別名", "AS", "簡寫", "來源" ]
+    },
     "sqlAssist.insertion.expandWildcardOnTab": {
       "type": "boolean",
       "default": true,
@@ -412,6 +426,15 @@
       "title": "@InsertionIncludeOptionalParametersTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "description": "@InsertionIncludeOptionalParametersDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "additionalKeywords": [ "預設值", "必填", "選填", "optional", "default", "太長" ],
+      "enableWhen": "${config:sqlAssist.insertion.expandProcedureCall} == 'true'"
+    },
+    "sqlAssist.insertion.avoidVariableNameCollision": {
+      "type": "boolean",
+      "default": true,
+      "order": 345,
+      "title": "@InsertionAvoidVariableNameCollisionTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "description": "@InsertionAvoidVariableNameCollisionDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "additionalKeywords": [ "變數", "撞名", "同名", "覆蓋", "DECLARE", "collision" ],
       "enableWhen": "${config:sqlAssist.insertion.expandProcedureCall} == 'true'"
     },
     "sqlAssist.insertion.expandFunctionCall": {

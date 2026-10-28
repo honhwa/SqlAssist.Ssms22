@@ -33,7 +33,8 @@ public sealed class SqlCompletionContext
         string? textBeforeCaret = null,
         bool acceptsTypeAs = false,
         IReadOnlyList<SqlCatalogEntity>? catalogEntities = null,
-        bool typeIsOptional = false)
+        bool typeIsOptional = false,
+        bool mayAppendTableAlias = false)
     {
         ScriptSources = scriptSources ?? NoScriptSources;
         Slot = slot;
@@ -57,6 +58,7 @@ public sealed class SqlCompletionContext
         AcceptsTypeAs = acceptsTypeAs;
         TypeIsOptional = typeIsOptional;
         CatalogEntities = catalogEntities ?? Array.Empty<SqlCatalogEntity>();
+        MayAppendTableAlias = mayAppendTableAlias;
     }
 
     /// <summary>
@@ -283,6 +285,19 @@ public sealed class SqlCompletionContext
     public bool TypeIsOptional { get; }
 
     /// <summary>
+    /// 這個位置接不接受「名稱後面再加一個別名」。
+    /// </summary>
+    /// <remarks>
+    /// 刻意不從 <see cref="Target"/> 推導。有幾個位置的目標同樣是
+    /// <see cref="CompletionTarget.DataSource"/>，文法上卻不接受別名：
+    /// <c>INSERT INTO</c> 的目標表與 <c>DROP TABLE</c> 的名稱一樣是資料來源，
+    /// 兩者後面接一個別名都是語法錯誤。反過來說，<c>FROM </c> 與 <c>JOIN </c>
+    /// 之後的名稱不接別名只是可惜，不是錯——所以這一個判斷與「別名還沒寫」
+    /// 那一個（<c>SqlKeywordPositionAnalyzer</c>）互補，兩邊都問過才動手。
+    /// </remarks>
+    public bool MayAppendTableAlias { get; }
+
+    /// <summary>
     /// <see cref="CompletionTarget.CatalogEntity"/> 那一格要哪幾種名稱；其餘目標是空的。
     /// </summary>
     /// <remarks>主體那一格是兩種（使用者與角色），<c>GRANT SELECT TO </c> 說不出是哪一層時是四種。</remarks>
@@ -361,6 +376,7 @@ public sealed class SqlCompletionContext
             textBeforeCaret ?? TextBeforeCaret,
             AcceptsTypeAs,
             CatalogEntities,
-            TypeIsOptional);
+            TypeIsOptional,
+            MayAppendTableAlias);
     }
 }

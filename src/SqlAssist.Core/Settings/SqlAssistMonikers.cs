@@ -66,6 +66,9 @@ public static class SqlAssistMonikers
 
     public const string QualifyObjectNames = "sqlAssist.insertion.qualifyObjectNames";
     public const string UseSquareBrackets = "sqlAssist.insertion.useSquareBrackets";
+
+    /// <summary>資料來源位置的別名風格（none／as／off）。</summary>
+    public const string TableSourceAliasStyle = "sqlAssist.insertion.tableSourceAliasStyle";
     public const string ExpandWildcardOnTab = "sqlAssist.insertion.expandWildcardOnTab";
     public const string WildcardLayout = "sqlAssist.insertion.wildcardLayout";
     public const string ExpandAlterDefinition = "sqlAssist.insertion.expandAlterDefinition";
@@ -73,6 +76,7 @@ public static class SqlAssistMonikers
     public const string ExpandMergeStatement = "sqlAssist.insertion.expandMergeStatement";
     public const string ExpandProcedureCall = "sqlAssist.insertion.expandProcedureCall";
     public const string IncludeOptionalParameters = "sqlAssist.insertion.includeOptionalParameters";
+    public const string AvoidVariableNameCollision = "sqlAssist.insertion.avoidVariableNameCollision";
     public const string ExpandFunctionCall = "sqlAssist.insertion.expandFunctionCall";
     public const string ExpandFunctionArguments = "sqlAssist.insertion.expandFunctionArguments";
 

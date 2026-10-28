@@ -74,6 +74,14 @@
   "InsertionQualifyObjectNamesDescription": "例如插入 dbo.Lib_Reader 而不是 Lib_Reader。總開關在「一般」頁。",
   "InsertionUseSquareBracketsTitle": "插入物件時加上方括號",
   "InsertionUseSquareBracketsDescription": "例如插入 [dbo].[Lib_Reader]。關閉時仍會為含空白或保留字的名稱加上括號，否則插入的 SQL 無效。",
+  "InsertionTableSourceAliasStyleTitle": "插入資料表時自動補上別名",
+  "InsertionTableSourceAliasStyleDescription": "在 FROM、JOIN、APPLY 等資料來源位置提交資料表、檢視或資料表值函式時，自動在名稱後補上別名。別名取名稱各段的首字母小寫（Lib_Reader 變成 lr），同一個敘述裡撞名時自動加序號（lr2）。INSERT 的目標表、DROP TABLE 這類不接受別名的位置不補。",
+  // 列舉值 none
+  "InsertionTableSourceAliasStyleItemNone": "自動補上別名：FROM dbo.Lib_Reader lr",
+  // 列舉值 as
+  "InsertionTableSourceAliasStyleItemAs": "自動補上別名並寫 AS：FROM dbo.Lib_Reader AS lr",
+  // 列舉值 off
+  "InsertionTableSourceAliasStyleItemOff": "不自動補上別名",
   "InsertionExpandWildcardOnTabTitle": "按 Tab 把 SELECT * 展開成欄位清單",
   "InsertionExpandWildcardOnTabDescription": "游標停在選取清單的 * 後方時顯示提示，按 Tab 換成完整欄位。支援資料表、檢視、子查詢與 CTE；a.* 只展開該來源，敘述有兩個以上來源時自動補上別名。只要有一個來源解析不出來就完全不展開。",
   // 列舉值 oneLineWhenShort
@@ -94,6 +102,8 @@
   "InsertionExpandProcedureCallDescription": "選取預存程序後展開成具名傳值的呼叫，每個參數一列並註明型別；有預設值的參數標示為選擇性，OUTPUT 參數會一併補上 DECLARE。關閉後只插入名稱。",
   "InsertionIncludeOptionalParametersTitle": "EXEC 展開時包含選擇性參數",
   "InsertionIncludeOptionalParametersDescription": "關閉後只展開必填參數，在定義裡已經給了預設值的那些一律省略——省略選擇性參數本來就是合法的呼叫方式，參數很多的程序因此短得多。整支程序的參數都有預設值時就不展開了，維持只插入名稱。",
+  "InsertionAvoidVariableNameCollisionTitle": "EXEC 展開時避開同名的變數",
+  "InsertionAvoidVariableNameCollisionDescription": "展開出來的 DECLARE 若與同一批次（GO 之間）裡已經存在的變數同名，第二句宣告不會報錯，只會把前一句的值覆蓋掉。開啟後會為撞名的參數接上流水號，例如 @LoanId 變成 @LoanId1、@LoanId2，直到不衝突為止。跨過 GO 之後同名的變數是另一個變數，不列入比對。",
   "InsertionExpandFunctionCallTitle": "選取自訂函式後補上括號",
   "InsertionExpandFunctionCallDescription": "選取純量函式或資料表值函式後補上一對空括號，游標停在中間，接著由 SSMS 的「陳述式完成 → 參數資訊」告訴你要填什麼。函式的括號在 T-SQL 裡本來就非寫不可，沒有參數的函式也一樣要寫 ()。關閉後只插入名稱。",
   "InsertionExpandFunctionArgumentsTitle": "括號裡填入引數預留值",

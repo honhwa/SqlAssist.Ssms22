@@ -40,7 +40,16 @@ public interface ISqlCompletionMetadata
     /// 一個資料表來源已經在快取裡的欄位，絕不觸發查詢；沒命中就是空的。
     /// </summary>
     /// <param name="qualifier">插入時補在欄位前面的別名或資料表名稱；不需要限定時為 null。</param>
-    IReadOnlyList<SqlSuggestion> PeekColumns(SqlTableReference table, string? qualifier, SqlAssistSettings settings);
+    /// <param name="indexKeysFirst">
+    /// 要不要把索引鍵欄位排到最前面。只有「單一來源的述詞起點」會傳 true：
+    /// 那時使用者要接的是另一張表，而索引鍵九成是接點。多個來源時不排——
+    /// 那會讓每一張表的索引鍵一起浮上來，反而蓋掉配對鍵的順序。
+    /// </param>
+    IReadOnlyList<SqlSuggestion> PeekColumns(
+        SqlTableReference table,
+        string? qualifier,
+        SqlAssistSettings settings,
+        bool indexKeysFirst = false);
 
     /// <summary>把敘述裡各資料表來源的欄位載進快取，讓之後的 <see cref="PeekColumns"/> 命中。</summary>
     Task WarmColumnsAsync(IReadOnlyList<SqlColumnSource> sources, CancellationToken cancellationToken);

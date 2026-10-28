@@ -1,0 +1,338 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using SqlAssist.Core.Keywords;
+using SqlAssist.Core.Parsing;
+using SqlAssist.Core.Settings;
+
+namespace SqlAssist.Core.Completion;
+
+/// <summary>
+/// 在資料來源位置提交資料表、檢視、資料表值函式或暫存資料表時，替它取一個別名。
+/// </summary>
+/// <remarks>
+/// 這支只做「取名」這件純文字的事。「現在這個位置是不是資料來源」由呼叫端先問
+/// <see cref="SqlCompletionContext.MayAppendTableAlias"/>，而「設定開不開」由呼叫端
+/// 先看 <see cref="SqlAssistSettings.TableSourceAliasStyle"/>——兩個判斷都需要上下文，
+/// 放進來只會讓這支變成第二個版本的上下文分析器。
+/// </remarks>
+public static class SqlAutoAlias
+{
+    /// <summary>資料表值函式名稱的常見前綴，取名之前先去掉。</summary>
+    /// <remarks>
+    /// 這幾個前綴在 T-SQL 裡的意思就是「這是函式」，留著的話每一個資料表值函式的
+    /// 別名都以 <c>f</c> 或 <c>t</c> 開頭，反而失去區辨力：<c>fn_LoansByReader</c>
+    /// 與 <c>fn_LoanList</c> 要的是 <c>lbr</c> 與 <c>ll</c>。
+    ///
+    /// 只看前綴，不問被提交的是不是函式：資料表與檢視不會這樣取名，而多帶一個
+    /// 「這是函式」的參數進來，只是把同一個判斷推給呼叫端各做一次。
+    /// </remarks>
+    private static readonly string[] FunctionPrefixes = { "ufn_", "ifn_", "tf_", "fn_" };
+
+    /// <summary>
+    /// 由物件名稱取出別名：各段的首字母小寫。
+    /// </summary>
+    /// <remarks>
+    /// <c>Lib_Reader</c> → <c>lr</c>、<c>LoanDetail</c> → <c>ld</c>、
+    /// <c>fn_LoansByReader</c> → <c>lbr</c>。分段看的是底線、空白、連字號、點號，
+    /// 以及大小寫交替——所以 <c>HTTPServer</c> 會切成 <c>HTTP</c> 與 <c>Server</c>，
+    /// 兩個首字母是 <c>hs</c>。
+    ///
+    /// 名稱裡一個字母都沒有時（例如 <c>dbo.[2024]</c>）退回「去掉分隔符後的小寫」；
+    /// 連一個字元都不剩就回傳空字串，由呼叫端決定要怎麼處理。
+    ///
+    /// 首字母拼出來剛好是保留字時退回名稱的第一個字母：<c>Archive_Shelf</c> 取成
+    /// <c>as</c>，寫出去的 <c>FROM dbo.Archive_Shelf as</c> 尾端會被讀成 AS 關鍵字，
+    /// 而 <c>AS as</c> 也一樣壞。判準用
+    /// <see cref="SqlKeywordCatalog.IsReservedIdentifier"/> 而不是整份關鍵字清單——
+    /// 像 <c>OUTPUT</c> 這種非保留字當別名完全合法，包起來只是多餘。
+    ///
+    /// 不改成方括號（<c>[as]</c>）：方括號是「非寫這個名字不可」才付的代價，而自動別名
+    /// 本來就是一個可以換的字，留那串字母只是為了省幾個辨識字元。
+    /// </remarks>
+    public static string Create(string sourceName)
+    {
+        if (string.IsNullOrWhiteSpace(sourceName))
+        {
+            return string.Empty;
+        }
+
+        var name = StripFunctionPrefix(sourceName);
+
+        var alias = new string(
+            SplitWords(name)
+                .Select(word => word.FirstOrDefault(char.IsLetter))
+                .Where(letter => letter != default)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+
+        if (alias.Length > 0)
+        {
+            return AvoidReserved(alias, name);
+        }
+
+        return new string(
+            name
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+    }
+
+    /// <summary>
+    /// 首字母拼出來的字是保留字時，只留名稱的第一個字母。
+    /// </summary>
+    /// <remarks>
+    /// 留下的是第一段的頭一個字母而不是別的字母：它與被換掉的那串同源，
+    /// 使用者看得出這個別名是從哪個名稱來的。
+    /// </remarks>
+    private static string AvoidReserved(string alias, string name)
+    {
+        if (!SqlKeywordCatalog.IsReservedIdentifier(alias))
+        {
+            return alias;
+        }
+
+        foreach (var character in name)
+        {
+            if (char.IsLetter(character))
+            {
+                return char.ToLowerInvariant(character).ToString();
+            }
+        }
+
+        return alias;
+    }
+
+    /// <summary>
+    /// 去掉開頭的函式前綴；沒有的話原樣回傳。
+    /// </summary>
+    /// <remarks>
+    /// 整串就是前綴本身時不動（<c>fn_</c> → <c>fn_</c>）：去掉之後一個字都不剩，
+    /// 而那一格寧可留著一個不好看但唯一的別名，也不要回傳空字串讓呼叫端整個放棄。
+    /// </remarks>
+    private static string StripFunctionPrefix(string sourceName)
+    {
+        foreach (var prefix in FunctionPrefixes)
+        {
+            if (sourceName.Length > prefix.Length &&
+                sourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return sourceName.Substring(prefix.Length);
+            }
+        }
+
+        return sourceName;
+    }
+
+    /// <summary>
+    /// 別名在同一個敘述裡撞名時加上序號。
+    /// </summary>
+    /// <remarks>
+    /// 比對不區分大小寫：T-SQL 的識別碼在大多排序規則下就是這樣，
+    /// 而 <c>LR</c> 與 <c>lr</c> 並存只是看起來像兩個東西。
+    /// </remarks>
+    public static string MakeUnique(string alias, IEnumerable<string> used)
+    {
+        if (string.IsNullOrEmpty(alias) || used is null)
+        {
+            return alias;
+        }
+
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in used)
+        {
+            if (!string.IsNullOrEmpty(name))
+            {
+                taken.Add(name);
+            }
+        }
+
+        if (!taken.Contains(alias))
+        {
+            return alias;
+        }
+
+        for (var suffix = 2; ; suffix++)
+        {
+            var candidate = alias + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            if (!taken.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 這個位置、這一筆建議要不要接別名；要的話回傳連同前後空白的字尾。
+    /// </summary>
+    /// <remarks>
+    /// 回傳字串而不是名稱，是因為它會被直接接在插入文字後面：前後各留一個空白
+    /// 讓 <c>FROM dbo.Loan l</c> 與 <c>FROM dbo.Loan AS l</c> 兩種寫法都成立。
+    ///
+    /// 資料表值函式在「展開函式呼叫」開著時不在這裡接別名——那一條路徑由
+    /// <c>SqlFunctionCallExpansion</c> 負責把別名接到右括號之後，這裡再接一次
+    /// 會變成 <c>fn() f f</c>。
+    ///
+    /// 哪些建議接得上由 <see cref="AcceptsAlias"/> 決定：資料表、檢視、資料表值函式，
+    /// 以及指令碼自己宣告的暫存資料表。CTE 與資料表變數不進來。
+    /// </remarks>
+    public static string? ComposeSuffix(
+        SqlSuggestion suggestion,
+        SqlCompletionContext context,
+        SqlAssistSettings settings)
+    {
+        if (suggestion is null)
+        {
+            throw new ArgumentNullException(nameof(suggestion));
+        }
+
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (settings is null)
+        {
+            throw new ArgumentNullException(nameof(settings));
+        }
+
+        var style = settings.TableSourceAliasStyle;
+
+        if (style == SqlTableSourceAliasStyle.Off || !context.MayAppendTableAlias)
+        {
+            return null;
+        }
+
+        if (!AcceptsAlias(suggestion))
+        {
+            return null;
+        }
+
+        var alias = MakeUnique(Create(suggestion.DisplayText), CollectUsedNames(context.ScopeSources));
+
+        if (string.IsNullOrEmpty(alias))
+        {
+            return null;
+        }
+
+        var keyword = style == SqlTableSourceAliasStyle.As ? "AS " : string.Empty;
+
+        return $" {keyword}{alias} ";
+    }
+
+    /// <summary>
+    /// 這一筆建議指的是不是一張「接在 <c>FROM</c> 後面、也可以順便取別名」的表。
+    /// </summary>
+    /// <remarks>
+    /// 資料庫物件看種類就分得完。指令碼自己宣告的那一份不行：
+    /// <see cref="SuggestionKind.ScriptDataSource"/> 同時收暫存資料表、資料表變數與
+    /// CTE，而三者在這裡的答案不一樣。
+    ///
+    /// 暫存資料表的別名與資料表<b>同一個理由</b>：名稱前面帶著井號、沒有結構描述，
+    /// 打 <c>li.ReaderId</c> 比打 <c>#LoanImport.ReaderId</c> 短，而它幾乎一定會在
+    /// 同一段指令碼裡被引用第二次。
+    ///
+    /// 另外兩種<b>刻意不補</b>：CTE 與資料表變數的名稱是使用者當場取的一兩個音節
+    /// （<c>c</c>、<c>@rows</c>），而它們只在宣告它的那一段看得見——再取一個別名，
+    /// 同一句裡就有兩個名字指同一個東西，讀的人還要回頭確認哪一個是哪一個。
+    /// 取名規則本身不看這件事：<c>#tmp</c> 取成 <c>t</c> 是對的，只是這兩種不進來。
+    /// </remarks>
+    private static bool AcceptsAlias(SqlSuggestion suggestion)
+    {
+        return suggestion.Kind switch
+        {
+            SuggestionKind.Table or SuggestionKind.View or SuggestionKind.TableFunction => true,
+            SuggestionKind.ScriptDataSource => SqlIdentifier.IsTemporaryTable(suggestion.DisplayText),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// 敘述裡已經用掉的來源名稱。
+    /// </summary>
+    /// <remarks>
+    /// 取的是資料表名稱本身或限定字：<c>FROM dbo.Loan l</c> 會被剖析成一個
+    /// 別名為 <c>l</c> 的來源，兩者取其一就足以判斷撞名。
+    ///
+    /// 用迭代器寫是為了不在來源為空時配置清單，代價是 <c>name</c> 的可空狀態
+    /// 跨過 <c>yield</c> 之後會遺失，所以要顯式標成 <c>null</c> 檢查過的
+    /// <c>name!</c>。
+    /// </remarks>
+    private static IEnumerable<string> CollectUsedNames(IEnumerable<SqlColumnSource> sources)
+    {
+        if (sources is null)
+        {
+            yield break;
+        }
+
+        foreach (var source in sources)
+        {
+            var name = source.Table?.EffectiveName;
+
+            if (string.IsNullOrEmpty(name))
+            {
+                name = source.Qualifier;
+            }
+
+            if (!string.IsNullOrEmpty(name))
+            {
+                yield return name!;
+            }
+        }
+    }
+
+    private static List<string> SplitWords(string sourceName)
+    {
+        var words = new List<string>();
+        var current = new StringBuilder();
+
+        void Flush()
+        {
+            if (current.Length > 0)
+            {
+                words.Add(current.ToString());
+                current.Clear();
+            }
+        }
+
+        for (var index = 0; index < sourceName.Length; index++)
+        {
+            var character = sourceName[index];
+
+            if (IsWordSeparator(character))
+            {
+                Flush();
+                continue;
+            }
+
+            if (current.Length > 0 && char.IsUpper(character))
+            {
+                // netstandard2.0 沒有 System.Index,改用 Length-1 走索引,
+                // 避免 CS0656 'System.Index..ctor' 缺失。
+                var previous = current[current.Length - 1];
+                var boundaryAfterLower = char.IsLower(previous) || char.IsDigit(previous);
+                var boundaryAfterAcronym =
+                    char.IsUpper(previous) &&
+                    index + 1 < sourceName.Length &&
+                    char.IsLower(sourceName[index + 1]);
+
+                if (boundaryAfterLower || boundaryAfterAcronym)
+                {
+                    Flush();
+                }
+            }
+
+            current.Append(character);
+        }
+
+        Flush();
+
+        return words;
+    }
+
+    private static bool IsWordSeparator(char character) =>
+        character == '_' || character == '-' || character == '.' || char.IsWhiteSpace(character);
+}

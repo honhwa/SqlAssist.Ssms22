@@ -39,6 +39,17 @@ internal static class SuggestionScore
     /// <summary>類別偏好的倍率；要大於最近用過加成與長度懲罰的總和。</summary>
     private const int KindBonusScale = 128;
 
+    /// <summary>
+    /// 配對鍵的額外加成，加在類別層級<b>之內</b>。
+    /// </summary>
+    /// <remarks>
+    /// 它與欄位同一個類別，只是更明確——<c>ON </c> 之後要找的那一筆，正是可以
+    /// 直接接起兩個來源的那一個。所以加成不該翻過類別偏好（那會讓配對鍵蓋掉
+    /// 文法上更需要的東西），但要比「最近用過」與長度懲罰都大：
+    /// <c>3 × 128 = 384</c>，大於 <c>64 + 63</c>。
+    /// </remarks>
+    private const int JoinKeyBonus = 3;
+
     /// <summary>長度懲罰的上限，避免超長物件名稱把分數拉到失真。</summary>
     private const int MaximumLengthPenalty = 63;
 
@@ -105,6 +116,12 @@ internal static class SuggestionScore
         }
 
         var score = kindBonus * KindBonusScale;
+
+        // 配對鍵是「這個位置現在要的那一筆」，與欄位同一個類別，只是更明確。
+        if (suggestion.JoinKey is not null)
+        {
+            score += JoinKeyBonus * KindBonusScale;
+        }
 
         // 便宜的條件先問：沒有前綴的片段根本不拿這一層，不必查使用紀錄。
         if (!(isSnippet && pattern.Length == 0) &&

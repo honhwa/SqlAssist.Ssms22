@@ -45,7 +45,7 @@ public static class FuzzyMatcher
     public const int BonusFirstCharMultiplier = 2;
 
     /// <summary>SQL 識別字中常見、應視為詞界的分隔符。</summary>
-    private const string SqlDelimiters = "_.#@$-/\\:,;|";
+    internal const string SqlDelimiters = "_.#@$-/\\:,;|";
 
     private static readonly int[] EmptyPositions = Array.Empty<int>();
 

@@ -1,0 +1,7 @@
+{
+  "VariableCaretOutOfRange": "The caret is outside the text.",
+  "VariableCaretNotOnVariable": "The caret isn't on a local variable. Put the caret on a @variable and try again.",
+  "VariableIsSystemFunction": "{name} is a system function, not a local variable you can rename.",
+  "VariableIsProcedureArgument": "{name} is a parameter name of the procedure being called and belongs to its signature. Renaming it here won't change the procedure itself.",
+  "VariableOnlyAsProcedureArgument": "{name} only appears as a parameter of the procedure being called, so there is no local variable to rename with it."
+}

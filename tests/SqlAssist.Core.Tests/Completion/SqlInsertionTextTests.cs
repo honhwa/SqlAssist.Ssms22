@@ -17,13 +17,13 @@ namespace SqlAssist.Core.Tests.Completion;
 public sealed class SqlInsertionTextTests
 {
     private static readonly SqlAssistSettings Qualified =
-        new() { QualifyObjectNames = true, UseSquareBrackets = false };
+        new() { QualifyObjectNames = true, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlAssistSettings Unqualified =
-        new() { QualifyObjectNames = false, UseSquareBrackets = false };
+        new() { QualifyObjectNames = false, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlAssistSettings Bracketed =
-        new() { QualifyObjectNames = true, UseSquareBrackets = true };
+        new() { QualifyObjectNames = true, UseSquareBrackets = true, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static SqlSuggestion Table(string name, string? schema = "dbo") =>
         new(name, name, "Table", name, SuggestionKind.Table, schemaName: schema);
@@ -337,5 +337,167 @@ public sealed class SqlInsertionTextTests
     public void 本來就成立的限定字不改寫(string sqlWithCaret, SuggestionKind kind)
     {
         Assert.Null(RewriteQualifier(sqlWithCaret, kind));
+    }
+
+    /// <remarks>
+    /// 別名含前後各一個空格，接著游標要打的是條件而不是黏在名稱上。
+    /// 取名規則在 <c>SqlAutoAlias</c>：分段取首字母小寫（<c>Lib_Reader</c> → <c>lr</c>）。
+    /// </remarks>
+    [Theory]
+    [InlineData(SqlTableSourceAliasStyle.None, "dbo.Lib_Reader lr ")]
+    [InlineData(SqlTableSourceAliasStyle.As, "dbo.Lib_Reader AS lr ")]
+    public void 資料來源位置會自動補上別名(SqlTableSourceAliasStyle style, string expected)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = style,
+        };
+
+        Assert.Equal(expected, Build(Table("Lib_Reader"), "SELECT * FROM |", settings));
+    }
+
+    /// <remarks>
+    /// 取名規則在 <c>SqlAutoAlias</c>，這裡只釘住提交時真的寫出那一串：別名是保留字時
+    /// 兩種樣式都會壞——<c>FROM dbo.Archive_Shelf as</c> 的尾端被讀成關鍵字，
+    /// <c>AS as</c> 也一樣。
+    /// </remarks>
+    [Theory]
+    [InlineData(SqlTableSourceAliasStyle.None, "dbo.Archive_Shelf a ")]
+    [InlineData(SqlTableSourceAliasStyle.As, "dbo.Archive_Shelf AS a ")]
+    public void 別名是保留字時寫出來的是另一個字(SqlTableSourceAliasStyle style, string expected)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = style,
+        };
+
+        Assert.Equal(expected, Build(Table("Archive_Shelf"), "SELECT * FROM |", settings));
+    }
+
+    /// <remarks>
+    /// 這幾個位置一樣列資料表，文法上卻不接受別名——補上去是一句語法錯誤。
+    /// 判斷不在 <c>Target</c> 上，見 <c>SqlCompletionContext.MayAppendTableAlias</c>。
+    /// </remarks>
+    [Theory]
+    [InlineData("INSERT INTO |")]
+    [InlineData("DROP TABLE |")]
+    [InlineData("ALTER TABLE |")]
+    public void 不接受別名的位置不補(string sqlWithCaret)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+        };
+
+        Assert.Equal("dbo.Loan", Build(Table("Loan"), sqlWithCaret, settings));
+    }
+
+    /// <remarks>
+    /// 暫存資料表與資料表是同一個理由：名稱前面帶著井號，打 <c>li.</c> 比打
+    /// <c>#LoanImport.</c> 短，而它幾乎一定在同一段指令碼裡被引用第二次。它不在
+    /// 資料庫物件的清單裡，所以在建議項上走的是 <see cref="SuggestionKind.ScriptDataSource"/>
+    /// 那一支——只在這裡放行井號開頭，另外兩種仍然不補。
+    /// </remarks>
+    [Theory]
+    [InlineData("#LoanImport", SqlTableSourceAliasStyle.None, "#LoanImport li ")]
+    [InlineData("#LoanImport", SqlTableSourceAliasStyle.As, "#LoanImport AS li ")]
+    [InlineData("##Shared", SqlTableSourceAliasStyle.None, "##Shared s ")]
+    public void 暫存資料表也會自動補別名(string name, SqlTableSourceAliasStyle style, string expected)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = style,
+        };
+
+        var staging = new SqlSuggestion(name, name, "Temporary table", name, SuggestionKind.ScriptDataSource);
+
+        Assert.Equal(expected, Build(staging, "SELECT * FROM |", settings));
+    }
+
+    /// <remarks>
+    /// 同一份清單裡的另外兩種刻意不補：CTE 與資料表變數的名稱是使用者當場取的一兩個
+    /// 音節，再取一次別名只是讓同一句裡有兩個名字指同一個東西。少了這一條，
+    /// 把井號的判斷換成 <c>SqlIdentifier.IsScriptScoped</c> 不會有任何測試失敗。
+    /// </remarks>
+    [Theory]
+    [InlineData("ReaderList")]
+    [InlineData("@rows")]
+    public void 指令碼宣告的CTE與資料表變數不補別名(string name)
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+        };
+
+        var source = new SqlSuggestion(name, name, "", "", SuggestionKind.ScriptDataSource);
+
+        Assert.Equal(name, Build(source, "SELECT * FROM |", settings));
+    }
+
+    /// <remarks>
+    /// 逗號續列仍然是資料來源位置；撞名時往後加序號，否則 <c>FROM A a, B a</c>
+    /// 兩張表會共用同一個別名，欄位限定字從此指到錯的那一張。
+    /// </remarks>
+    [Fact]
+    public void 逗號續列也補別名而撞名加序號()
+    {
+        var settings = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            UseSquareBrackets = false,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+        };
+
+        // 兩張表都取得到 lr：Lib_Reader 與 Loan_Record 的分段首字母相同。
+        Assert.Equal(
+            "dbo.Loan_Record lr2 ",
+            Build(Table("Loan_Record"), "SELECT * FROM Lib_Reader lr, |", settings));
+    }
+
+    /// <remarks>
+    /// 資料表值函式的別名要接在右括號<b>之後</b>，而那個位置不在這裡——這一段文字
+    /// 之後還要補括號。三條路徑各接各的，由模式一分為三：不補括號接在名稱後面
+    /// （就是本則第二個斷言）；只補空括號由提交那一次編輯接在右括號後面；
+    /// 連引數一起補由展開器接在引數清單後面。這裡釘住的是後兩者不在插入文字裡。
+    /// </remarks>
+    [Fact]
+    public void 資料表值函式的別名交給展開那條路()
+    {
+        var suggestion = new SqlSuggestion(
+            "LoanDetail", "LoanDetail", "", "", SuggestionKind.TableFunction, schemaName: "dbo");
+
+        var expanded = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+            ExpandFunctionCall = true,
+        };
+        var expandedWithArguments = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+            ExpandFunctionCall = true,
+            ExpandFunctionArguments = true,
+        };
+        var notExpanded = new SqlAssistSettings
+        {
+            QualifyObjectNames = true,
+            TableSourceAliasStyle = SqlTableSourceAliasStyle.None,
+            ExpandFunctionCall = false,
+        };
+
+        Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expanded));
+        Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expandedWithArguments));
+        Assert.Equal("dbo.LoanDetail ld ", Build(suggestion, "SELECT * FROM |", notExpanded));
     }
 }

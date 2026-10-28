@@ -20,7 +20,23 @@ public static class SqlInsertionText
     {
         var text = BuildUnbracketed(suggestion, context, settings);
 
-        return context.Bracketed ? BracketName(text, suggestion.DisplayText) : text;
+        var insertion = context.Bracketed ? BracketName(text, suggestion.DisplayText) : text;
+
+        // 別名接在最後：<see cref="BracketName"/> 認的是「文字結尾就是這個名稱」，
+        // 先把別名接上去的話那一段認不出來，方括號那條路就會安靜地不作用。
+        var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
+
+        // 資料表值函式在「補上括號」開啟時不在這裡接別名：別名要接在右括號<b>之後</b>，
+        // 而那個位置還沒寫出來——括號由提交那一次編輯補上（只補空括號），
+        // 或由展開器連引數一起補（連引數一起補），兩條都要等寫完才接得上。
+        // 這裡是「不補括號」那一條，名稱後面就是最後一個位置。
+        if (aliasSuffix is not null &&
+            (suggestion.Kind != SuggestionKind.TableFunction || !settings.ExpandFunctionCall))
+        {
+            return insertion + aliasSuffix;
+        }
+
+        return insertion;
     }
 
     /// <summary>

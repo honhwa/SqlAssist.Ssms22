@@ -207,7 +207,7 @@ public static class SqlCompletionCandidates
         // 敘述裡看得到的欄位放在資料庫物件前面：SELECT | FROM PUBLISHER a 這種位置，
         // 使用者要的幾乎都是欄位，而不是整個資料庫的物件清單。
         var candidates = local
-            .Concat(PeekScopeColumns(context.ScopeSources, settings, metadata))
+            .Concat(PeekScopeColumns(context, settings, metadata))
             .Concat(database);
 
         // sys.| 與 EXEC | 才把系統物件拉進來：那一份有一兩千筆，混進一般清單的話，
@@ -298,34 +298,135 @@ public static class SqlCompletionCandidates
     ///
     /// 有兩個以上相異的限定字時，插入的文字會補上別名，否則
     /// <c>SELECT Name FROM A a JOIN B b</c> 這種寫法會因為欄位名稱模稜兩可而執行失敗。
+    ///
+    /// 述詞的起點另外把<b>當前對象</b>的同名欄位換成整條聯結條件（見 <see cref="SqlJoinKeyMatcher"/>），
+    /// 所以這一支分成兩趟：第一趟收各來源的欄位（名稱沒收齊就不知道誰跟誰同名），
+    /// 配對算完才在第二趟換掉那幾筆的插入文字。只有一個來源時沒有「另一邊」可配，
+    /// 改成把索引鍵排到最前面——那時使用者要接的是另一張表，而索引鍵九成是接點。
     /// </remarks>
     private static IReadOnlyList<SqlSuggestion> PeekScopeColumns(
-        IReadOnlyList<SqlColumnSource> sources,
+        SqlCompletionContext context,
         SqlAssistSettings settings,
         ISqlCompletionMetadata metadata)
     {
+        var sources = context.ScopeSources;
+
         if (sources is null || sources.Count == 0)
         {
             return Array.Empty<SqlSuggestion>();
         }
 
         var qualify = NeedsQualifier(sources);
+        var predicate = SqlJoinKeyMatcher.WantsJoinKeys(context);
+        var indexKeysFirst = predicate && sources.Count == 1;
         var suggestions = new List<SqlSuggestion>();
 
-        foreach (var source in sources)
+        // 每個來源落在 suggestions 的哪一段：第二趟要照來源逐一換掉插入文字，
+        // 而當前對象是「某幾個來源」而不是「某幾個名稱」。
+        var starts = new int[sources.Count];
+        var counts = new int[sources.Count];
+        var keySources = new List<SqlJoinKeySource>(sources.Count);
+
+        for (var index = 0; index < sources.Count; index++)
         {
+            var source = sources[index];
             var qualifier = qualify ? source.Qualifier : null;
+            starts[index] = suggestions.Count;
 
             if (source.Kind == SqlColumnSourceKind.Names)
             {
                 AddScriptColumns(suggestions, source, settings, qualifier);
-                continue;
+                keySources.Add(new SqlJoinKeySource(source.Qualifier, source.Names));
+            }
+            else
+            {
+                var columns = metadata.PeekColumns(source.Table!, qualifier, settings, indexKeysFirst);
+                suggestions.AddRange(columns);
+                keySources.Add(new SqlJoinKeySource(source.Qualifier, NamesOf(columns)));
             }
 
-            suggestions.AddRange(metadata.PeekColumns(source.Table!, qualifier, settings));
+            counts[index] = suggestions.Count - starts[index];
         }
 
-        return suggestions;
+        if (!predicate)
+        {
+            return suggestions;
+        }
+
+        var match = SqlJoinKeyMatcher.Pair(keySources);
+
+        if (match.IsEmpty)
+        {
+            return suggestions;
+        }
+
+        // 配對鍵只加在當前對象那幾個來源上，由 SqlJoinKeyMatch.SourceIndexes 指認：
+        // 同名欄位在別的來源裡也有，靠名稱比對會把前面那張表一起改掉。
+        var current = new HashSet<int>(match.SourceIndexes);
+        var keys = new List<SqlSuggestion>();
+        var rest = new List<SqlSuggestion>(suggestions.Count);
+
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var pairs = current.Contains(index) ? match.Pairs : null;
+
+            for (var offset = 0; offset < counts[index]; offset++)
+            {
+                var suggestion = suggestions[starts[index] + offset];
+
+                if (pairs is not null && pairs.TryGetValue(suggestion.DisplayText, out var joinKey))
+                {
+                    keys.Add(WithJoinKey(suggestion, joinKey, settings));
+                }
+                else
+                {
+                    rest.Add(suggestion);
+                }
+            }
+        }
+
+        // 配對鍵排到最前面，其餘照原本的來源與定義順序。
+        keys.AddRange(rest);
+        return keys;
+    }
+
+    /// <summary>一組欄位建議的名稱，供配對用。</summary>
+    private static IReadOnlyList<string> NamesOf(IReadOnlyList<SqlSuggestion> columns)
+    {
+        var names = new string[columns.Count];
+
+        for (var index = 0; index < names.Length; index++)
+        {
+            names[index] = columns[index].DisplayText;
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// 同一筆欄位換上整條聯結條件的插入文字。
+    /// </summary>
+    /// <remarks>
+    /// 顯示文字不動：使用者選的仍然是那個欄位名稱，只是在這個位置上選它就等於把條件寫完。
+    /// 說明欄把配到的另一邊寫出來（<c>= a.CopyNo</c>），清單上才看得出來它會多寫什麼。
+    /// </remarks>
+    private static SqlSuggestion WithJoinKey(
+        SqlSuggestion column,
+        SqlJoinKey joinKey,
+        SqlAssistSettings settings)
+    {
+        return new SqlSuggestion(
+            column.DisplayText,
+            joinKey.ComposeInsertionText(settings),
+            $"{column.Description} · {joinKey.ComposeSuffix(settings)}",
+            column.Preview,
+            column.Kind,
+            column.TriggerFollowUp,
+            column.SchemaName,
+            column.Tag,
+            column.Positions,
+            column.IsDestructive,
+            joinKey);
     }
 
     /// <summary>

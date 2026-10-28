@@ -164,13 +164,17 @@ public sealed class SqlCatalogCompletionMetadata : ISqlCompletionMetadata
             $"（第二層{(resolved.DetailWasCached ? "命中快取" : "查詢資料庫")}）",
             total);
 
-        return ToColumns(resolved, settings, qualifier: null);
+        return ToColumns(resolved, settings, qualifier: null, indexKeysFirst: false);
     }
 
-    public IReadOnlyList<SqlSuggestion> PeekColumns(SqlTableReference table, string? qualifier, SqlAssistSettings settings)
+    public IReadOnlyList<SqlSuggestion> PeekColumns(
+        SqlTableReference table,
+        string? qualifier,
+        SqlAssistSettings settings,
+        bool indexKeysFirst = false)
     {
         return SqlResolvedTable.TryPeek(_resolveCatalog(), table, out var resolved)
-            ? ToColumns(resolved, settings, qualifier)
+            ? ToColumns(resolved, settings, qualifier, indexKeysFirst)
             : Nothing;
     }
 
@@ -335,18 +339,21 @@ public sealed class SqlCatalogCompletionMetadata : ISqlCompletionMetadata
     private static IReadOnlyList<SqlSuggestion> ToColumns(
         SqlResolvedTable resolved,
         SqlAssistSettings settings,
-        string? qualifier)
+        string? qualifier,
+        bool indexKeysFirst)
     {
         if (resolved.Detail is not { Columns.Count: > 0 } detail)
         {
             return Nothing;
         }
 
-        var suggestions = new SqlSuggestion[detail.Columns.Count];
+        // 排序只搬索引鍵，不動其餘欄位的相對順序；沒有索引鍵時原樣回傳同一份清單。
+        var columns = indexKeysFirst ? SqlColumnOrdering.IndexKeysFirst(detail.Columns) : detail.Columns;
+        var suggestions = new SqlSuggestion[columns.Count];
 
         for (var index = 0; index < suggestions.Length; index++)
         {
-            suggestions[index] = SqlCatalogSuggestions.Column(resolved.Object, detail.Columns[index], settings, qualifier);
+            suggestions[index] = SqlCatalogSuggestions.Column(resolved.Object, columns[index], settings, qualifier);
         }
 
         return suggestions;

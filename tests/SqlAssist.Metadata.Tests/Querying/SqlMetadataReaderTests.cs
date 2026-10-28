@@ -161,6 +161,28 @@ public sealed class SqlMetadataReaderTests
         Assert.Null(SqlMetadataReader.ReadColumn(record).Description);
     }
 
+    /// <summary>
+    /// 索引鍵欄位接在說明與 <c>vector</c> 兩欄之後（序號 24）。
+    /// </summary>
+    /// <remarks>
+    /// 順序對不上的症狀不是編譯錯誤，而是 <c>WHERE</c> 之後先列的欄位換成別人的：
+    /// 這一欄讀錯位置等於整個索引鍵排序在說謊，而畫面上完全看不出來。
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void 讀取索引鍵旗標(bool isIndexKey)
+    {
+        // 22、23 是 vector 的維度與基底型別，24 才是 is_index_key。
+        var record = new FakeDataRecord(
+            1, "CopyNo", "int", (short)4, (byte)10, (byte)0,
+            false, false, false, false, null, null, false,
+            null, null, null, null, false, false, false, false,
+            null, null, null, isIndexKey);
+
+        Assert.Equal(isIndexKey, SqlMetadataReader.ReadColumn(record).IsIndexKey);
+    }
+
     [Fact]
     public void 讀取計算欄位的運算式()
     {

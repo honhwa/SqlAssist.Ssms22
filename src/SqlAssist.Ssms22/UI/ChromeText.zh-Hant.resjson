@@ -39,6 +39,9 @@
   "CopyAll": "複製全文",
   "CopySqlFailed": "複製 SQL 失敗：{message}",
   "ClipboardBusy": "剪貼簿正被其他程式使用，未複製；請稍後再試。",
+  // 讀取方向的兩句：讀不到時「未複製」不成立，所以另寫一句。
+  "ClipboardBusyRead": "剪貼簿正被其他程式使用，讀不到內容；請稍後再試。",
+  "ClipboardNoText": "剪貼簿裡沒有純文字內容。",
   "NothingToCopy": "沒有可複製的項目。",
   // 通知標題已經是「已複製清單」，這一句是說明。
   "CopiedRows": "{rows:N0} 筆（含標頭列，可直接貼到 Excel）。",

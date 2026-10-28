@@ -33,8 +33,8 @@
 |搜尋範圍、伺服器、資料庫清單|[範圍](search-scope.md)|
 |建議清單、排名、列尾標記、IntelliSense|[補全](completion.md)|
 |CompletionContext、觸發、大小寫|[上下文](completion-context.md)／[大寫](keyword-casing.md)|
-|定序、語言、時區、登入、使用者、ALTER／DROP 名稱格|[名單](completion-instance-lists.md)／[目錄](completion-catalog-names.md)|
-|`ON` 是資料表或述詞、MERGE 動作子句|[ON／MERGE](completion-on-merge.md)|
+|定序、語言、時區、登入、使用者、名稱格|[名單](completion-instance-lists.md)／[目錄](completion-catalog-names.md)|
+|`ON` 是資料表或述詞、配對鍵、MERGE|[ON／MERGE](completion-on-merge.md)／[配對鍵](completion-join-keys.md)|
 |TVF／純量函式、系統物件範圍|[物件種類](completion-object-kinds.md)|
 |多段式名稱、限定字判定|[限定名稱](qualified-names.md)|
 |別名欄位、SET／INSERT 資料行、ColumnSource、暫存表|[欄位](completion-columns.md)／[指令碼宣告](script-tables.md)|
@@ -60,7 +60,7 @@
 |使用者 override、合併、存檔|[片段存放](snippet-storage.md)|
 |SELECT *、Wildcards、Tab 展開|[星號展開](wildcard-expansion.md)|
 |Pairing、括號、引號|[自動配對](auto-pairing.md)|
-|BEGIN／END、CASE、高亮、BlockMatcher|[區塊配對](block-matching.md)／[配色](block-colors.md)／[驗收](block-matching-validation.md)|
+|BEGIN／END、CASE、高亮|[區塊配對](block-matching.md)／[配色](block-colors.md)／[驗收](block-matching-validation.md)|
 |QuickInfo、暫存表／變數／CTE|[結構預覽](structure-preview.md)／[宣告](script-declared-objects.md)|
 |定位、焦點、收起、釘住、縮放、進出場|[視窗](preview-window.md)／[互動](preview-interaction.md)／[外觀](preview-surface.md)|
 |Chrome、配色、高對比|[UI 準則](ui-guidelines.md)／[骨架](ui-windows.md)／[主題](themes.md)／[對話框](ui-dialogs.md)|

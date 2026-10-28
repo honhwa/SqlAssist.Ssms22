@@ -21,12 +21,16 @@ internal readonly struct SqlStatementSite
         string indent,
         string newLine,
         string statementText,
-        char nextCharacter)
+        char nextCharacter,
+        string? bufferText,
+        int start)
     {
         Indent = indent;
         NewLine = newLine;
         StatementText = statementText;
         NextCharacter = nextCharacter;
+        BufferText = bufferText;
+        Start = start;
     }
 
     /// <summary>語句所在行的前導空白，原樣重複到展開出來的每一行。</summary>
@@ -52,6 +56,19 @@ internal readonly struct SqlStatementSite
     /// </remarks>
     public char NextCharacter { get; }
 
+    /// <summary>
+    /// 捕捉當下的整份緩衝區文字；只有需要看批次的展開會用到（<c>EXEC</c> 的變數避讓）。
+    /// </summary>
+    /// <remarks>
+    /// 整份而不是那一行：變數是批次層級的物件，要避開的 <c>DECLARE</c> 可能寫在上面
+    /// 幾十行。快照在等待中繼資料期間不會變，所以這一份與 <see cref="StatementText"/>
+    /// 是同一時刻的內容。
+    /// </remarks>
+    public string? BufferText { get; }
+
+    /// <summary>要被換掉的那一段在 <see cref="BufferText"/> 裡的起點。</summary>
+    public int Start { get; }
+
     public static SqlStatementSite From(SnapshotSpan target)
     {
         var line = target.Snapshot.GetLineFromPosition(target.Start.Position);
@@ -69,7 +86,9 @@ internal readonly struct SqlStatementSite
             target.GetText(),
             target.End.Position < target.Snapshot.Length
                 ? target.Snapshot[target.End.Position]
-                : '\0');
+                : '\0',
+            target.Snapshot.GetText(),
+            target.Start.Position);
     }
 }
 

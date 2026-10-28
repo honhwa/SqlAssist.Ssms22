@@ -71,6 +71,22 @@ public static class SqlIdentifier
         return !string.IsNullOrEmpty(name) && (name[0] == '#' || IsVariable(name));
     }
 
+    /// <summary>
+    /// 名稱是不是暫存資料表：<c>#</c> 與 <c>##</c> 兩種開頭。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="IsScriptScoped"/> 分開問：那一個管的是「不受方括號設定管轄」，
+    /// 這一個管的是「它是一張表，可以接在 <c>FROM</c> 後面也可以取別名」。
+    /// 資料表變數同樣是指令碼宣告的名稱，但 <c>@</c> 開頭有它自己的判斷。
+    ///
+    /// 只看第一個字元，不建名冊：井號開頭在 T-SQL 裡沒有第二種意思，
+    /// 而問這個問題的路徑（提交一筆建議）每一次按鍵都走得到。
+    /// </remarks>
+    public static bool IsTemporaryTable(string name)
+    {
+        return !string.IsNullOrEmpty(name) && name[0] == '#';
+    }
+
     /// <summary>名稱是不是變數：小老鼠開頭，包含資料表變數。</summary>
     /// <remarks>
     /// 資料表變數在兩個位置要寫成兩個樣子，分界正是小老鼠：當資料來源時只能寫

@@ -139,4 +139,77 @@ internal static class CommandIds
 
     /// <summary>結果格線：把選取範圍寫成 JSON 陣列。</summary>
     public const int ResultGridJson = 0x0307;
+
+    /// <summary>
+    /// 查詢視窗右鍵：把剪貼簿的一欄值貼成 <c>IN</c> 條件。
+    /// </summary>
+    /// <remarks>
+    /// 刻意沒有鍵繫結。命令表的鍵繫結只能用全域範圍，而 Ctrl+V 與它的一整族
+    /// 變體是使用者最常按的鍵——綁上去就是在整個殼層搶走那個鍵，
+    /// 而這個功能的用法是「複製一欄值、在要放條件的地方按右鍵」，
+    /// 本來就不需要一組快捷鍵。要綁的人走「選項 → 環境 → 鍵盤」，
+    /// 命令名稱是 <c>SqlAssist.PasteAsInPredicate</c>。
+    /// </remarks>
+    public const int PasteAsInPredicate = 0x021D;
+
+    /// <summary>
+    /// 查詢視窗右鍵：只貼值，不含 <c>IN</c> 與括號。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="PasteAsInPredicate"/> 共用同一份實作，差別只在頭尾那兩個符號。
+    /// 分成兩個命令而不是一個命令加對話框：兩者的差別只有一個字，
+    /// 每次都要在彈出來的視窗裡再選一次只是多一次點擊。
+    /// </remarks>
+    public const int PasteAsValues = 0x021E;
+
+    /// <summary>
+    /// 查詢視窗右鍵：把沒帶結構描述的物件名稱補成 <c>dbo.</c>。
+    /// </summary>
+    /// <remarks>
+    /// 沒有鍵繫結，理由與 <see cref="PasteAsInPredicate"/> 相同：這是「整理目前這一段」
+    /// 的動作，用法本來就是先選取再按右鍵，綁鍵只是多佔一組快捷鍵。
+    /// 命令名稱是 <c>SqlAssist.QualifySchema</c>。
+    /// </remarks>
+    public const int QualifySchema = 0x021F;
+
+    /// <summary>
+    /// 查詢視窗右鍵：把 <c>TOP 10</c> 補成 <c>TOP (10)</c>。
+    /// </summary>
+    /// <remarks>與 <see cref="QualifySchema"/> 共用同一份實作，差別只在呼叫哪一支分析器。</remarks>
+    public const int ParenthesizeTop = 0x0220;
+
+    /// <summary>
+    /// 查詢視窗右鍵：就地改掉游標所在的 <c>@變數</c>，同批次的其他出現位置一起改。
+    /// </summary>
+    /// <remarks>
+    /// 右鍵選單那一顆。與 <see cref="InlineRenameKey"/> 共用同一份實作，差別只在狀態：
+    /// 這一顆只看游標在不在變數上，按鍵那一顆還要求鍵盤真的在編輯器上。
+    /// 命令的狀態是掛在 ID 上的，共用一個 ID 就表達不出這個差別——而那個差別正是
+    /// F2 會不會搶走物件總管「重新命名節點」的關鍵。
+    /// </remarks>
+    public const int InlineRename = 0x0221;
+
+    /// <summary>
+    /// 清掉 SqlAssist 的中繼資料快取，並要求 SSMS 重新整理內建 IntelliSense 的物件快取。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="RefreshSuggestions"/> 分開而不是併進去：那一顆只清 SqlAssist 自己的
+    /// 分層快取（見 docs/metadata.md），而紅色錯誤波浪線畫的是 SSMS 內建 IntelliSense
+    /// 的判斷，它讀的是另一份快取。兩件事的入口分開，使用者才看得出哪一顆解掉哪一種症狀。
+    ///
+    /// 沒有鍵繫結：SSMS 自己的 Ctrl+Shift+R 已經是那件事的肌肉記憶，再綁一組只會讓
+    /// 兩者互相蓋掉；要綁的人走「選項 → 環境 → 鍵盤」，命令名稱是
+    /// <c>SqlAssist.RefreshCache</c>。
+    /// </remarks>
+    public const int RefreshCache = 0x0223;
+
+    /// <summary>
+    /// 就地改名的 F2 鍵繫結；不出現在任何選單。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="GoToDefinition"/> 同一條命令表路徑，鍵繫結也只能用全域範圍。
+    /// F2 在 SSMS 是「重新命名物件總管的節點」，所以這一顆的狀態另外要求鍵盤在
+    /// SQL 編輯器上；停用的命令殼層不派送，物件總管那裡的 F2 就照常是它原本的用途。
+    /// </remarks>
+    public const int InlineRenameKey = 0x0222;
 }

@@ -7,6 +7,7 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using SqlAssist.Core.Notifications;
 using SqlAssist.Core.Settings;
+using SqlAssist.Metadata.ResultGrid;
 using SqlAssist.Ssms22;
 using SqlAssist.Ssms22.Completion;
 using SqlAssist.Ssms22.Connections;
@@ -70,6 +71,43 @@ internal sealed class SqlAssistCommands
             CommandIds.RefreshSuggestions,
             RefreshSuggestions,
             () => SqlAssistSettingsStore.Current.Enabled && ActiveSqlEditor.Current is not null);
+        // 與上面那一顆同樣只在有 SQL 編輯器時可用：原生那一半刷的是「這一個視窗」的物件快取，
+        // 沒有視窗就沒有東西可刷。
+        AddCommand(
+            CommandIds.RefreshCache,
+            RefreshCache,
+            () => SqlAssistSettingsStore.Current.Enabled && ActiveSqlEditor.Current is not null);
+        // 查詢視窗右鍵的兩個貼上命令，共用一份實作，差別只在頭尾那兩個符號。
+        // 沒有鍵繫結：Ctrl+V 那一族是使用者最常按的鍵，理由見 CommandIds。
+        AddCommand(
+            CommandIds.PasteAsInPredicate,
+            (_, _) => PasteValues(SqlPasteShape.InPredicate),
+            SqlPasteValuesAction.IsAvailable);
+        AddCommand(
+            CommandIds.PasteAsValues,
+            (_, _) => PasteValues(SqlPasteShape.ValuesOnly),
+            SqlPasteValuesAction.IsAvailable);
+        // 就地改名分成兩顆命令，共用同一份實作。右鍵選單那一顆只看游標在不在變數上；
+        // F2 那一顆還要求鍵盤真的在編輯器上——命令的狀態掛在 ID 上，共用一個 ID
+        // 就表達不出這個差別，而那個差別正是 F2 會不會搶走物件總管「重新命名節點」的關鍵。
+        AddCommand(
+            CommandIds.InlineRename,
+            InlineRename,
+            InlineRenameCommand.IsAvailable);
+        AddCommand(
+            CommandIds.InlineRenameKey,
+            InlineRename,
+            InlineRenameCommand.IsKeyBindingAvailable);
+        // 就地改寫的兩顆：同樣沒有鍵繫結，而且一律回一句結果——動的是散在整份文件裡的
+        // 幾十處，不回報的話使用者得自己捲一遍才知道有沒有生效。
+        AddCommand(
+            CommandIds.QualifySchema,
+            (_, _) => RewriteText(SqlTextRewriteKind.SchemaQualification),
+            SqlTextRewriteAction.IsAvailable);
+        AddCommand(
+            CommandIds.ParenthesizeTop,
+            (_, _) => RewriteText(SqlTextRewriteKind.TopParenthesis),
+            SqlTextRewriteAction.IsAvailable);
         // 全域鍵繫結（Ctrl+Alt+S）、殼層命令濾鏡與右鍵選單都要問狀態；沒有選取時
         // 回報停用，右鍵選單上那一項就是灰的，Ctrl+Alt+S 也照常落回殼層。
         AddCommand(
@@ -220,6 +258,13 @@ internal sealed class SqlAssistCommands
         CommandIds.GoToDefinition => MenuText.GoToDefinition,
         CommandIds.ShowObjectStructure => MenuText.ShowObjectStructure,
         CommandIds.RefreshSuggestions => MenuText.RefreshSuggestions,
+        CommandIds.RefreshCache => MenuText.RefreshCache,
+        CommandIds.PasteAsInPredicate => MenuText.PasteAsInPredicate,
+        CommandIds.PasteAsValues => MenuText.PasteAsValues,
+        CommandIds.QualifySchema => MenuText.QualifySchema,
+        CommandIds.ParenthesizeTop => MenuText.ParenthesizeTop,
+        CommandIds.InlineRename => MenuText.InlineRename,
+        CommandIds.InlineRenameKey => MenuText.InlineRenameKey,
         CommandIds.SurroundWith or CommandIds.SurroundWithFromTools => MenuText.SurroundWith,
         CommandIds.ManageSnippets => MenuText.ManageSnippets,
         CommandIds.OpenSettings => MenuText.OpenSettings,
@@ -654,6 +699,172 @@ internal sealed class SqlAssistCommands
             // 這條路徑綁著按鍵，失敗必須可見，但不應用對話框打斷編輯。
             SqlAssistDiagnostics.WriteAlways($"重新整理建議失敗：{exception}");
             SqlAssistStatusBar.Show(_package, CommandText.RefreshSuggestionsFailed);
+        }
+    }
+
+    /// <summary>
+    /// 清掉 SqlAssist 的快取，並要求 SSMS 重新整理內建 IntelliSense 的物件快取。
+    /// </summary>
+    /// <remarks>
+    /// 兩份一起清：使用者按下它的時機是「剛建完物件，編輯器還看不見」，而那時候
+    /// 建議清單與紅色波浪線各缺一半——前者缺的是 SqlAssist 的，後者缺的是原生的。
+    ///
+    /// 原生那一半找不到命令時仍然保留 SqlAssist 那一半，並且在狀態列說清楚波浪線
+    /// 可能還在：安靜地回一句「已完成」比沒有這顆命令更糟。
+    /// </remarks>
+    private void RefreshCache(object? sender, EventArgs eventArgs)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is null)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
+                return;
+            }
+
+            SqlMetadataService.InvalidateAll();
+            var result = SqlIntellisenseCache.Refresh(_package);
+            SqlAssistDiagnostics.WriteAlways($"使用者已要求重新整理快取：{result}");
+
+            SqlAssistStatusBar.Show(_package, result switch
+            {
+                SqlIntellisenseRefreshResult.Refreshed => CommandText.CacheRefreshed,
+                SqlIntellisenseRefreshResult.Unavailable => CommandText.CacheRefreshedNativeUnavailable,
+                _ => CommandText.RefreshCacheFailed,
+            });
+        }
+        catch (Exception exception)
+        {
+            // 同上：失敗必須看得見，但不應用對話框打斷編輯。
+            SqlAssistDiagnostics.WriteAlways($"重新整理快取失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, CommandText.RefreshCacheFailed);
+        }
+    }
+
+    /// <summary>
+    /// 把剪貼簿上的一欄值貼成 <c>IN</c> 條件或純值清單。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="RewriteText"/> 同一條路：使用者按了右鍵選單卻什麼都沒發生
+    /// 等於故障，所以結果一律走狀態列說明，<b>不用對話框</b>——他接著要做的是繼續編輯。
+    /// 成功不另外出聲：貼上去的那一段就在游標前面，有沒有成功一眼就看得出來。
+    /// </remarks>
+    private void PasteValues(SqlPasteShape shape)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is not { } textView)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
+                return;
+            }
+
+            if (!SqlPasteValuesAction.TryRun(textView, shape, out var message))
+            {
+                SqlAssistStatusBar.Show(_package, message);
+            }
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"貼上值清單失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, CommandText.PasteValuesFailed);
+        }
+    }
+
+    /// <summary>
+    /// 就地改掉游標所在的 <c>@變數</c>。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="RewriteText"/> 同一條路：使用者按了選單卻什麼都沒發生等於故障，
+    /// 所以開始不了的時候一律說明原因，<b>不用對話框</b>——他接著要做的是繼續編輯。
+    ///
+    /// 進入改名模式之後的成敗改由狀態列回報（不合法的名稱、撞名），而那是
+    /// <see cref="InlineRenameCommand"/> 自己的事：那時候使用者的鍵盤還在編輯器上，
+    /// 訊息要跟著他的下一次按鍵走。
+    /// </remarks>
+    private void InlineRename(object? sender, EventArgs eventArgs)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is not { } textView)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
+                return;
+            }
+
+            if (!InlineRenameCommand.TryBegin(textView, _package, out var message))
+            {
+                SqlAssistStatusBar.Show(_package, message);
+            }
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"就地改名失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, CommandText.RenameFailed);
+        }
+    }
+
+    /// <summary>
+    /// 查詢視窗右鍵的就地改寫：補齊結構描述（<c>dbo.</c>）或把 <c>TOP 10</c> 補上括號。
+    /// </summary>
+    /// <remarks>
+    /// 與 <see cref="RefreshSuggestions"/> 同一條路：使用者按了選單卻什麼都沒發生等於故障，
+    /// 所以一處都沒動、或根本開始不了，一律在狀態列說明原因。
+    /// 成功也說一聲，因為這一種命令動的是散在整份文件裡的好幾處。
+    /// </remarks>
+    private void RewriteText(SqlTextRewriteKind kind)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            // BeforeQueryStatus 通常會擋掉這兩種，但殼層不保證每一次派送前都問過狀態。
+            if (!SqlAssistSettingsStore.Current.Enabled)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.Disabled);
+                return;
+            }
+
+            if (ActiveSqlEditor.Current is not { } textView)
+            {
+                SqlAssistStatusBar.Show(_package, CommandText.PlaceCaretInQueryWindow);
+                return;
+            }
+
+            SqlTextRewriteAction.TryRun(textView, kind, out var message);
+            SqlAssistStatusBar.Show(_package, message);
+        }
+        catch (Exception exception)
+        {
+            SqlAssistDiagnostics.WriteAlways($"就地改寫失敗：{exception}");
+            SqlAssistStatusBar.Show(_package, CommandText.RewriteFailed);
         }
     }
 }

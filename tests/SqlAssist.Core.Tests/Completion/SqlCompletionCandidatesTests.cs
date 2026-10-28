@@ -67,6 +67,104 @@ public sealed class SqlCompletionCandidatesTests
         Assert.All(list, item => Assert.StartsWith("SQL_TSI_", item.DisplayText));
     }
 
+    /// <summary>
+    /// 述詞的起點把當前對象的同名欄位換成整條聯結條件，並排到欄位清單的最前面。
+    /// </summary>
+    /// <remarks>
+    /// 排在<b>欄位</b>的最前面而不是整份清單的最前面：關鍵字與片段照樣先列，
+    /// 這裡管的是「欄位之間誰先」。對面那張表的同名欄位仍留著——它沒有被改掉，
+    /// 只是不再是條件的主角。
+    /// </remarks>
+    [Fact]
+    public async Task 述詞的起點把同名欄位換成整條聯結條件()
+    {
+        var metadata = Joined();
+
+        var list = await GetAsync("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |", new SqlAssistSettings(), metadata);
+
+        var columns = list.Where(item => item.Kind == SuggestionKind.Column).ToArray();
+
+        Assert.Equal("CopyNo", columns[0].DisplayText);
+        Assert.Equal("c.CopyNo = l.CopyNo", columns[0].InsertionText);
+        Assert.NotNull(columns[0].JoinKey);
+        Assert.Equal("Code", columns[1].DisplayText);
+        Assert.Equal("c.Code = l.Code", columns[1].InsertionText);
+        Assert.Equal("l.CopyNo", columns[2].InsertionText);
+    }
+
+    /// <summary>配不到同名欄位的欄位照舊列在後面，插入文字不動。</summary>
+    [Fact]
+    public async Task 沒有同名對象的欄位留在原位()
+    {
+        var metadata = Joined();
+
+        var list = await GetAsync("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |", new SqlAssistSettings(), metadata);
+
+        Assert.Contains(list, item => item.DisplayText == "Amount" && item.JoinKey is null);
+        Assert.Equal("l.CopyNo", list.Single(item => item.DisplayText == "CopyNo" && item.JoinKey is null).InsertionText);
+    }
+
+    /// <summary>
+    /// 條件左邊寫完之後就不是述詞的起點：那裡要的是右邊那一個欄位。
+    /// </summary>
+    /// <remarks>
+    /// 插入整條條件會寫出 <c>= a.CopyNo = b.CopyNo</c>。
+    /// </remarks>
+    [Fact]
+    public async Task 條件的左邊寫完之後不配對()
+    {
+        var metadata = Joined();
+
+        var list = await GetAsync("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = |", new SqlAssistSettings(), metadata);
+
+        Assert.All(list.Where(item => item.Kind == SuggestionKind.Column), item => Assert.Null(item.JoinKey));
+    }
+
+    /// <summary>
+    /// 只有一個來源時沒有「另一邊」可配，改成請中繼資料把索引鍵排到最前面。
+    /// </summary>
+    [Fact]
+    public async Task 單一來源的述詞起點要求索引鍵排前面()
+    {
+        var metadata = Joined();
+
+        await GetAsync("SELECT * FROM dbo.Loan l WHERE |", new SqlAssistSettings(), metadata);
+
+        Assert.Equal(new[] { true }, metadata.IndexKeysFirst);
+    }
+
+    /// <summary>多個來源時不排：那會讓每一張表的索引鍵一起浮上來，蓋掉配對鍵的順序。</summary>
+    [Fact]
+    public async Task 多個來源的述詞起點不要求索引鍵排前面()
+    {
+        var metadata = Joined();
+
+        await GetAsync("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |", new SqlAssistSettings(), metadata);
+
+        Assert.Equal(new[] { false, false }, metadata.IndexKeysFirst);
+    }
+
+    /// <summary><c>SELECT</c> 之後不配對：那裡要的是欄位本身。</summary>
+    [Fact]
+    public async Task 選取清單不配對()
+    {
+        var metadata = Joined();
+
+        var list = await GetAsync("SELECT | FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = c.CopyNo", new SqlAssistSettings(), metadata);
+
+        Assert.All(list.Where(item => item.Kind == SuggestionKind.Column), item => Assert.Null(item.JoinKey));
+        Assert.Equal(new[] { false, false }, metadata.IndexKeysFirst);
+    }
+
+    /// <summary>兩個來源各有一組欄位，<c>CopyNo</c> 與 <c>Code</c> 同名。</summary>
+    private static RecordingMetadata Joined()
+    {
+        var metadata = new RecordingMetadata();
+        metadata.Columns["Loan"] = new[] { "CopyNo", "Code" };
+        metadata.Columns["Copy"] = new[] { "CopyNo", "Code", "Amount" };
+        return metadata;
+    }
+
     /// <param name="text">整份指令碼；<c>|</c> 是游標。</param>
     private static async Task<IReadOnlyList<SqlSuggestion>> GetAsync(
         string text,
@@ -88,6 +186,12 @@ public sealed class SqlCompletionCandidatesTests
 
         public List<string?> PeekQualifiers { get; } = new();
 
+        /// <summary>每個資料表名稱要回哪些欄位名稱；沒登記的回空清單。</summary>
+        public Dictionary<string, string[]> Columns { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>每一輪問到的「索引鍵排前面」旗標，依來源順序。</summary>
+        public List<bool> IndexKeysFirst { get; } = new();
+
         public Task<SqlCompletionContext> ResolveQualifierAsync(SqlCompletionContext context, CancellationToken cancellationToken) =>
             Task.FromResult(context);
 
@@ -106,11 +210,29 @@ public sealed class SqlCompletionCandidatesTests
             SqlAssistSettings settings,
             CancellationToken cancellationToken) => Nothing();
 
-        public IReadOnlyList<SqlSuggestion> PeekColumns(SqlTableReference table, string? qualifier, SqlAssistSettings settings)
+        public IReadOnlyList<SqlSuggestion> PeekColumns(
+            SqlTableReference table,
+            string? qualifier,
+            SqlAssistSettings settings,
+            bool indexKeysFirst = false)
         {
             Asked();
             PeekQualifiers.Add(qualifier);
-            return Array.Empty<SqlSuggestion>();
+            IndexKeysFirst.Add(indexKeysFirst);
+
+            if (!Columns.TryGetValue(table.ObjectName, out var names))
+            {
+                return Array.Empty<SqlSuggestion>();
+            }
+
+            return names
+                .Select(name => new SqlSuggestion(
+                    name,
+                    SqlInsertionText.Column(name, qualifier, settings),
+                    table.ObjectName,
+                    table.ObjectName,
+                    SuggestionKind.Column))
+                .ToArray();
         }
 
         public Task WarmColumnsAsync(IReadOnlyList<SqlColumnSource> sources, CancellationToken cancellationToken) =>

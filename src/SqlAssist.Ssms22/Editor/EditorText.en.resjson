@@ -12,5 +12,15 @@
   "QueryWindowClosed": "The query window is closed; cannot show the object structure.",
   "StructureFailed": "Couldn't open the object structure; see the diagnostic log for details.",
   "NotDatabaseObject": "{name} is not a recognized database object.",
-  "NoObjectHere": "No recognized database object at this location."
+  "NoObjectHere": "No recognized database object at this location.",
+  "CaretInVirtualSpace": "The caret is in virtual space. Move it between characters and try again.",
+  "BoxSelectionCannotRewrite": "A box selection can't be rewritten. Use a regular selection instead.",
+  "BoxSelectionCannotReplace": "A box selection can't be replaced. Use a regular selection instead.",
+  "SelectionReadOnlyNoChange": "The selection is read-only. Nothing was changed.",
+  "InsertionReadOnlyNoPaste": "The insertion point is read-only. Nothing was pasted.",
+  "SchemaQualified": "Qualified {count:N0} object references with a schema (dbo.).",
+  "TopParenthesized": "Added parentheses to {count:N0} TOP clauses.",
+  "NoSchemaQualificationNeeded": "No names need a schema.",
+  "NoTopParenthesisNeeded": "No TOP clauses need parentheses.",
+  "PastedValues": "Pasted {count:N0} values"
 }

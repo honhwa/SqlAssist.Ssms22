@@ -288,7 +288,8 @@ public static class SqlCompletionContextAnalyzer
             clausePhrase: caret.Phrase,
             startsBatch: caret.StartsBatch,
             columnOwner: columnOwner,
-            acceptsTypeAs: SqlDataTypePosition.AcceptsAs(tokens, textBeforeToken));
+            acceptsTypeAs: SqlDataTypePosition.AcceptsAs(tokens, textBeforeToken),
+            mayAppendTableAlias: IsTableSourceNameSlot(qualifierPath is null ? beforeToken : beforeQualifier));
     }
 
     /// <summary>
@@ -923,6 +924,101 @@ public static class SqlCompletionContextAnalyzer
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// 游標是不是停在「資料來源的名稱」這一格上，也就是後面接一個別名也讀得通的位置。
+    /// </summary>
+    /// <remarks>
+    /// <c>FROM </c>、<c>JOIN </c>、<c>APPLY </c>、<c>USING </c>、<c>UPDATE </c>
+    /// 之後直接就是名稱；<c>FROM dbo.Loan, </c> 這種「逗號之後」也是。
+    ///
+    /// 逗號那條不能只看前一個詞元：<c>SELECT a, </c> 與 <c>VALUES (1, </c> 的逗號
+    /// 在文字上長得一樣。所以往左找第一個「足以決定這是清單」的關鍵字——
+    /// 看到 <c>FROM</c>／<c>JOIN</c>／<c>APPLY</c> 就是資料來源清單，
+    /// 看到 <c>SELECT</c>／<c>VALUES</c>／<c>WHERE</c> 這些就不是。
+    ///
+    /// 名稱已經寫完、正準備打別名的位置（<c>FROM dbo.Loan </c>）回傳 false：
+    /// 那時使用者要的是自己打別名或直接往下寫，不是再被塞一個。
+    /// </remarks>
+    private static bool IsTableSourceNameSlot(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var trimmed = text.TrimEnd();
+
+        if (EndsWithKeyword(trimmed, "FROM", out _) ||
+            EndsWithKeyword(trimmed, "JOIN", out _) ||
+            EndsWithKeyword(trimmed, "APPLY", out _) ||
+            EndsWithKeyword(trimmed, "USING", out _) ||
+            EndsWithKeyword(trimmed, "UPDATE", out _))
+        {
+            return true;
+        }
+
+        if (!trimmed.EndsWith(",", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var tokens = SqlTokenizer.Tokenize(trimmed);
+
+        // 從倒數第二個詞元（也就是逗號）往左找，跳過逗號自己。
+        for (var index = tokens.Count - 2; index >= 0; index--)
+        {
+            var word = tokens[index].Text;
+
+            if (IsTableSourceAnchor(word))
+            {
+                return true;
+            }
+
+            if (IsNonSourceListKeyword(word))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTableSourceAnchor(string word)
+    {
+        return string.Equals(word, "FROM", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "JOIN", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "APPLY", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 逗號清單裡「不會接資料表」的那幾個關鍵字，看到就可以停止往左找。
+    /// </summary>
+    /// <remarks>
+    /// 這份名單是往安全的方向漏的：漏掉一個的後果是別名多補在那個位置，
+    /// 而多寫一個的後果是資料來源位置認不出來、功能安靜地不作用。
+    /// 所以只列真的有把握的。
+    /// </remarks>
+    private static bool IsNonSourceListKeyword(string word)
+    {
+        return string.Equals(word, "SELECT", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "WHERE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "IN", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "INTO", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "ON", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "SET", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "VALUES", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "MERGE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "INSERT", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "UPDATE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "DELETE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "TABLE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "HAVING", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "GROUP", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "ORDER", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "UNION", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(word, "WITH", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool EndsWithKeywords(string text, string first, string second, out int keywordStart)

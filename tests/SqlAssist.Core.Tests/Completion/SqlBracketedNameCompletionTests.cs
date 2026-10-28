@@ -16,10 +16,10 @@ namespace SqlAssist.Core.Tests.Completion;
 public sealed class SqlBracketedNameCompletionTests
 {
     private static readonly SqlAssistSettings Qualified =
-        new() { QualifyObjectNames = true, UseSquareBrackets = false };
+        new() { QualifyObjectNames = true, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlAssistSettings Unqualified =
-        new() { QualifyObjectNames = false, UseSquareBrackets = false };
+        new() { QualifyObjectNames = false, UseSquareBrackets = false, TableSourceAliasStyle = SqlTableSourceAliasStyle.Off };
 
     private static readonly SqlSuggestion Loan =
         new("Loan", "Loan", "Table", "Loan", SuggestionKind.Table, schemaName: "dbo");
