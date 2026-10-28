@@ -7,6 +7,7 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
 using SqlAssist.Ssms22.UI;
 using Xunit;
@@ -23,7 +24,7 @@ public sealed class BlockPaletteTests
     public void 指定白字在全域與符號高亮都保持白色(string mode)
     {
         var shell = ThemePaletteTests.ColorsFor(mode);
-        foreach (var fill in new[] { "", "#FFFFFF", "#4F86C6", "#FFFF00", "#000000" })
+        foreach (var fill in new[] { "#FFFFFF", "#4F86C6", "#FFFF00", "#000000" })
         {
             var palette = BlockPalette.Create(shell[ThemeBrush.ListBackground], shell[ThemeBrush.ListForeground],
                 shell[ThemeBrush.AccentBorder], "#4F86C6", false,
@@ -49,18 +50,44 @@ public sealed class BlockPaletteTests
     }
 
     [Fact]
-    public void 符號留空繼承全域且可單獨覆寫任一通道()
+    public void 符號兩色留空時括號金底白字引號亮黃深字()
     {
         var defaults = new SqlAssistSettings { BlockKeywordForeground = "#202020", BlockKeywordBackground = "#EEDDAA" };
         var inherited = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false, defaults);
-        Assert.Equal(inherited[ThemeBrush.BlockKeywordForeground], inherited[ThemeBrush.BlockSymbolForeground]);
-        Assert.Equal(inherited[ThemeBrush.BlockKeywordBackground], inherited[ThemeBrush.BlockSymbolBackground]);
+        // 括號與方括號：金底白字；游標停在左括號或右括號前都是這一組。
+        Assert.Equal(Colors.White, inherited[ThemeBrush.BlockSymbolForeground]);
+        Assert.Equal(Color.FromRgb(0xFF, 0xD7, 0x00), inherited[ThemeBrush.BlockSymbolBackground]);
+        // 引號：更亮一階的黃，字色因此走深色。
+        Assert.Equal(Color.FromRgb(0x1A, 0x1A, 0x1A), inherited[ThemeBrush.BlockQuoteForeground]);
+        Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0x00), inherited[ThemeBrush.BlockQuoteBackground]);
+        // 兩種標記分得出來，才看得出「這是字串」與「這是括號」。
+        Assert.NotEqual(inherited[ThemeBrush.BlockSymbolBackground], inherited[ThemeBrush.BlockQuoteBackground]);
+        Assert.NotEqual(inherited[ThemeBrush.BlockKeywordBackground], inherited[ThemeBrush.BlockSymbolBackground]);
+        Assert.True(ThemeColorMath.Contrast(inherited[ThemeBrush.BlockQuoteForeground], inherited[ThemeBrush.BlockQuoteBackground]) >= 4.5);
         var overridden = BlockPalette.Create(Colors.White, Colors.Black, Colors.Blue, "#4F86C6", false,
             new SqlAssistSettings { BlockKeywordForeground = "#202020", BlockKeywordBackground = "#EEDDAA", BlockSymbolBackground = "#303080" });
         Assert.Equal(inherited[ThemeBrush.BlockKeywordBackground], overridden[ThemeBrush.BlockKeywordBackground]);
         Assert.NotEqual(overridden[ThemeBrush.BlockKeywordBackground], overridden[ThemeBrush.BlockSymbolBackground]);
+        // 只填一色時另一色沿用全域：留空前景、指定背景時字色仍是全域那一個，引號也一起跟著這組覆寫。
+        Assert.Equal(Color.FromRgb(0x20, 0x20, 0x20), overridden[ThemeBrush.BlockSymbolForeground]);
+        Assert.Equal(overridden[ThemeBrush.BlockSymbolForeground], overridden[ThemeBrush.BlockQuoteForeground]);
+        Assert.Equal(overridden[ThemeBrush.BlockSymbolBackground], overridden[ThemeBrush.BlockQuoteBackground]);
         Assert.True(ThemeColorMath.Contrast(overridden[ThemeBrush.BlockSymbolForeground], overridden[ThemeBrush.BlockSymbolBackground]) >= 4.5);
         Assert.True(ThemeColorMath.Contrast(overridden[ThemeBrush.BlockHintHoverForeground], overridden[ThemeBrush.BlockHintBackground]) >= 4.5);
+    }
+
+    [Fact]
+    public void 未自訂時引號與括號各自一組色()
+    {
+        var colors = BlockPalette.Create(Colors.Black, Colors.White, Colors.Blue, null, false);
+        Assert.Equal(Color.FromRgb(0xFF, 0xD7, 0x00), colors[ThemeBrush.BlockSymbolBackground]);
+        Assert.Equal(Colors.White, colors[ThemeBrush.BlockSymbolForeground]);
+        Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0x00), colors[ThemeBrush.BlockQuoteBackground]);
+        Assert.NotEqual(colors[ThemeBrush.BlockSymbolBackground], colors[ThemeBrush.BlockQuoteBackground]);
+        // 分類選擇由種類決定：字串走引號那一組，括號與方括號走符號那一組。
+        Assert.True(BlockDisplayRules.IsSymbol(BlockKind.String));
+        Assert.True(BlockDisplayRules.IsSymbol(BlockKind.Parenthesis));
+        Assert.True(BlockDisplayRules.IsSymbol(BlockKind.Bracket));
     }
 
     [Theory]

@@ -1,6 +1,7 @@
 {
   "BlockEndpointFormat": "SqlAssist block matching endpoints (default)",
-  "BlockSymbolFormat": "SqlAssist matching brackets and string quotes",
+  "BlockSymbolFormat": "SqlAssist matching parentheses and brackets",
+  "BlockQuoteFormat": "SqlAssist matching string quotes",
   "BlockRangeFormat": "SqlAssist block range background",
   "ClickLinkFormat": "SqlAssist Ctrl+Click link",
   "SplitterRowsToolTip": "Drag to adjust preview height; use ↑ / ↓ when focused.",

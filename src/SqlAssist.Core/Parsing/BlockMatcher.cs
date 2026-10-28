@@ -114,6 +114,13 @@ public sealed class BlockMatcher
         return index >= 0 && _endpoints[index].Span.Contains(position) ? _endpoints[index].Pair : null;
     }
 
+    /// <summary>
+    /// 游標落在字串內容裡時，外框的兩個引號就是它所在的配對；端點查詢只認貼著符號的位置，
+    /// 打在中間的字上什麼都查不到。
+    /// </summary>
+    public BlockPair? FindQuotePairAround(int position) =>
+        GetEnclosingBlock(position) is { Kind: BlockKind.String } pair ? pair : null;
+
     public BlockPair? GetEnclosingBlock(int position)
     {
         var index = UpperBound(_regions, static item => item.Position, position) - 1;

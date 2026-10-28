@@ -153,7 +153,7 @@ internal sealed class SqlScriptTheme : IDisposable
         // 兩者在深色主題下不一定相同，拿錯基準的症狀是高亮整塊看不見。推導在 MatchPalette 與 TextSelectionColors。
         var accent = ColorOf(ThemeBrush.AccentBorder, surface.Foreground);
         var matches = MatchPalette.Create(
-            accent, surface.Background, surface.Foreground,
+            surface.Background, surface.Foreground,
             SystemParameters.HighContrast, (SystemColors.HighlightColor, SystemColors.HighlightTextColor));
         SetBrush(ScriptResource.Selection, TextSelectionColors.Create(
             accent, SystemParameters.HighContrast, SystemColors.HighlightColor, surface.Background, surface.Foreground));

@@ -8,6 +8,16 @@ namespace SqlAssist.Ssms22.UI;
 /// <summary>區塊各表面共用單一色相；輸入取自目前檢視，不保存深淺主題旗標。</summary>
 internal static class BlockPalette
 {
+    // 符號端點（括號、方括號）的預設色：同一個配對的兩端用同一組，不隨游標落在哪一端改變。
+    // 白字在金底上對比不足 4.5:1，這是刻意的預設例外；使用者自訂任一符號色就回到對比校正那條路。
+    private static readonly Color SymbolFill = Color.FromRgb(0xFF, 0xD7, 0x00);
+    private static readonly Color SymbolInk = Colors.White;
+
+    // 字串引號的預設色：比括號更亮一階，才分得出「這一段是字串」與「這裡是括號」。
+    // 亮黃上留白字等於看不見，字色因此走深色（約 16:1），不必再靠對比例外撐著。
+    private static readonly Color QuoteFill = Color.FromRgb(0xFF, 0xFF, 0x00);
+    private static readonly Color QuoteInk = Color.FromRgb(0x1A, 0x1A, 0x1A);
+
     public static IReadOnlyDictionary<ThemeBrush, Color> Create(Color background, Color foreground,
         Color accent, string? preference, bool highContrast, SqlAssistSettings? settings = null)
     {
@@ -22,8 +32,15 @@ internal static class BlockPalette
         var globalInk = ReadOptionalColor(settings?.BlockKeywordForeground);
         var keyword = Endpoint(globalInk, settings?.BlockKeywordBackground);
         // 細項只覆寫指定通道；留空或無效值繼承全域「原始基準值」，再依實際背景校正。
-        var symbol = Endpoint(ReadOptionalColor(settings?.BlockSymbolForeground) ?? globalInk, settings?.BlockSymbolBackground,
-            ReadColor(settings?.BlockKeywordBackground, accent));
+        // 兩個符號色都沒填才是預設標記：括號金底白字、引號亮黃底深色，游標落在配對哪一端都相同。
+        // 只要指定了其中一色，兩者就一起回到「符號高亮」那條可覆寫、須校正對比的路徑。
+        var symbolInk = ReadOptionalColor(settings?.BlockSymbolForeground);
+        var symbolPreference = settings?.BlockSymbolBackground;
+        var customized = highContrast || symbolInk is not null || ReadOptionalColor(symbolPreference) is not null;
+        var symbol = customized
+            ? Endpoint(symbolInk ?? globalInk, symbolPreference, ReadColor(settings?.BlockKeywordBackground, accent))
+            : (Foreground: SymbolInk, Background: SymbolFill);
+        var quote = customized ? symbol : (Foreground: QuoteInk, Background: QuoteFill);
 
         (Color Foreground, Color Background) Endpoint(Color? explicitInk, string? backgroundPreference, Color? defaultBackground = null)
         {
@@ -32,7 +49,7 @@ internal static class BlockPalette
 
             var seed = ReadColor(backgroundPreference, defaultBackground ?? accent);
 
-            // 一個顏色都沒自訂時，端點與搜尋命中是同一類東西（小面積實色標記），走同一層推導：
+            // 一個顏色都沒自訂時（關鍵字端點走這條），端點是小面積實色標記，走標記那一層推導：
             // 底色定在深的那一側、字色走最淺的那一端。各算各的那一版在深色佈景上會變成亮底灰字，
             // 因為佈景強調色的明度跟著佈景翻轉，而字色只推到剛好 4.5 就停。
             if (explicitInk is null && seed == accent)
@@ -62,7 +79,9 @@ internal static class BlockPalette
             [ThemeBrush.BlockKeywordForeground] = keyword.Foreground,
             [ThemeBrush.BlockKeywordBackground] = keyword.Background,
             [ThemeBrush.BlockSymbolForeground] = symbol.Foreground,
-            [ThemeBrush.BlockSymbolBackground] = symbol.Background
+            [ThemeBrush.BlockSymbolBackground] = symbol.Background,
+            [ThemeBrush.BlockQuoteForeground] = quote.Foreground,
+            [ThemeBrush.BlockQuoteBackground] = quote.Background
         };
     }
 

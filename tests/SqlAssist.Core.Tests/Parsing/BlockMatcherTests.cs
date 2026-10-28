@@ -111,6 +111,30 @@ public sealed class BlockMatcherTests
     }
 
     [Fact]
+    public void 游標夾在兩引號之間時問得出那一對引號()
+    {
+        var sql = "SELECT 'abc' AS x";
+        var matcher = new BlockMatcher(sql);
+        var quote = sql.IndexOf('\'');
+        // 貼著任一個引號時端點查詢就查得到；打在字串中間的字上，只有「所在的字串」問得出來。
+        Assert.Equal(BlockKind.String, matcher.FindPairAt(quote)!.Kind);
+        Assert.Equal(BlockKind.String, matcher.FindPairAt(quote + 4)!.Kind);
+        Assert.Null(matcher.FindPairAt(quote + 2));
+        Assert.Equal(BlockKind.String, matcher.FindQuotePairAround(quote + 2)!.Kind);
+        // 引號外面不算：那裡的游標屬於別的配對或沒有配對。
+        Assert.Null(matcher.FindQuotePairAround(quote - 1));
+    }
+
+    [Fact]
+    public void 相鄰字串各自成對且中間的游標不屬於任何一個()
+    {
+        var sql = "'a' + 'b'";
+        var matcher = new BlockMatcher(sql);
+        Assert.Equal(2, matcher.Pairs.Count(pair => pair.Kind == BlockKind.String));
+        Assert.Null(matcher.FindQuotePairAround(sql.IndexOf('+')));
+    }
+
+    [Fact]
     public void 相鄰區塊使用半開區間()
     {
         var matcher = new BlockMatcher("()()");

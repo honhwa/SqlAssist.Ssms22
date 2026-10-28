@@ -29,6 +29,9 @@ internal sealed class BlockViewState : IDisposable
     /// <summary>配對來自比目前文字舊的 snapshot；呈現層要平移座標而不是當成沒有配對。</summary>
     public bool IsStale { get; private set; }
     public BlockPair? SelectedPair { get; private set; }
+
+    /// <summary>端點要上色的配對；游標夾在兩引號之間時是那一對引號，其餘與 <see cref="SelectedPair"/> 相同。</summary>
+    public BlockPair? HighlightPair { get; private set; }
     public BlockPair? ContextPair { get; private set; }
     public BlockPair? RangePair { get; private set; }
     public event EventHandler<BlockChangedEventArgs>? Changed;
@@ -65,6 +68,7 @@ internal sealed class BlockViewState : IDisposable
     {
         if (_disposed || _view.IsClosed) return;
         var oldSelected = SelectedPair;
+        var oldHighlight = HighlightPair;
         var oldContext = ContextPair;
         var oldRange = RangePair;
         var oldSnapshot = Snapshot;
@@ -80,6 +84,10 @@ internal sealed class BlockViewState : IDisposable
         var lookup = valid ? BlockProjection.ToSource(position, Snapshot!) : 0;
         SelectedPair = valid ? Matcher?.FindPairAt(lookup) : null;
         if (SelectedPair is { } selected && !BlockDisplayRules.IsKindEnabled(selected.Kind, Settings)) SelectedPair = null;
+        // 引號不只貼著游標時亮：游標夾在兩引號之間，那一對引號一起標，才看得出字串的範圍。
+        // 只有端點跟著走，區間、導引與提示仍認 <see cref="SelectedPair"/>，打在字串中間不多塗一整段底色。
+        HighlightPair = SelectedPair ?? (valid ? Matcher?.FindQuotePairAround(lookup) : null);
+        if (HighlightPair is { } highlighted && !BlockDisplayRules.IsKindEnabled(highlighted.Kind, Settings)) HighlightPair = null;
         ContextPair = valid && Matcher is { } matcher &&
             (Settings.BlockContextHint || Settings.BlockGlyphs || Settings.BlockOverview || Settings.BlockRangeBackground)
             ? SelectedPair ?? BlockDisplayRules.FindContext(matcher, lookup, Settings) : null;
@@ -96,7 +104,8 @@ internal sealed class BlockViewState : IDisposable
         }
 
         // 同一端點內移動或同區塊內打量文字，不讓六個呈現層重建相同內容。
-        if (change == BlockChange.Caret && oldSelected == SelectedPair && oldContext == ContextPair &&
+        if (change == BlockChange.Caret && oldSelected == SelectedPair && oldHighlight == HighlightPair &&
+            oldContext == ContextPair &&
             oldRange == RangePair && oldStale == IsStale &&
             oldSnapshot == Snapshot && ReferenceEquals(oldSettings, Settings)) return;
 
@@ -121,6 +130,7 @@ internal sealed class BlockViewState : IDisposable
         Snapshot = null;
         IsStale = false;
         SelectedPair = null;
+        HighlightPair = null;
         ContextPair = null;
         RangePair = null;
     }

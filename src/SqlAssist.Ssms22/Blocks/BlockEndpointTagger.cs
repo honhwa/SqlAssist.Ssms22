@@ -38,6 +38,7 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
     private readonly ThemeRefreshQueue _queue;
     private readonly ClassificationTag? _keyword;
     private readonly ClassificationTag? _symbol;
+    private readonly ClassificationTag? _quote;
     private ITagSpan<ClassificationTag>[] _tags = Array.Empty<ITagSpan<ClassificationTag>>();
     private bool _disposed;
     public event EventHandler<SnapshotSpanEventArgs>? TagsChanged;
@@ -51,6 +52,7 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
         _theme.AttachFormats(formats);
         _keyword = ResolveTag(types, BlockEndpointFormat.Keyword);
         _symbol = ResolveTag(types, BlockEndpointFormat.Symbol);
+        _quote = ResolveTag(types, BlockEndpointFormat.Quote);
         _queue = new ThemeRefreshQueue(view.VisualElement.Dispatcher,
             () => SqlAssistPlatformGuard.Probe("更新區塊端點配色", UpdateColors));
         _state.Changed += OnState;
@@ -97,6 +99,7 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
         if (_disposed || _view.IsClosed) return;
         Apply(BlockEndpointFormat.Keyword, ThemeBrush.BlockKeywordForeground, ThemeBrush.BlockKeywordBackground);
         Apply(BlockEndpointFormat.Symbol, ThemeBrush.BlockSymbolForeground, ThemeBrush.BlockSymbolBackground);
+        Apply(BlockEndpointFormat.Quote, ThemeBrush.BlockQuoteForeground, ThemeBrush.BlockQuoteBackground);
     }
 
     private void Apply(string name, ThemeBrush foreground, ThemeBrush background)
@@ -121,14 +124,19 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
         if (_disposed || _view.IsClosed) return;
         var snapshot = _view.TextSnapshot;
         var source = _state.Snapshot;
-        var pair = _state.Settings.BlockKeywordHighlight && source is not null ? _state.SelectedPair : null;
-        var keyword = _keyword;
-        var symbol = _symbol;
-        var next = pair is null || source is null || keyword is null || symbol is null ? Array.Empty<ITagSpan<ClassificationTag>>() :
+        // 游標夾在兩引號之間時沒有任何端點貼著它；那一對引號仍算被選中，端點才亮得起來。
+        var pair = _state.Settings.BlockKeywordHighlight && source is not null ? _state.HighlightPair : null;
+        ClassificationTag? endpoint = null;
+        if (pair is not null)
+        {
+            // 引號與括號各自一個分類，才分得出金底白字與亮黃兩種標記。
+            endpoint = pair.Kind == BlockKind.String ? _quote
+                : BlockDisplayRules.IsSymbol(pair.Kind) ? _symbol : _keyword;
+        }
+        var next = pair is null || source is null || endpoint is null ? Array.Empty<ITagSpan<ClassificationTag>>() :
             pair.Opening.Concat(pair.Closing).Select(span => BlockProjection.Project(source, span, snapshot))
                 .Where(span => !span.IsEmpty)
-                .Select(span => (ITagSpan<ClassificationTag>)new TagSpan<ClassificationTag>(
-                    span, BlockDisplayRules.IsSymbol(pair.Kind) ? symbol : keyword)).ToArray();
+                .Select(span => (ITagSpan<ClassificationTag>)new TagSpan<ClassificationTag>(span, endpoint)).ToArray();
         if (_tags.Length == next.Length && _tags.Select(t => (t.Span, t.Tag)).SequenceEqual(next.Select(t => (t.Span, t.Tag)))) return;
         var old = _tags;
         _tags = next;
@@ -140,7 +148,8 @@ internal sealed class BlockEndpointTagger : ITagger<ClassificationTag>, IDisposa
     private void OnTheme(object? sender, EventArgs args) => _queue.Request();
     private void OnFormat(object? sender, FormatItemsEventArgs args)
     {
-        if (EditorFormatChanges.Affects(args.ChangedItems, BlockEndpointFormat.Keyword, BlockEndpointFormat.Symbol)) _queue.Request();
+        if (EditorFormatChanges.Affects(args.ChangedItems, BlockEndpointFormat.Keyword, BlockEndpointFormat.Symbol) ||
+            EditorFormatChanges.Affects(args.ChangedItems, BlockEndpointFormat.Quote)) _queue.Request();
     }
     private void OnClosed(object sender, EventArgs args) => SqlAssistPlatformGuard.Run("關閉區塊端點分類", Dispose);
     public void Dispose()
