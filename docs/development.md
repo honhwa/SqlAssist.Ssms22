@@ -25,6 +25,11 @@ Set-Location 'D:\GitProject\SqlAssist.Ssms22'
 src\SqlAssist.Ssms22\bin\x64\Release\net48\SqlAssist.Ssms22.vsix
 ```
 
+方案裡的每一個方案平台都對到 x64，Any CPU 也一樣：這個擴充只有 x64 一種輸出
+（SSMS 22 只有 x64，VSIX 也只封裝 win-x64 的 `e_sqlite3.dll`）。所以在 VS 裡用預設的
+Any CPU 建置不會出錯。直接對專案檔指定 `-p:Platform=AnyCPU` 仍然會失敗——SQLite
+套件的 props 擋掉 Any CPU，那是那個套件在說它不支援，不是設定沒寫對。
+
 測試執行器由 `global.json` 的 `test.runner` 指定為 Microsoft.Testing.Platform
 （.NET 10 SDK 不再支援 VSTest 轉接層）。
 

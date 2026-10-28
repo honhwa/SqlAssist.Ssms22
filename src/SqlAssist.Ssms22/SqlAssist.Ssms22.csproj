@@ -14,7 +14,20 @@
     <IncludeDebugSymbolsInVSIXContainer>true</IncludeDebugSymbolsInVSIXContainer>
     <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
     <SsmsInstallDir Condition="'$(SsmsInstallDir)' == ''">C:\Program Files\Microsoft SQL Server Management Studio 22\Release</SsmsInstallDir>
-    <Platforms>AnyCPU;x64</Platforms>
+    <!--
+      這個專案只有 x64 一種輸出：SSMS 22 只有 x64，而 VSIX 也只封裝 win-x64 的
+      e_sqlite3.dll。Any CPU 不是「還沒決定」，是一個建置不起來的設定——
+      SQLite 套件的 props 對「Platform=AnyCPU 且沒有 RuntimeIdentifier」直接報錯
+      （sqlite\buildTransitive\net471\SQLite.props），而 PlatformTarget 本來就寫死 x64。
+
+      兩件事都做。Platforms 只留 x64，VS 的設定管理員才不會再提供 Any CPU；
+      Platform 在沒被指定時預設 x64，直接對這個 csproj 下 dotnet build 也才過得了。
+      後者只在 Platform 還是「一般屬性」時有效：VS 依方案設定傳進來的 Platform 是
+      全域屬性，專案裡改不掉，所以方案檔把每一個方案平台都對到 x64
+      （SqlAssist.Ssms22.sln 的 ProjectConfigurationPlatforms）。
+    -->
+    <Platforms>x64</Platforms>
+    <Platform Condition="'$(Platform)' == 'AnyCPU'">x64</Platform>
     <!-- SSMS 安裝目錄裡的組件彼此就有一堆版本不一致（System.Text.Json、Numerics.Vectors…），
          加上我們刻意參考契約版本而非宿主的修補版本，RAR 的 MSB3277 在這個專案永遠會出現，
          早已沒有訊號價值——0.17.1 那次真正的版本問題就是被它蓋掉的。降為訊息，把關改由
