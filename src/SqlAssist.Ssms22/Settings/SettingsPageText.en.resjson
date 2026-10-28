@@ -13,7 +13,7 @@
   "BlocksSymbolBackgroundTitle": "Symbol highlight background color (parentheses, brackets, string quotes)",
   "BlocksSymbolBackgroundDescription": "Leave empty to inherit the default highlight. Supports #RRGGBB and adapts to light and dark backgrounds. Shown only when \"Highlight matching endpoints\" is on.",
   "BlocksRangeBackgroundTitle": "Light background for block ranges",
-  "BlocksRangeBackgroundDescription": "Derives a light background from the base color and the actual editor background without changing SQL text colors. No background in high contrast mode.",
+  "BlocksRangeBackgroundDescription": "Derives a light background from the base color and the actual editor background without changing SQL text colors. BEGIN…END and TRY…CATCH shade only their keywords. No background in high contrast mode.",
   "BlocksAccentColorTitle": "Shared base color (background, endpoints, and indicators)",
   "BlocksAccentColorDescription": "Leave empty to follow the SSMS theme, or enter a color such as #4F86C6, or use the button. Shared by ranges, endpoints without their own color, the margin, the scroll bar overview, and hints, so it isn't controlled by the range background switch. Not used by native structure guide lines. Invalid values fall back to the theme; high contrast mode ignores custom colors.",
   "BlocksRangeInsideTitle": "Show the nearest block background while the cursor is inside it",

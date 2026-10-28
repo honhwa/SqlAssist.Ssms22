@@ -16,7 +16,7 @@
   "BlocksSymbolBackgroundTitle": "符號高亮背景色（括號、方括號、字串引號）",
   "BlocksSymbolBackgroundDescription": "留空繼承全域高亮預設；支援 #RRGGBB，並自動適配深淺底色。需開啟配對端點高亮才會顯示。",
   "BlocksRangeBackgroundTitle": "區間淡色背景",
-  "BlocksRangeBackgroundDescription": "依基準色與實際編輯器底色推導淡色背景，不更改 SQL 字色；高對比模式不塗背景。",
+  "BlocksRangeBackgroundDescription": "依基準色與實際編輯器底色推導淡色背景，不更改 SQL 字色；BEGIN…END、TRY…CATCH 只標端點關鍵字不塗內容，高對比模式不塗背景。",
   "BlocksAccentColorTitle": "共用基準色（背景、端點與指示條）",
   "BlocksAccentColorDescription": "留空跟隨 SSMS 主題；例如 #4F86C6，也可按鈕選色。供區間、未另設色的端點、邊欄、概覽與提示共用，因此不隸屬區間背景開關。無效格式回退主題，高對比忽略自訂色；原生導引線除外。",
   "BlocksRangeInsideTitle": "游標在區塊內也顯示最近一層背景",

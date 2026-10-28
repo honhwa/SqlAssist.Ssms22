@@ -86,9 +86,10 @@ internal sealed class BlockViewState : IDisposable
         RangePair = null;
         if (valid && Matcher is { } rangeMatcher && Settings.BlockRangeBackground)
         {
-            bool Accepts(BlockPair pair) => Settings.BlockSameLineBackground ||
-                Snapshot!.GetLineNumberFromPosition(pair.Span.Start) != Snapshot.GetLineNumberFromPosition(pair.Span.End - 1);
-            // 最近「符合背景設定」的一層：同行括號關閉時仍保留外層 BEGIN 的背景。
+            // 骨架區塊只在端點上色；包夾內容不塗，才不會把 BEGIN…END 之間整片蓋掉。
+            bool Accepts(BlockPair pair) => BlockDisplayRules.FillsRange(pair.Kind) && (Settings.BlockSameLineBackground ||
+                Snapshot!.GetLineNumberFromPosition(pair.Span.Start) != Snapshot.GetLineNumberFromPosition(pair.Span.End - 1));
+            // 最近「符合背景設定」的一層：同行括號關閉時仍保留外層跨行括號或 CASE 的背景。
             RangePair = Settings.BlockRangeInside
                 ? ContextPair is { } context && Accepts(context) ? context : BlockDisplayRules.FindContext(rangeMatcher, lookup, Settings, Accepts)
                 : SelectedPair is { } endpoint && Accepts(endpoint) ? endpoint : null;

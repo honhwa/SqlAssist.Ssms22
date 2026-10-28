@@ -94,7 +94,7 @@ internal sealed class BlockHighlightTagger : ITagger<TextMarkerTag>, IDisposable
             // 同行判定沿用解析當時的 snapshot，打字期間不會因為換行而改變這一輪的塗色範圍。
             var sameLine = source!.GetLineNumberFromPosition(pair.Span.Start) ==
                 source.GetLineNumberFromPosition(pair.Span.End - 1);
-            if (!span.IsEmpty && BlockDisplayRules.ShowRange(settings, sameLine, SystemParameters.HighContrast))
+            if (!span.IsEmpty && BlockDisplayRules.ShowRange(settings, pair.Kind, sameLine, SystemParameters.HighContrast))
                 nextTags.Add(new TagSpan<TextMarkerTag>(span, Range));
         }
         var next = nextTags.ToArray();

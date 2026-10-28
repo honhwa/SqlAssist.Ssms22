@@ -23,7 +23,11 @@ public static class BlockDisplayRules
             _ => true
         };
 
-    public static bool ShowRange(SqlAssistSettings settings, bool sameLine, bool highContrast) =>
-        settings.Enabled && settings.BlockMatchingEnabled && settings.BlockRangeBackground &&
+    /// <summary>骨架區塊（BEGIN…END、TRY…CATCH）只標端點關鍵字，包夾內容不塗背景。</summary>
+    public static bool FillsRange(BlockKind kind) =>
+        kind is not (BlockKind.Block or BlockKind.Try or BlockKind.Catch);
+
+    public static bool ShowRange(SqlAssistSettings settings, BlockKind kind, bool sameLine, bool highContrast) =>
+        FillsRange(kind) && settings.Enabled && settings.BlockMatchingEnabled && settings.BlockRangeBackground &&
         (!sameLine || settings.BlockSameLineBackground) && !highContrast;
 }

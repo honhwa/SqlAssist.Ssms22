@@ -65,25 +65,56 @@ public sealed class BlockDisplayRulesTests
     public void 同行預設塗背景且可獨立關閉()
     {
         var settings = new SqlAssistSettings();
-        Assert.True(BlockDisplayRules.ShowRange(settings, sameLine: true, highContrast: false));
-        Assert.True(BlockDisplayRules.ShowRange(settings, sameLine: false, highContrast: false));
-        Assert.True(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockSameLineBackground = true }, true, false));
-        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockSameLineBackground = false }, true, false));
+        Assert.True(BlockDisplayRules.ShowRange(settings, BlockKind.Parenthesis, sameLine: true, highContrast: false));
+        Assert.True(BlockDisplayRules.ShowRange(settings, BlockKind.Parenthesis, sameLine: false, highContrast: false));
+        Assert.True(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockSameLineBackground = true }, BlockKind.Parenthesis, true, false));
+        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockSameLineBackground = false }, BlockKind.Parenthesis, true, false));
     }
 
     [Fact]
     public void 兩個呈現層可獨立開關()
     {
-        Assert.True(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockKeywordHighlight = false }, false, false));
-        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockRangeBackground = false }, false, false));
+        Assert.True(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockKeywordHighlight = false }, BlockKind.Parenthesis, false, false));
+        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockRangeBackground = false }, BlockKind.Parenthesis, false, false));
     }
 
     [Fact]
     public void 總開關與高對比不塗背景()
     {
-        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { Enabled = false }, false, false));
-        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockMatchingEnabled = false }, false, false));
-        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockSameLineBackground = true }, false, true));
+        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { Enabled = false }, BlockKind.Parenthesis, false, false));
+        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockMatchingEnabled = false }, BlockKind.Parenthesis, false, false));
+        Assert.False(BlockDisplayRules.ShowRange(new SqlAssistSettings { BlockSameLineBackground = true }, BlockKind.Parenthesis, false, true));
+    }
+
+    [Fact]
+    public void 骨架區塊只在端點上色且不塗包夾內容()
+    {
+        const string sql = "BEGIN\nSELECT 1;\nEND";
+        var matcher = new BlockMatcher(sql);
+        var position = sql.IndexOf("SELECT", System.StringComparison.Ordinal);
+        var settings = new SqlAssistSettings();
+        Assert.Equal(BlockKind.Block, BlockDisplayRules.FindContext(matcher, position, settings)!.Kind);
+        Assert.False(BlockDisplayRules.FillsRange(BlockKind.Block));
+        Assert.False(BlockDisplayRules.FillsRange(BlockKind.Try));
+        Assert.False(BlockDisplayRules.FillsRange(BlockKind.Catch));
+        Assert.True(BlockDisplayRules.FillsRange(BlockKind.Case));
+        Assert.True(BlockDisplayRules.FillsRange(BlockKind.Parenthesis));
+        Assert.False(BlockDisplayRules.ShowRange(settings, BlockKind.Block, false, false));
+        Assert.False(BlockDisplayRules.ShowRange(settings, BlockKind.Try, false, false));
+        Assert.False(BlockDisplayRules.ShowRange(settings, BlockKind.Catch, false, false));
+    }
+
+    [Fact]
+    public void 跳過骨架區塊後仍保留內層跨行括號背景()
+    {
+        const string sql = "BEGIN\nSELECT (1 +\n2);\nEND";
+        var matcher = new BlockMatcher(sql);
+        var position = sql.IndexOf("1 +", System.StringComparison.Ordinal);
+        var settings = new SqlAssistSettings();
+        Assert.Equal(BlockKind.Parenthesis, matcher.GetEnclosingBlock(position)!.Kind);
+        var pair = BlockDisplayRules.FindContext(matcher, position, settings,
+            p => BlockDisplayRules.FillsRange(p.Kind));
+        Assert.Equal(BlockKind.Parenthesis, pair!.Kind);
     }
 
     [Fact]
