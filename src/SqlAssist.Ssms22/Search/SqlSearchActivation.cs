@@ -103,8 +103,12 @@ internal static partial class SqlSearchActivation
 
         // Task.Run 而不是直接 await：GetStructureAsync 在第一個 await 之前是同步跑的，
         // 留在 UI 執行緒上就是第四層查詢的準備工作卡住畫面。
+        // refresh 與 F12 那一條同一個理由：這裡開出來的也是「現在的定義」，
+        // 不是這份清單第一次掃到的那一版。作業那一條借的是同一句
+        // （命令本文一律在按下去那一刻向 msdb 要）。
         var structure = await Task
-            .Run(() => catalog.GetStructureAsync(objectInfo, CancellationToken.None, NotificationOrigin.User))
+            .Run(() => catalog.GetStructureAsync(
+                objectInfo, CancellationToken.None, NotificationOrigin.User, refresh: true))
             .ConfigureAwait(false);
 
         if (structure is null)

@@ -515,13 +515,21 @@ internal sealed class SqlMetadataService : IDisposable
     /// 載入單一物件的完整結構，含索引與外來鍵。
     /// </summary>
     /// <remarks>
-    /// 只有結構面板會走到這裡，允許等資料庫；連線還沒解析出來時也願意問一次 SSMS。
+    /// 結構面板與「移至定義」會走到這裡，兩者都允許等資料庫；連線還沒解析出來時也願意
+    /// 問一次 SSMS。差別在 <paramref name="refresh"/>：面板看的是手上這一份，
+    /// 「移至定義」要的是資料庫上現在那一份。
     /// </remarks>
     /// <param name="origin"><inheritdoc cref="GetDetailAsync" path="/param[@name='origin']"/></param>
+    /// <param name="refresh">
+    /// 要求資料庫上<b>現在</b>那一份，不回答快取裡上一次讀到的版本。「移至定義」帶著它：
+    /// 使用者要看的是現在那一版指令碼，而快取那一份可能在他上次看過之後被改掉了。
+    /// 讀回來的那一份照樣寫回快取，下一個讀取的人拿到的是新的。
+    /// </param>
     public async Task<SqlObjectStructure?> GetStructureAsync(
         SqlObjectInfo objectInfo,
         CancellationToken cancellationToken,
-        NotificationOrigin origin)
+        NotificationOrigin origin,
+        bool refresh = false)
     {
         var catalog = ScopeTo(ResolveCatalog(), objectInfo);
 
@@ -531,7 +539,7 @@ internal sealed class SqlMetadataService : IDisposable
         }
 
         var timer = Stopwatch.StartNew();
-        var structure = await catalog.GetStructureAsync(objectInfo, cancellationToken, origin).ConfigureAwait(false);
+        var structure = await catalog.GetStructureAsync(objectInfo, cancellationToken, origin, refresh).ConfigureAwait(false);
         ReportIfSlow($"物件結構 {objectInfo.QualifiedName}（第四層）", timer);
         return structure;
     }

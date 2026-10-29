@@ -72,9 +72,11 @@ internal static class SqlTextRewriteAction
         var buffer = view.TextBuffer;
 
         // 範圍以緩衝區目前這一份快照算：檢視的快照可能落後一個編輯，
-        // 而等一下要改的是緩衝區。
+        // 而等一下要改的是緩衝區。沒有選取時範圍是整份文件，見 SqlRewriteScope。
         var snapshot = buffer.CurrentSnapshot;
-        var target = view.Selection.StreamSelectionSpan.SnapshotSpan
+        var selection = view.Selection.StreamSelectionSpan.SnapshotSpan;
+        var scope = SqlRewriteScope.Resolve(selection.Start.Position, selection.Length, view.TextSnapshot.Length);
+        var target = new SnapshotSpan(view.TextSnapshot, new Span(scope.Start, scope.Length))
             .TranslateTo(snapshot, SpanTrackingMode.EdgeInclusive);
 
         if (buffer.IsReadOnly(target.Span))

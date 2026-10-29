@@ -695,21 +695,30 @@ public sealed class SqlMetadataCatalog
     /// <param name="origin">
     /// 誰觸發了這一次；同一個查詢在打字路徑與使用者按下去的命令上該有不同的降噪門檻。
     /// </param>
+    /// <param name="refresh">
+    /// 要求資料庫上<b>現在</b>那一份，不回答快取裡上一次讀到的版本。使用者按「移至定義」
+    /// 要的就是這個：快取那一份可能在他上一次看過之後被人改掉了。讀回來的那一份照樣寫回快取，
+    /// 下一個讀取的人拿到的是新的，而不是繼續拿舊的。
+    /// </param>
     public async Task<SqlObjectDetail?> GetDetailAsync(
         SqlObjectInfo objectInfo,
         CancellationToken cancellationToken,
-        NotificationOrigin origin)
+        NotificationOrigin origin,
+        bool refresh = false)
     {
         if (objectInfo is null)
         {
             throw new ArgumentNullException(nameof(objectInfo));
         }
 
-        SqlObjectDetail? hit;
+        SqlObjectDetail? hit = null;
 
-        lock (_detailLock)
+        if (!refresh)
         {
-            _details.TryGetValue(objectInfo.ObjectId, out hit);
+            lock (_detailLock)
+            {
+                _details.TryGetValue(objectInfo.ObjectId, out hit);
+            }
         }
 
         if (hit is not null)
@@ -751,7 +760,7 @@ public sealed class SqlMetadataCatalog
     /// 取得單一物件的完整結構：第二層的欄位與參數，加上索引與外來鍵。
     /// </summary>
     /// <remarks>
-    /// 只有使用者主動打開結構面板時才會走到這裡，因此可以放心多查兩次；
+    /// 只有使用者主動打開結構面板或按「移至定義」時才會走到這裡，因此可以放心多查兩次；
     /// 按鍵路徑上的 <see cref="GetDetailAsync"/> 不受影響。
     /// </remarks>
     /// <returns>
@@ -759,21 +768,30 @@ public sealed class SqlMetadataCatalog
     /// 而第四層失敗時回傳一份標記為不完整的結構，不是 <c>null</c>——說明見下方。
     /// </returns>
     /// <param name="origin"><inheritdoc cref="GetDetailAsync" path="/param[@name='origin']"/></param>
+    /// <param name="refresh">
+    /// 要求資料庫上<b>現在</b>那一份，不回答快取裡上一次讀到的版本；理由同
+    /// <see cref="GetDetailAsync"/>。條件約束會把同一個值傳給父物件那一趟：
+    /// 父物件的結構才是指令碼的來源，它回答舊的就等於整個重新整理沒有發生。
+    /// </param>
     public async Task<SqlObjectStructure?> GetStructureAsync(
         SqlObjectInfo objectInfo,
         CancellationToken cancellationToken,
-        NotificationOrigin origin)
+        NotificationOrigin origin,
+        bool refresh = false)
     {
         if (objectInfo is null)
         {
             throw new ArgumentNullException(nameof(objectInfo));
         }
 
-        SqlObjectStructure? hit;
+        SqlObjectStructure? hit = null;
 
-        lock (_detailLock)
+        if (!refresh)
         {
-            _structures.TryGetValue(objectInfo.ObjectId, out hit);
+            lock (_detailLock)
+            {
+                _structures.TryGetValue(objectInfo.ObjectId, out hit);
+            }
         }
 
         if (hit is not null)
@@ -782,7 +800,7 @@ public sealed class SqlMetadataCatalog
             return hit;
         }
 
-        if (await GetDetailAsync(objectInfo, cancellationToken, origin).ConfigureAwait(false) is not { } detail)
+        if (await GetDetailAsync(objectInfo, cancellationToken, origin, refresh).ConfigureAwait(false) is not { } detail)
         {
             return null;
         }
@@ -793,7 +811,7 @@ public sealed class SqlMetadataCatalog
         {
             return Cache(objectInfo, new SqlObjectStructure(
                 detail,
-                parent: await LoadConstraintParentAsync(objectInfo, cancellationToken, origin).ConfigureAwait(false)));
+                parent: await LoadConstraintParentAsync(objectInfo, cancellationToken, origin, refresh).ConfigureAwait(false)));
         }
 
         // 索引與外來鍵只有本身就是一張資料表的那幾類查得出東西。資料表值函式
@@ -836,7 +854,8 @@ public sealed class SqlMetadataCatalog
     /// 而兩份遲早會在其中一邊改了之後給出不同的答案。
     ///
     /// 父物件的結構本身有快取，所以同一張表上的第二個條件約束不再問伺服器；
-    /// 反過來，使用者接著打開那張表時也直接命中這一次載入的結果。
+    /// 反過來，使用者接著打開那張表時也直接命中這一次載入的結果。要求重新整理時
+    /// （<c>refresh</c>）那個值原樣傳下去，父物件也重讀——它才是指令碼的來源。
     ///
     /// 失敗一律降級成 null：呼叫端拿到的是一份沒有父物件的結構，而它會被
     /// <see cref="SqlObjectStructure.CanBuildExecutableScript"/> 擋下並說明原因。
@@ -844,13 +863,14 @@ public sealed class SqlMetadataCatalog
     private async Task<SqlObjectStructure?> LoadConstraintParentAsync(
         SqlObjectInfo constraint,
         CancellationToken cancellationToken,
-        NotificationOrigin origin)
+        NotificationOrigin origin,
+        bool refresh)
     {
         var parent = await GetParentAsync(constraint, cancellationToken, origin).ConfigureAwait(false);
 
         return parent is null
             ? null
-            : await GetStructureAsync(parent.Object, cancellationToken, origin).ConfigureAwait(false);
+            : await GetStructureAsync(parent.Object, cancellationToken, origin, refresh).ConfigureAwait(false);
     }
 
     /// <summary>

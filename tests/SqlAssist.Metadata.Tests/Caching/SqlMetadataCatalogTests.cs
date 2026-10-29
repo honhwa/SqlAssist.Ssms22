@@ -69,6 +69,40 @@ public sealed class SqlMetadataCatalogTests
     }
 
     /// <summary>
+    /// 要求重新整理時回答資料庫上現在那一份，而不是上一次讀到的版本。
+    /// </summary>
+    /// <remarks>
+    /// 「移至定義」說的是「帶我去看這個物件現在的樣子」。吃快取的話，剛 ALTER 過的模組
+    /// 會開出上一版，而畫面完全正常：一樣的 <c>ALTER PROCEDURE</c>、一樣的參數，
+    /// 只有內容是舊的——那是使用者最不可能發現的一種錯。
+    ///
+    /// 四段刻意一起量：快取照樣命中（不是把快取關掉）、重新整理拿到新的、
+    /// 而讀回來那一份<b>蓋回</b>快取，下一個讀取的人不會又拿到舊的。
+    /// </remarks>
+    [Fact]
+    public async Task 要求重新整理時不吃快取()
+    {
+        var server = new FakeDefinitionServer();
+        var catalog = new SqlMetadataCatalog(server, TimeSpan.FromMinutes(5));
+        var procedure = new SqlObjectInfo(42, "dbo", "usp_Loan", SqlObjectKind.Procedure);
+
+        var first = await catalog.GetStructureAsync(procedure, CancellationToken.None, NotificationOrigin.User);
+        Assert.Contains("第 1 版", first!.Definition, StringComparison.Ordinal);
+
+        server.Definition = "CREATE PROCEDURE [dbo].[usp_Loan]\r\nAS\r\n-- 第 2 版\r\nSELECT 2;\r\n";
+
+        var cached = await catalog.GetStructureAsync(procedure, CancellationToken.None, NotificationOrigin.Typing);
+        Assert.Contains("第 1 版", cached!.Definition, StringComparison.Ordinal);
+
+        var refreshed = await catalog.GetStructureAsync(
+            procedure, CancellationToken.None, NotificationOrigin.User, refresh: true);
+        Assert.Contains("第 2 版", refreshed!.Definition, StringComparison.Ordinal);
+
+        var afterwards = await catalog.GetStructureAsync(procedure, CancellationToken.None, NotificationOrigin.Typing);
+        Assert.Contains("第 2 版", afterwards!.Definition, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// 剛失敗過的目標不再每一次按鍵都重撞一次。
     /// </summary>
     /// <remarks>

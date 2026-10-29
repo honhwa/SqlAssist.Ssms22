@@ -181,8 +181,12 @@ internal sealed class SqlDefinitionOpener
             return EditorText.DeclaredInScript(objectInfo.QualifiedName);
         }
 
+        // 使用者按的是「帶我去看這個物件的定義」——要看的是資料庫上現在那一版。
+        // 吃快取的話，剛剛才 ALTER 過的模組會開出上一次讀到的那一份，而畫面上完全正常：
+        // 一樣的 ALTER PROCEDURE、一樣的參數，只是內容是舊的。這一條路徑等得起一次查詢
+        // （背景執行緒，見上面的分工），而「等得起」正是它與滑鼠停留提示的分界。
         var structure = await _metadataService
-            .GetStructureAsync(objectInfo, CancellationToken.None, NotificationOrigin.User)
+            .GetStructureAsync(objectInfo, CancellationToken.None, NotificationOrigin.User, refresh: true)
             .ConfigureAwait(false);
 
         if (structure is null)
