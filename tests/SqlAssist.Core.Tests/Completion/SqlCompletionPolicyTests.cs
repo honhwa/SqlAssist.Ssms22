@@ -206,7 +206,7 @@ public sealed class SqlCompletionPolicyTests
     [InlineData("SELECT * FROM t PIVOT (SUM(x) ", true)]
     [InlineData("SELECT ", false)]
     [InlineData("SELECT * FROM t WHERE ", false)]
-    [InlineData("SELECT * FROM t ORDER BY ", false)]
+    [InlineData("SELECT * FROM t ORDER BY ", true)]
     [InlineData("SELECT * FROM t ORDER BY a ", false)]
     [InlineData("EXEC dbo.usp_Renew ", false)]
     [InlineData("INSERT INTO dbo.Loan (CopyNo) VALUES (", false)]

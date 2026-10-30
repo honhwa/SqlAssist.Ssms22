@@ -149,6 +149,7 @@ public sealed class SqlCatalogCompletionMetadata : ISqlCompletionMetadata
     public async Task<IReadOnlyList<SqlSuggestion>> GetColumnsAsync(
         SqlTableReference table,
         SqlAssistSettings settings,
+        string? qualifier,
         CancellationToken cancellationToken)
     {
         var total = Stopwatch.StartNew();
@@ -164,7 +165,7 @@ public sealed class SqlCatalogCompletionMetadata : ISqlCompletionMetadata
             $"（第二層{(resolved.DetailWasCached ? "命中快取" : "查詢資料庫")}）",
             total);
 
-        return ToColumns(resolved, settings, qualifier: null, indexKeysFirst: false);
+        return ToColumns(resolved, settings, qualifier, indexKeysFirst: false);
     }
 
     public IReadOnlyList<SqlSuggestion> PeekColumns(

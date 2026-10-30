@@ -204,10 +204,17 @@ public static class SqlCompletionCandidates
 
         var database = await metadata.GetObjectsAsync(qualifierPath: null, cancellationToken).ConfigureAwait(false);
 
+        // ORDER BY 與 GROUP BY 的欄位：整句來源的全部欄位，插入時帶別名，允許為此查一次資料庫。
+        // 其餘沒有限定字的位置只讀快取：那條路徑在每一次按鍵上。
+        var scopeColumns = context.ListsScopeColumns
+            ? await GetColumnsAsync(context.ScopeSources, settings, metadata, cancellationToken, qualified: true)
+                .ConfigureAwait(false)
+            : PeekScopeColumns(context, settings, metadata);
+
         // 敘述裡看得到的欄位放在資料庫物件前面：SELECT | FROM PUBLISHER a 這種位置，
         // 使用者要的幾乎都是欄位，而不是整個資料庫的物件清單。
         var candidates = local
-            .Concat(PeekScopeColumns(context, settings, metadata))
+            .Concat(scopeColumns)
             .Concat(database);
 
         // sys.| 與 EXEC | 才把系統物件拉進來：那一份有一兩千筆，混進一般清單的話，
@@ -245,13 +252,16 @@ public static class SqlCompletionCandidates
     }
 
     /// <summary>
-    /// 限定字所指資料來源的欄位。
+    /// 敘述中所有資料來源的欄位。
     /// </summary>
+    /// <param name="qualified">
+    /// 插入的文字要不要帶上各自的限定字（別名，沒寫別名時是資料表名稱）。使用者自己打了
+    /// <c>a.</c> 的位置不需要，<c>ORDER BY </c> 這一種沒有打限定字的位置需要。
+    /// </param>
     /// <remarks>
-    /// 只在使用者真的輸入 <c>別名.</c> 時才走到這裡，因此會落在第二層按需載入：
-    /// 一次只查一個物件的欄位，不會因為敘述裡有幾張資料表就全部撈回來。
-    /// 插入的文字一律<b>不</b>補限定字：使用者已經自己打了 <c>a.</c>，
-    /// 再補一次會變成 <c>a.a.欄位</c>。
+    /// 兩種位置走這裡：使用者打出 <c>a.</c>（那一個來源的欄位，不再補限定字），以及
+    /// <c>ORDER BY </c> 這一種要整句來源的欄位（<paramref name="qualified"/>）。落在第二層按需載入：
+    /// 一次只查一個來源，已經在快取裡的來源不再問資料庫。
     ///
     /// 關掉「列出資料庫物件與欄位」等於不對資料庫送出任何查詢，
     /// 那時只有欄位名稱寫在指令碼裡的來源（子查詢、CTE）列得出來。
@@ -260,7 +270,8 @@ public static class SqlCompletionCandidates
         IReadOnlyList<SqlColumnSource>? sources,
         SqlAssistSettings settings,
         ISqlCompletionMetadata metadata,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool qualified = false)
     {
         if (sources is null || sources.Count == 0)
         {
@@ -271,16 +282,18 @@ public static class SqlCompletionCandidates
 
         foreach (var source in sources)
         {
+            var qualifier = qualified ? source.Qualifier : null;
+
             if (source.Kind == SqlColumnSourceKind.Names)
             {
-                AddScriptColumns(suggestions, source, settings, qualifier: null);
+                AddScriptColumns(suggestions, source, settings, qualifier);
                 continue;
             }
 
             if (settings.IncludeDatabaseObjects)
             {
                 suggestions.AddRange(await metadata
-                    .GetColumnsAsync(source.Table!, settings, cancellationToken)
+                    .GetColumnsAsync(source.Table!, settings, qualifier, cancellationToken)
                     .ConfigureAwait(false));
             }
         }

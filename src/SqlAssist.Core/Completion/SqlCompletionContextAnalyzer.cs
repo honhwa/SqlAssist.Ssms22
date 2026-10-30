@@ -274,6 +274,12 @@ public static class SqlCompletionContextAnalyzer
             ? SqlColumnOwner.Find(tokens, keywordPosition)
             : null;
 
+        // ORDER BY 與 GROUP BY 的欄位那一格（BY 之後、清單的逗號之後，視窗的 ORDER BY 也認同一格）。
+        // 比的是整個值而不是位元：判不出位置時的 Any 含著每一個旗標，用交集的話連 RETURN | 都算進來。
+        var listsScopeColumns = target == CompletionTarget.Any &&
+            qualifierPath is null &&
+            keywordPosition == SqlKeywordPosition.OrderByColumn;
+
         return new SqlCompletionContext(
             caret.Slot,
             tokenStart,
@@ -289,7 +295,8 @@ public static class SqlCompletionContextAnalyzer
             startsBatch: caret.StartsBatch,
             columnOwner: columnOwner,
             acceptsTypeAs: SqlDataTypePosition.AcceptsAs(tokens, textBeforeToken),
-            mayAppendTableAlias: IsTableSourceNameSlot(qualifierPath is null ? beforeToken : beforeQualifier));
+            mayAppendTableAlias: IsTableSourceNameSlot(qualifierPath is null ? beforeToken : beforeQualifier),
+            listsScopeColumns: listsScopeColumns);
     }
 
     /// <summary>
@@ -407,6 +414,17 @@ public static class SqlCompletionContextAnalyzer
             SqlCursorDeclaration.ListsUpdateColumns(tokens, LastTokenBefore(tokens, context.TokenStart)))
         {
             return withScope.AsColumnsOf(withScope.ScopeSources).WithScriptSources(SqlScopeAliasSuggestions.Create(scope, resolver));
+        }
+
+        // ORDER BY 與 GROUP BY 的欄位本身（BY 之後、清單的逗號之後，視窗的 ORDER BY 也認同一格）：
+        // 整句查詢看得到的來源全部列出來，插入時帶上別名。目標維持 Any——這一格也寫得出
+        // 運算式、函式與 ASC／DESC，收成 Column 會讓那些字一起消失。
+        // 游標查詢 FOR UPDATE OF 的清單也是 OrderByColumn，由上面那一支先接走。
+        if (context.ListsScopeColumns)
+        {
+            return withScope
+                .AsScopeColumnList()
+                .WithScriptSources(AliasesOf(scope, resolver, context.TokenStart));
         }
 
         if (context.QualifierPath is null)

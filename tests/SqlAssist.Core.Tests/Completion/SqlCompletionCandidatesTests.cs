@@ -156,6 +156,47 @@ public sealed class SqlCompletionCandidatesTests
         Assert.Equal(new[] { false, false }, metadata.IndexKeysFirst);
     }
 
+    /// <summary>
+    /// <c>ORDER BY</c> 與 <c>GROUP BY</c> 之後按空白鍵：整句來源的欄位一次列完，每個都帶別名，
+    /// 而且允許為此查一次資料庫——不是等人先打出 <c>a.</c>。
+    /// </summary>
+    /// <remarks>
+    /// 只讀快取的話，第一次停在這一格時一張表的欄位都沒有，而畫面上只有關鍵字與 ASC／DESC，
+    /// 看不出是「還沒載入」還是「這裡就是沒有欄位」。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = c.CopyNo ORDER BY |")]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = c.CopyNo GROUP BY |")]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = c.CopyNo ORDER BY l.CopyNo, |")]
+    public async Task ORDER_BY的欄位帶別名並允許查資料庫(string sqlWithCaret)
+    {
+        var metadata = Joined();
+
+        var list = await GetAsync(sqlWithCaret, new SqlAssistSettings(), metadata);
+
+        Assert.Equal(new[] { "l", "c" }, metadata.ColumnQualifiers);
+        Assert.Equal(
+            new[] { "l.CopyNo", "l.Code", "c.CopyNo", "c.Code", "c.Amount" },
+            list.Where(item => item.Kind == SuggestionKind.Column).Select(item => item.InsertionText));
+    }
+
+    /// <summary>指令碼自己寫出欄位名稱的來源（CTE）同樣帶別名，不必問資料庫。</summary>
+    [Fact]
+    public async Task ORDER_BY的CTE欄位也帶別名()
+    {
+        var metadata = new RecordingMetadata();
+
+        var list = await GetAsync(
+            "WITH c (CopyNo, Title) AS (SELECT 1, 'a') SELECT * FROM c ORDER BY |",
+            new SqlAssistSettings(),
+            metadata);
+
+        Assert.Empty(metadata.ColumnQualifiers);
+        Assert.Equal(
+            new[] { "c.CopyNo", "c.Title" },
+            list.Where(item => item.Kind == SuggestionKind.Column).Select(item => item.InsertionText));
+    }
+
     /// <summary>兩個來源各有一組欄位，<c>CopyNo</c> 與 <c>Code</c> 同名。</summary>
     private static RecordingMetadata Joined()
     {
@@ -186,6 +227,9 @@ public sealed class SqlCompletionCandidatesTests
 
         public List<string?> PeekQualifiers { get; } = new();
 
+        /// <summary>每一輪問到「這個來源的欄位」時帶的限定字，依來源順序。</summary>
+        public List<string?> ColumnQualifiers { get; } = new();
+
         /// <summary>每個資料表名稱要回哪些欄位名稱；沒登記的回空清單。</summary>
         public Dictionary<string, string[]> Columns { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -208,7 +252,13 @@ public sealed class SqlCompletionCandidatesTests
         public Task<IReadOnlyList<SqlSuggestion>> GetColumnsAsync(
             SqlTableReference table,
             SqlAssistSettings settings,
-            CancellationToken cancellationToken) => Nothing();
+            string? qualifier,
+            CancellationToken cancellationToken)
+        {
+            Asked();
+            ColumnQualifiers.Add(qualifier);
+            return Task.FromResult(ColumnsFor(table, settings, qualifier));
+        }
 
         public IReadOnlyList<SqlSuggestion> PeekColumns(
             SqlTableReference table,
@@ -220,6 +270,14 @@ public sealed class SqlCompletionCandidatesTests
             PeekQualifiers.Add(qualifier);
             IndexKeysFirst.Add(indexKeysFirst);
 
+            return ColumnsFor(table, settings, qualifier);
+        }
+
+        private IReadOnlyList<SqlSuggestion> ColumnsFor(
+            SqlTableReference table,
+            SqlAssistSettings settings,
+            string? qualifier)
+        {
             if (!Columns.TryGetValue(table.ObjectName, out var names))
             {
                 return Array.Empty<SqlSuggestion>();

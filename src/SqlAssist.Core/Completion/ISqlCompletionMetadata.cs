@@ -30,10 +30,14 @@ public interface ISqlCompletionMetadata
     /// <summary><c>sys</c> 與 <c>INFORMATION_SCHEMA</c> 底下的系統物件。</summary>
     Task<IReadOnlyList<SqlSuggestion>> GetSystemObjectsAsync(SqlObjectPath? qualifierPath, CancellationToken cancellationToken);
 
-    /// <summary>一個資料表來源的欄位，允許查詢資料庫；插入文字不補限定字。</summary>
+    /// <summary>一個資料表來源的欄位，允許查詢資料庫。</summary>
+    /// <param name="qualifier">
+    /// 插入時補在欄位前面的別名或資料表名稱；不需要限定時為 null（使用者自己打了 <c>a.</c> 的情形）。
+    /// </param>
     Task<IReadOnlyList<SqlSuggestion>> GetColumnsAsync(
         SqlTableReference table,
         SqlAssistSettings settings,
+        string? qualifier,
         CancellationToken cancellationToken);
 
     /// <summary>

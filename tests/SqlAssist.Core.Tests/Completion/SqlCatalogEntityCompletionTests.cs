@@ -303,6 +303,7 @@ public sealed class SqlCatalogEntityCompletionTests
         public Task<IReadOnlyList<SqlSuggestion>> GetColumnsAsync(
             SqlTableReference table,
             SqlAssistSettings settings,
+            string? qualifier,
             CancellationToken cancellationToken) => Nothing();
 
         public IReadOnlyList<SqlSuggestion> PeekColumns(

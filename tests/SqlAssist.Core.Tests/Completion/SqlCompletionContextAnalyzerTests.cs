@@ -219,6 +219,27 @@ public sealed class SqlCompletionContextAnalyzerTests
         Assert.Equal(CompletionTarget.Any, context.Target);
     }
 
+    /// <summary>
+    /// <c>ORDER BY</c> 與 <c>GROUP BY</c> 的欄位那一格列的是整句來源的欄位，而且要帶別名；
+    /// 目標仍是 <see cref="CompletionTarget.Any"/>——那裡也寫得出運算式、函式與 <c>ASC</c>。
+    /// </summary>
+    [Theory]
+    [InlineData("SELECT * FROM dbo.Loan l ORDER BY ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l ORDER BY l.CopyNo, ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l GROUP BY ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l GROUP BY l.CopyNo, ", true)]
+    [InlineData("SELECT SUM(l.Fee) OVER (ORDER BY ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l ORDER BY l.CopyNo ", false)]
+    [InlineData("SELECT * FROM dbo.Loan l WHERE ", false)]
+    [InlineData("SELECT * FROM dbo.Loan l ORDER BY l.", false)]
+    public void ORDER_BY與GROUP_BY的欄位那一格列出整句來源(string textBeforeCaret, bool expected)
+    {
+        var context = SqlCompletionContextAnalyzer.Analyze(textBeforeCaret);
+
+        Assert.Equal(CompletionTarget.Any, context.Target);
+        Assert.Equal(expected, context.ListsScopeColumns);
+    }
+
     [Theory]
     [InlineData("ALTER PROCEDURE ", 0, "ALTER")]
     [InlineData("\r\nALTER PROCEDURE usp", 2, "ALTER")]

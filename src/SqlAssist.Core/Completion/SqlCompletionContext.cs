@@ -34,7 +34,8 @@ public sealed class SqlCompletionContext
         bool acceptsTypeAs = false,
         IReadOnlyList<SqlCatalogEntity>? catalogEntities = null,
         bool typeIsOptional = false,
-        bool mayAppendTableAlias = false)
+        bool mayAppendTableAlias = false,
+        bool listsScopeColumns = false)
     {
         ScriptSources = scriptSources ?? NoScriptSources;
         Slot = slot;
@@ -59,6 +60,7 @@ public sealed class SqlCompletionContext
         TypeIsOptional = typeIsOptional;
         CatalogEntities = catalogEntities ?? Array.Empty<SqlCatalogEntity>();
         MayAppendTableAlias = mayAppendTableAlias;
+        ListsScopeColumns = listsScopeColumns;
     }
 
     /// <summary>
@@ -156,6 +158,20 @@ public sealed class SqlCompletionContext
     /// 而這條路徑在每一次按鍵上。
     /// </remarks>
     public IReadOnlyList<SqlColumnSource> ScopeSources { get; }
+
+    /// <summary>
+    /// 這一格要列的是整句來源的<b>全部</b>欄位，而且每個名稱前面帶上它的限定字。
+    /// </summary>
+    /// <remarks>
+    /// <c>ORDER BY </c> 與 <c>GROUP BY </c>（<c>BY</c> 之後、清單的逗號之後，視窗的 <c>ORDER BY</c> 也是同一格）：
+    /// 那裡寫得出運算式與序號，目標因此維持 <see cref="CompletionTarget.Any"/>——收成
+    /// <see cref="CompletionTarget.Column"/> 會連 <c>ASC</c>、<c>DESC</c> 與函式一起消失。
+    ///
+    /// 兩個地方與沒有限定字的位置不同：欄位允許為此查一次資料庫（與打出 <c>a.</c> 同一件事），
+    /// 而且插入的文字一律帶別名——<c>ORDER BY CopyNo</c> 在兩個來源都有這個欄位時執行不起來。
+    /// 清單在空前綴就開（<see cref="SqlCompletionPolicy.IsClosed"/>）：按空白鍵之後要看到的就是欄位。
+    /// </remarks>
+    public bool ListsScopeColumns { get; }
 
     /// <summary>
     /// 這份指令碼自己宣告的名稱：CTE、暫存資料表與變數。
@@ -321,6 +337,9 @@ public sealed class SqlCompletionContext
     internal SqlCompletionContext WithScriptSources(IReadOnlyList<SqlSuggestion> sources) =>
         Copy(scriptSources: sources);
 
+    /// <summary>複製這個上下文，標成「列出整句來源的全部欄位，而且帶上限定字」。</summary>
+    internal SqlCompletionContext AsScopeColumnList() => Copy(listsScopeColumns: true);
+
     /// <summary>複製這個上下文，換上重新對齊過的限定字。</summary>
     /// <remarks>
     /// 只看文字時 <c>LibArchive.</c> 與 <c>dbo.</c> 沒有分別，右對齊只能先當成
@@ -352,7 +371,8 @@ public sealed class SqlCompletionContext
         IReadOnlyList<SqlColumnSource>? scopeSources = null,
         IReadOnlyList<SqlSuggestion>? scriptSources = null,
         bool? bracketed = null,
-        string? textBeforeCaret = null)
+        string? textBeforeCaret = null,
+        bool? listsScopeColumns = null)
     {
         return new SqlCompletionContext(
             Slot,
@@ -377,6 +397,7 @@ public sealed class SqlCompletionContext
             AcceptsTypeAs,
             CatalogEntities,
             TypeIsOptional,
-            MayAppendTableAlias);
+            MayAppendTableAlias,
+            listsScopeColumns ?? ListsScopeColumns);
     }
 }

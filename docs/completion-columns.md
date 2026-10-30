@@ -7,8 +7,8 @@
 
 輸入 `別名.` 或 `資料表名稱.` 時列出該資料來源的欄位，並顯示型別、NULL 與 PK。
 
-別名解析需要看得到游標**後方**的文字：`SELECT u.| FROM dbo.Lib_Reader u` 的 FROM
-子句在游標之後，只看前文永遠解析不出 `u`。因此上下文分析改用完整文字加游標位置的多載。
+別名解析要看得到游標**後方**：`SELECT u.| FROM dbo.Lib_Reader u` 的 FROM 在游標之後，
+只看前文永遠解析不出 `u`，因此上下文分析用完整文字加游標位置的多載。
 
 ## 別名指向哪些欄位
 
@@ -17,29 +17,26 @@
 子查詢與 CTE 直接讀它們的選取清單，內層自己又是 `*` 時遞迴下去。
 細節見 [wildcard-expansion.md](wildcard-expansion.md#欄位從哪裡來)。
 
-各寫一份的症狀：同一段 SQL 的 `a.*` 按 Tab 展得開，`a.` 卻一個建議都沒有——
-只有萬用字元那一份會往子查詢裡看。
+各寫一份的症狀：`a.*` 展得開、`a.` 卻一個建議都沒有——只有萬用字元那一份會往子查詢裡看。
 
 ```sql
 SELECT a.| FROM (SELECT c.PUBL_CODE FROM dbo.PUBLISHER c) a
 ;WITH c AS (SELECT Id FROM dbo.Copy) SELECT x.| FROM c x
 ```
 
-選取項的名字可以是字串（`AS 'Seq'`、`'Seq' = …`）：一項叫不出名字，整個衍生資料表就攤不開，
+選取項的名字可以是字串（`AS 'Seq'`）：一項叫不出名字，整個衍生資料表就攤不開，
 別名一個欄位都沒有。
 
 別名後面寫出來的資料行清單（`AS T (ID, Name)`）覆寫主體算出來的名稱，與 CTE 的
 `WITH c (a, b)` 同一份實作；`(VALUES …)` 不是 `SELECT`，只有這條路。可組合 DML（`FROM (MERGE … OUTPUT …) AS d`）
-沒寫清單時讀 OUTPUT 清單，讀法與選取清單相同。是不是清單先看來源：
-衍生資料表與 `OPENROWSET` 那族只接清單，具名資料表只接舊式提示。使用者定義的函式兩種都寫得出來
-（`dbo.fn(x) f (NOLOCK)`、`dbo.fn(x) AS s (CopyNo)`），只有它看內容：每一項都以資料表提示開頭才是提示。
-整份當清單會讓 `SELECT * INTO #Temp` 的結構變成一個叫 NOLOCK 的假欄位。
+沒寫清單時讀 OUTPUT 清單。是不是清單先看來源：衍生資料表與 `OPENROWSET` 那族只接清單，具名資料表只接舊式提示。
+使用者定義的函式兩種都寫得出來（`dbo.fn(x) f (NOLOCK)`、`dbo.fn(x) AS s (CopyNo)`），只有它看內容：
+每一項都以資料表提示開頭才是提示。整份當清單會讓 `SELECT * INTO #Temp` 的結構變成一個叫 NOLOCK 的假欄位。
 
 `PIVOT (…) P`、`UNPIVOT (…) P` 是前一個來源轉出來的新來源，之後的子句以 `P` 引用（`CROSS APPLY (SELECT P.[0])`）。
-轉出來的資料行要扣掉彙總與 FOR 的資料行、再加上 IN 的值，這裡不算：`P` 是攤不開的來源，`SELECT *` 不展開，
-而不是展開成轉之前那張表。前一個來源照樣留著，PIVOT 括號裡引用的正是它的資料行。
-資料列集函式的具名引數 `TABLE = 來源`（`VECTOR_SEARCH(TABLE = dbo.Copy AS c, …) AS s`）也是同一層的來源，
-認的是引數的寫法而不是函式名稱。
+轉出來的資料行要扣掉彙總與 FOR、加上 IN 的值，這裡不算：`P` 攤不開，`SELECT *` 不展開。
+資料列集函式的具名引數 `TABLE = 來源`（`VECTOR_SEARCH(TABLE = dbo.Copy AS c, …) AS s`）
+也是同一層，認的是寫法而不是函式名稱。
 
 暫存資料表與資料表變數走的是同一條路：欄位的中繼資料一列都查不到——資料表變數
 不是 `sys.objects` 裡的物件，暫存資料表在 tempdb 裡——但那些欄位就寫在使用者眼前的
@@ -47,14 +44,12 @@ SELECT a.| FROM (SELECT c.PUBL_CODE FROM dbo.PUBLISHER c) a
 見[指令碼宣告的資料表](script-tables.md)。
 
 `SELECT … INTO #Loan` 沒有那份括號，欄位卻同樣寫在眼前，
-見[投影出來的暫存資料表](script-tables.md#投影出來的暫存資料表)。真的讀不出來時才放棄，並維持原本的
-結構描述解讀，讓使用者至少看得到物件清單。
+見[投影出來的暫存資料表](script-tables.md#投影出來的暫存資料表)。真的讀不出來時維持原本的結構描述解讀。
 
 子查詢與 CTE 讀出來的欄位沒有型別、NULL 與 PK——那些要追到最內層的資料表，
 而中間任何一段運算式都會讓答案不成立。說明欄因此只寫「查詢結果」。
 
-系統檢視（`FROM sys.triggers`）的欄位走同一條路，兩處不同都收斂在中繼資料層，
-見[物件種類](completion-object-kinds.md)。
+系統檢視（`FROM sys.triggers`）走同一條路，兩處不同都收斂在中繼資料層，見[物件種類](completion-object-kinds.md)。
 
 ## 文法指定的所屬資料表
 
@@ -80,36 +75,35 @@ SELECT a.| FROM (SELECT c.PUBL_CODE FROM dbo.PUBLISHER c) a
 游標查詢 `FOR UPDATE OF ` 與清單的逗號之後也只寫得出資料行，屬於那句查詢的每一個來源（範圍那一份，
 `SqlCursorDeclaration.ListsUpdateColumns`）；寫得出限定字，別名同列。
 
-不算的位置：`ORDER BY `、`GROUP BY ` 接得了運算式與序號；`EXEC p ` 的位置引數可以直接寫常值，
-`WITH` 也接在那裡（打 `@` 才列參數）。
+不算的位置：`EXEC p ` 的位置引數可以直接寫常值，`WITH` 也接在那裡（打 `@` 才列參數）。
+`ORDER BY `、`GROUP BY ` 接得了運算式與序號，不屬於某一張表；那裡列的是整句來源的欄位，見下一節。
 指派的左邊寫得出限定字（`SET t.Fee`、`UPDATE l SET l.Fee … FROM dbo.Loan l`），所以 `SET ` 與指派的逗號之後
 另列範圍裡的別名（MERGE 兩邊的都在）；打 `t.` 就重開成同一份。其他資料行的位置不寫限定字，不列別名。
 
 `UPDATE t⏎SET` 的 SET 仍是指派：片語前一格的換行只給真的開始一句的字，
 見[子句片語](phrase-generator.md#前一格)。
 
-## ORDER BY 的選取清單別名
+## ORDER BY 與 GROUP BY
 
-`SELECT CopyNo AS Seq FROM dbo.Copy ORDER BY |` 列得出 `Seq`：查詢的 ORDER BY 是唯一引用得到選取清單別名的子句，
+`BY` 之後與清單的逗號之後（視窗的 `ORDER BY` 也認同一格）按空白鍵就列出整句查詢看得到的**全部欄位**，
+每個名稱帶著別名（沒寫別名時是資料表名稱）：`… JOIN dbo.Copy c ON … ORDER BY |` 列得出 `l.CopyNo`、`c.CopyNo`。
+兩處與沒有限定字的位置不同：插入的文字一律帶別名（`ORDER BY CopyNo` 在兩個來源都有這一欄時執行不起來），
+欄位允許為此查一次資料庫（與打出 `a.` 同一件事）。目標與旗標仍是 `Any`——這一格也寫得出運算式、函式與 `ASC`。
+
+`SELECT CopyNo AS Seq FROM dbo.Copy ORDER BY |` 另外列得出 `Seq`：只有查詢的 ORDER BY 引用得到選取清單別名，
 而且只能整項寫它，所以只在 `BY` 或逗號之後列（`SqlColumnSourceResolver.FindOrderByAliases`）。運算式裡、
 GROUP BY、視窗與 `WITHIN GROUP` 的 ORDER BY 都看不到——ORDER BY 與它的 SELECT 之間有沒關上的左括號就不列；
-集合運算用第一段的名稱。只列寫了別名的項，沒寫的就是來源的欄位，已經列過；說明欄與子查詢的欄位同一句「查詢結果」。
+集合運算用第一段的名稱。
 
 ## 資料表值函式的別名
 
 `SELECT f.| FROM dbo.Loan l CROSS APPLY dbo.fn_LoansByReader(l.CopyNo) f` 的 `f`
 與資料表的別名走同一條路：範圍分析把來源自己帶的括號整段跳完——引數清單、資料表
-提示與 `TABLESAMPLE` 都算，裡面的逗號不是來源清單的逗號——攤平出來的仍然是一個
-中繼資料來源，
-欄位由第二層的 `sys.columns` 給，見 [metadata.md](metadata.md) 的
-「資料行查得到，不代表它是一張資料表」。
+提示與 `TABLESAMPLE` 都算，裡面的逗號不是來源清單的逗號——攤平出來的仍是中繼資料來源，
+見 [metadata.md](metadata.md) 的「資料行查得到，不代表它是一張資料表」。
 
-只有提交後的展開閘門要另外問一句：`INSERT INTO dbo.fn_LoansByReader` 剖析不過，
-那裡問的是「插得進去嗎」而不是「查不查得到資料行」——不然選一個函式就會把一段跑不
-動的骨架蓋在使用者打的那一行上。
-
-`#Loan`、`@rows` 等指令碼自己宣告的資料表怎麼解析欄位，
-見[指令碼宣告的資料表](script-tables.md)。
+只有提交後的展開閘門另外問一句：`INSERT INTO dbo.fn_LoansByReader` 剖析不過——那裡問的是「插得進去嗎」，
+不是「查不查得到資料行」，否則選一個函式就會把一段跑不動的骨架蓋在那一行上。
 
 ## inserted 與 deleted
 
