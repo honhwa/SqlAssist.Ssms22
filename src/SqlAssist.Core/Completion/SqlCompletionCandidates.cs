@@ -204,11 +204,10 @@ public static class SqlCompletionCandidates
 
         var database = await metadata.GetObjectsAsync(qualifierPath: null, cancellationToken).ConfigureAwait(false);
 
-        // ORDER BY 與 GROUP BY 的欄位：整句來源的全部欄位，插入時帶別名，允許為此查一次資料庫。
+        // ORDER BY、GROUP BY 與 WHERE、ON 的欄位：整句來源的全部欄位，插入時帶別名，允許為此查一次資料庫。
         // 其餘沒有限定字的位置只讀快取：那條路徑在每一次按鍵上。
         var scopeColumns = context.ListsScopeColumns
-            ? await GetColumnsAsync(context.ScopeSources, settings, metadata, cancellationToken, qualified: true)
-                .ConfigureAwait(false)
+            ? await GetScopeColumnsAsync(context, settings, metadata, cancellationToken).ConfigureAwait(false)
             : PeekScopeColumns(context, settings, metadata);
 
         // 敘述裡看得到的欄位放在資料庫物件前面：SELECT | FROM PUBLISHER a 這種位置，
@@ -252,26 +251,17 @@ public static class SqlCompletionCandidates
     }
 
     /// <summary>
-    /// 敘述中所有資料來源的欄位。
+    /// 使用者打出 <c>a.</c> 之後那一個來源的欄位，允許查詢資料庫。
     /// </summary>
-    /// <param name="qualified">
-    /// 插入的文字要不要帶上各自的限定字（別名，沒寫別名時是資料表名稱）。使用者自己打了
-    /// <c>a.</c> 的位置不需要，<c>ORDER BY </c> 這一種沒有打限定字的位置需要。
-    /// </param>
     /// <remarks>
-    /// 兩種位置走這裡：使用者打出 <c>a.</c>（那一個來源的欄位，不再補限定字），以及
-    /// <c>ORDER BY </c> 這一種要整句來源的欄位（<paramref name="qualified"/>）。落在第二層按需載入：
-    /// 一次只查一個來源，已經在快取裡的來源不再問資料庫。
-    ///
-    /// 關掉「列出資料庫物件與欄位」等於不對資料庫送出任何查詢，
-    /// 那時只有欄位名稱寫在指令碼裡的來源（子查詢、CTE）列得出來。
+    /// 插入的文字不補限定字：使用者已經自己打了，再補一次會變成 <c>a.a.欄位</c>。
+    /// 這裡也不配對——游標在點號之後，要的是那一個名稱而不是一整條條件。
     /// </remarks>
     private static async Task<IReadOnlyList<SqlSuggestion>> GetColumnsAsync(
         IReadOnlyList<SqlColumnSource>? sources,
         SqlAssistSettings settings,
         ISqlCompletionMetadata metadata,
-        CancellationToken cancellationToken,
-        bool qualified = false)
+        CancellationToken cancellationToken)
     {
         if (sources is null || sources.Count == 0)
         {
@@ -282,23 +272,68 @@ public static class SqlCompletionCandidates
 
         foreach (var source in sources)
         {
-            var qualifier = qualified ? source.Qualifier : null;
-
             if (source.Kind == SqlColumnSourceKind.Names)
             {
-                AddScriptColumns(suggestions, source, settings, qualifier);
+                suggestions.AddRange(ScriptColumns(source, settings, qualifier: null));
                 continue;
             }
 
-            if (settings.IncludeDatabaseObjects)
+            // 關掉「列出資料庫物件與欄位」等於不對資料庫送出任何查詢：
+            // 那時只有欄位名稱寫在指令碼裡的來源（子查詢、CTE）列得出來。
+            if (!settings.IncludeDatabaseObjects)
             {
-                suggestions.AddRange(await metadata
-                    .GetColumnsAsync(source.Table!, settings, qualifier, cancellationToken)
-                    .ConfigureAwait(false));
+                continue;
             }
+
+            suggestions.AddRange(await metadata
+                .GetColumnsAsync(source.Table!, settings, qualifier: null, indexKeysFirst: false, cancellationToken)
+                .ConfigureAwait(false));
         }
 
         return suggestions;
+    }
+
+    /// <summary>
+    /// 敘述中所有資料來源的欄位，允許查詢資料庫。
+    /// </summary>
+    /// <remarks>
+    /// 只給 <see cref="SqlCompletionContext.ListsScopeColumns"/> 那一格：<c>ORDER BY </c>、<c>GROUP BY </c>、
+    /// <c>WHERE </c> 與 <c>ON </c>。使用者按空白鍵停在子句的起點，要的是欄位而不是游標前那幾個字，
+    /// 所以這裡等得起第二層按需載入（一次一個來源，已經在快取裡的來源不再問資料庫）。
+    ///
+    /// 同一次走訪就把各來源的欄位收齊，配對鍵才有「另一邊」可比：<c>WHERE </c> 與 <c>ON </c> 的同名欄位
+    /// 換成整條聯結條件並排到最前面（<see cref="SqlJoinKeyMatcher"/>），其餘照來源與定義順序。
+    /// </remarks>
+    private static async Task<IReadOnlyList<SqlSuggestion>> GetScopeColumnsAsync(
+        SqlCompletionContext context,
+        SqlAssistSettings settings,
+        ISqlCompletionMetadata metadata,
+        CancellationToken cancellationToken)
+    {
+        var sources = context.ScopeSources;
+
+        if (sources is null || sources.Count == 0)
+        {
+            return Array.Empty<SqlSuggestion>();
+        }
+
+        var qualify = NeedsScopeQualifier(context);
+        var indexKeysFirst = SqlJoinKeyMatcher.WantsJoinKeys(context) && sources.Count == 1;
+        var blocks = new IReadOnlyList<SqlSuggestion>[sources.Count];
+
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var source = sources[index];
+            var qualifier = qualify ? source.Qualifier : null;
+
+            blocks[index] = source.Kind == SqlColumnSourceKind.Names
+                ? ScriptColumns(source, settings, qualifier)
+                : await metadata
+                    .GetColumnsAsync(source.Table!, settings, qualifier, indexKeysFirst, cancellationToken)
+                    .ConfigureAwait(false);
+        }
+
+        return WithJoinKeys(context, sources, blocks, settings);
     }
 
     /// <summary>
@@ -312,10 +347,8 @@ public static class SqlCompletionCandidates
     /// 有兩個以上相異的限定字時，插入的文字會補上別名，否則
     /// <c>SELECT Name FROM A a JOIN B b</c> 這種寫法會因為欄位名稱模稜兩可而執行失敗。
     ///
-    /// 述詞的起點另外把<b>當前對象</b>的同名欄位換成整條聯結條件（見 <see cref="SqlJoinKeyMatcher"/>），
-    /// 所以這一支分成兩趟：第一趟收各來源的欄位（名稱沒收齊就不知道誰跟誰同名），
-    /// 配對算完才在第二趟換掉那幾筆的插入文字。只有一個來源時沒有「另一邊」可配，
-    /// 改成把索引鍵排到最前面——那時使用者要接的是另一張表，而索引鍵九成是接點。
+    /// 接在 <c>AND</c>、<c>OR</c>、<c>HAVING</c> 後面的述詞起點走這裡，同樣會配對鍵，
+    /// 只是沒有查資料庫那個機會——那幾格按空白鍵不開清單，通常是打到一半才要看欄位。
     /// </remarks>
     private static IReadOnlyList<SqlSuggestion> PeekScopeColumns(
         SqlCompletionContext context,
@@ -329,9 +362,37 @@ public static class SqlCompletionCandidates
             return Array.Empty<SqlSuggestion>();
         }
 
-        var qualify = NeedsQualifier(sources);
-        var predicate = SqlJoinKeyMatcher.WantsJoinKeys(context);
-        var indexKeysFirst = predicate && sources.Count == 1;
+        var qualify = NeedsScopeQualifier(context);
+        var indexKeysFirst = SqlJoinKeyMatcher.WantsJoinKeys(context) && sources.Count == 1;
+        var blocks = new IReadOnlyList<SqlSuggestion>[sources.Count];
+
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var source = sources[index];
+            var qualifier = qualify ? source.Qualifier : null;
+
+            blocks[index] = source.Kind == SqlColumnSourceKind.Names
+                ? ScriptColumns(source, settings, qualifier)
+                : metadata.PeekColumns(source.Table!, qualifier, settings, indexKeysFirst);
+        }
+
+        return WithJoinKeys(context, sources, blocks, settings);
+    }
+
+    /// <summary>
+    /// 把各來源的欄位接成一份清單，述詞的起點再把配對好的欄位排到最前面。
+    /// </summary>
+    /// <remarks>
+    /// 配對要看得到<b>所有</b>來源的欄位名稱：名稱沒收齊就不知道誰跟誰同名，所以先把每一塊收完
+    /// 再配，而不是邊收邊換。當前對象由 <see cref="SqlJoinKeyMatch.SourceIndexes"/> 指認——
+    /// 同名欄位在別的來源裡也有，靠名稱比對會把前面那張表一起改掉。
+    /// </remarks>
+    private static IReadOnlyList<SqlSuggestion> WithJoinKeys(
+        SqlCompletionContext context,
+        IReadOnlyList<SqlColumnSource> sources,
+        IReadOnlyList<IReadOnlyList<SqlSuggestion>> blocks,
+        SqlAssistSettings settings)
+    {
         var suggestions = new List<SqlSuggestion>();
 
         // 每個來源落在 suggestions 的哪一段：第二趟要照來源逐一換掉插入文字，
@@ -342,26 +403,13 @@ public static class SqlCompletionCandidates
 
         for (var index = 0; index < sources.Count; index++)
         {
-            var source = sources[index];
-            var qualifier = qualify ? source.Qualifier : null;
             starts[index] = suggestions.Count;
-
-            if (source.Kind == SqlColumnSourceKind.Names)
-            {
-                AddScriptColumns(suggestions, source, settings, qualifier);
-                keySources.Add(new SqlJoinKeySource(source.Qualifier, source.Names));
-            }
-            else
-            {
-                var columns = metadata.PeekColumns(source.Table!, qualifier, settings, indexKeysFirst);
-                suggestions.AddRange(columns);
-                keySources.Add(new SqlJoinKeySource(source.Qualifier, NamesOf(columns)));
-            }
-
+            suggestions.AddRange(blocks[index]);
+            keySources.Add(new SqlJoinKeySource(sources[index].Qualifier, NamesOf(blocks[index])));
             counts[index] = suggestions.Count - starts[index];
         }
 
-        if (!predicate)
+        if (!SqlJoinKeyMatcher.WantsJoinKeys(context))
         {
             return suggestions;
         }
@@ -373,8 +421,6 @@ public static class SqlCompletionCandidates
             return suggestions;
         }
 
-        // 配對鍵只加在當前對象那幾個來源上，由 SqlJoinKeyMatch.SourceIndexes 指認：
-        // 同名欄位在別的來源裡也有，靠名稱比對會把前面那張表一起改掉。
         var current = new HashSet<int>(match.SourceIndexes);
         var keys = new List<SqlSuggestion>();
         var rest = new List<SqlSuggestion>(suggestions.Count);
@@ -402,6 +448,16 @@ public static class SqlCompletionCandidates
         keys.AddRange(rest);
         return keys;
     }
+
+    /// <summary>
+    /// 這一格的欄位要不要補限定字。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SqlCompletionContext.ListsScopeColumns"/> 一律要：那幾格沒有使用者打的限定字，
+    /// 而兩個來源都有同一個欄位名稱時，裸名執行不起來。
+    /// </remarks>
+    private static bool NeedsScopeQualifier(SqlCompletionContext context) =>
+        context.ListsScopeColumns || NeedsQualifier(context.ScopeSources);
 
     /// <summary>一組欄位建議的名稱，供配對用。</summary>
     private static IReadOnlyList<string> NamesOf(IReadOnlyList<SqlSuggestion> columns)
@@ -488,23 +544,27 @@ public static class SqlCompletionCandidates
     ///
     /// 欄位的排序刻意保留選取清單的順序，與資料表欄位保留定義順序同一個理由。
     /// </remarks>
-    private static void AddScriptColumns(
-        List<SqlSuggestion> suggestions,
+    private static IReadOnlyList<SqlSuggestion> ScriptColumns(
         SqlColumnSource source,
         SqlAssistSettings settings,
         string? qualifier)
     {
         var origin = source.SourceName ?? ScriptSuggestionText.QueryResult;
         var from = qualifier is null ? string.Empty : $" · {qualifier}";
+        var columns = new SqlSuggestion[source.Names.Count];
 
-        foreach (var name in source.Names)
+        for (var index = 0; index < columns.Length; index++)
         {
-            suggestions.Add(new SqlSuggestion(
+            var name = source.Names[index];
+
+            columns[index] = new SqlSuggestion(
                 name,
                 SqlInsertionText.Column(name, qualifier, settings),
                 $"{origin}{from}",
                 $"{origin}\r\n{name}",
-                SuggestionKind.Column));
+                SuggestionKind.Column);
         }
+
+        return columns;
     }
 }

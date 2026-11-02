@@ -51,8 +51,8 @@ public static class SqlCompletionPolicy
     /// 一進格就開，Tab 把 <c>dbo</c> 提交進 <c>dbo.ProcedureName</c>。</item>
     /// <item>文法指定了資料行的所屬資料表（<c>UPDATE t SET </c>、<c>INSERT INTO t (</c>）：
     /// 省略掉的限定字。</item>
-    /// <item><c>ORDER BY </c> 與 <c>GROUP BY </c>：接得到整句來源的欄位，而那就是按空白鍵之後要找的東西
-    /// （<see cref="SqlCompletionContext.ListsScopeColumns"/>）。</item>
+    /// <item><c>ORDER BY </c>、<c>GROUP BY </c>、<c>WHERE </c> 與 <c>ON </c>：接得到整句來源的欄位，
+    /// 而那就是按空白鍵之後要找的東西（<see cref="SqlCompletionContext.ListsScopeColumns"/>）。</item>
     /// <item>只接得了那幾個字的關鍵字位置（<c>ORDER </c>、MERGE 的 <c>THEN </c>），
     /// 見 <see cref="SqlKeywordPositionExtensions.IsClosed"/>。</item>
     /// </list>

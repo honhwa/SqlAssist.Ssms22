@@ -26,7 +26,8 @@ namespace SqlAssist.Core.Completion;
 /// （<see cref="SqlScriptTableCollector.FindDefinition"/>）。</item>
 /// </list>
 ///
-/// 不在裡面的都有理由：<c>ORDER BY |</c>、<c>GROUP BY |</c> 接得了運算式與序號，也不屬於某一張表，
+/// 不在裡面的都有理由：<c>ORDER BY |</c>、<c>GROUP BY |</c> 接得了運算式與序號，<c>WHERE |</c>、<c>ON |</c>
+/// 接得了 <c>EXISTS</c> 與函式，都不屬於某一張表，
 /// 那裡列的是整句來源的欄位（<see cref="SqlCompletionContext.ListsScopeColumns"/>）；
 /// <c>EXEC p |</c> 的位置引數可以直接寫常值，<c>WITH</c> 也接在那裡（打 <c>@</c> 就列參數）。
 ///

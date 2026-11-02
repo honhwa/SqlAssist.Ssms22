@@ -12,6 +12,10 @@ SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |
 → c 與 l 其餘的欄位照舊列在後面
 ```
 
+`ON ` 與 `WHERE ` 的下一格和 `ORDER BY ` 同一種格子（`SqlCompletionContext.ListsScopeColumns`）：
+每個欄位帶著別名、允許為此查一次資料庫、按空白鍵就開清單。`HAVING`、`AND`、`OR` 之後只讀快取，
+也不在空白鍵後開清單——那幾格接著寫的是條件，不是挑欄位。
+
 挑選項就等於寫完條件（插入 `c.CopyNo = l.CopyNo`，游標留在後面接 `AND`），不必先挑
 一邊再回頭補另一邊。規則在 `Core/Completion/SqlJoinKeyMatcher`，插入文字與說明欄在
 `SqlJoinKey`。
@@ -51,9 +55,9 @@ FROM A a JOIN B b ON |        → 當前對象是 b
 裸名在敘述裡模稜兩可，寫出來會執行失敗。一般欄位那條「相異限定字兩個以上才補名字」
 管不到這裡——同一份敘述就是因為有兩個來源才配得出對。
 
-`SqlCompletionCandidates.PeekScopeColumns` 為此分成兩趟：第一趟只收各來源的欄位
-（資料表來源用**已經在快取裡**的，沒命中就給空集合佔位，索引才對得上來源），配對算完
-才在第二趟換掉那幾筆的插入文字——名稱沒收齊就不知道誰跟誰同名。
+`SqlCompletionCandidates.WithJoinKeys` 為此分成兩趟：第一趟只收各來源的欄位
+（`ON `、`WHERE ` 那一格查資料庫，其餘用**已經在快取裡**的，沒命中就給空集合佔位，索引才對得上來源），
+配對算完才在第二趟換掉那幾筆的插入文字——名稱沒收齊就不知道誰跟誰同名。
 
 配對鍵只加在**當前對象**那幾個來源上，由 `SqlJoinKeyMatch.SourceIndexes` 指認：同名
 欄位在別的來源裡也有，靠名稱比對會把前面那張表一起改掉。同一筆欄位只留一處——被配對

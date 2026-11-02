@@ -304,6 +304,7 @@ public sealed class SqlCatalogEntityCompletionTests
             SqlTableReference table,
             SqlAssistSettings settings,
             string? qualifier,
+            bool indexKeysFirst,
             CancellationToken cancellationToken) => Nothing();
 
         public IReadOnlyList<SqlSuggestion> PeekColumns(

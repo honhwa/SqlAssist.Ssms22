@@ -163,13 +163,17 @@ public sealed class SqlCompletionContext
     /// 這一格要列的是整句來源的<b>全部</b>欄位，而且每個名稱前面帶上它的限定字。
     /// </summary>
     /// <remarks>
-    /// <c>ORDER BY </c> 與 <c>GROUP BY </c>（<c>BY</c> 之後、清單的逗號之後，視窗的 <c>ORDER BY</c> 也是同一格）：
-    /// 那裡寫得出運算式與序號，目標因此維持 <see cref="CompletionTarget.Any"/>——收成
-    /// <see cref="CompletionTarget.Column"/> 會連 <c>ASC</c>、<c>DESC</c> 與函式一起消失。
+    /// <c>ORDER BY </c> 與 <c>GROUP BY </c>（<c>BY</c> 之後、清單的逗號之後，視窗的 <c>ORDER BY</c> 也是同一格），
+    /// 以及 <c>WHERE </c> 與 <c>ON </c>（述詞的起點）：那裡寫得出運算式與序號，目標因此維持
+    /// <see cref="CompletionTarget.Any"/>——收成 <see cref="CompletionTarget.Column"/> 會連 <c>ASC</c>、
+    /// <c>DESC</c>、<c>EXISTS</c> 與函式一起消失。
     ///
     /// 兩個地方與沒有限定字的位置不同：欄位允許為此查一次資料庫（與打出 <c>a.</c> 同一件事），
     /// 而且插入的文字一律帶別名——<c>ORDER BY CopyNo</c> 在兩個來源都有這個欄位時執行不起來。
     /// 清單在空前綴就開（<see cref="SqlCompletionPolicy.IsClosed"/>）：按空白鍵之後要看到的就是欄位。
+    ///
+    /// <c>WHERE</c> 與 <c>ON</c> 另外把同名欄位換成整條聯結條件（見 <see cref="SqlJoinKeyMatcher"/>），
+    /// 排在欄位清單最前面：使用者要接的正是那兩個來源之間的鍵。
     /// </remarks>
     public bool ListsScopeColumns { get; }
 

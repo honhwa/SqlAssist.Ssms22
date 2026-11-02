@@ -34,10 +34,14 @@ public interface ISqlCompletionMetadata
     /// <param name="qualifier">
     /// 插入時補在欄位前面的別名或資料表名稱；不需要限定時為 null（使用者自己打了 <c>a.</c> 的情形）。
     /// </param>
+    /// <param name="indexKeysFirst">
+    /// 要不要把索引鍵欄位排到最前面；理由與 <see cref="PeekColumns"/> 同一個參數相同。
+    /// </param>
     Task<IReadOnlyList<SqlSuggestion>> GetColumnsAsync(
         SqlTableReference table,
         SqlAssistSettings settings,
         string? qualifier,
+        bool indexKeysFirst,
         CancellationToken cancellationToken);
 
     /// <summary>

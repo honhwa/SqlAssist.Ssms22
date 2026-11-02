@@ -123,6 +123,9 @@ public sealed class SqlCompletionCandidatesTests
     /// <summary>
     /// 只有一個來源時沒有「另一邊」可配，改成請中繼資料把索引鍵排到最前面。
     /// </summary>
+    /// <remarks>
+    /// 走的是查資料庫那一條：<c>WHERE </c> 與 <c>ORDER BY </c> 一樣等得起一次第二層載入。
+    /// </remarks>
     [Fact]
     public async Task 單一來源的述詞起點要求索引鍵排前面()
     {
@@ -130,6 +133,7 @@ public sealed class SqlCompletionCandidatesTests
 
         await GetAsync("SELECT * FROM dbo.Loan l WHERE |", new SqlAssistSettings(), metadata);
 
+        Assert.Equal(new[] { "l" }, metadata.ColumnQualifiers);
         Assert.Equal(new[] { true }, metadata.IndexKeysFirst);
     }
 
@@ -197,6 +201,53 @@ public sealed class SqlCompletionCandidatesTests
             list.Where(item => item.Kind == SuggestionKind.Column).Select(item => item.InsertionText));
     }
 
+    /// <summary>
+    /// <c>WHERE</c> 與 <c>ON</c> 之後按空白鍵：整句來源的欄位一次列完，每個都帶別名，
+    /// 而且允許為此查一次資料庫——不是等人先打出 <c>a.</c>。
+    /// </summary>
+    /// <remarks>
+    /// 只讀快取的話，第一次停在這一格時一張表的欄位都沒有；難處在於畫面上只剩關鍵字，
+    /// 看不出是「還沒載入」還是「這裡就是沒有欄位」。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = c.CopyNo WHERE |")]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |")]
+    public async Task 述詞的欄位帶別名並允許查資料庫(string sqlWithCaret)
+    {
+        var metadata = Joined();
+
+        var list = await GetAsync(sqlWithCaret, new SqlAssistSettings(), metadata);
+
+        Assert.Equal(new[] { "l", "c" }, metadata.ColumnQualifiers);
+        Assert.Empty(metadata.PeekQualifiers);
+
+        var columns = list.Where(item => item.Kind == SuggestionKind.Column).ToArray();
+
+        Assert.All(columns, item => Assert.Matches(@"^[lc]\.", item.InsertionText));
+
+        // 當前對象（c）的同名欄位換成整條條件並排到最前面。
+        Assert.Equal(new[] { "CopyNo", "Code" }, columns.Take(2).Select(item => item.DisplayText));
+        Assert.All(columns.Take(2), item => Assert.NotNull(item.JoinKey));
+        Assert.Equal("c.CopyNo = l.CopyNo", columns[0].InsertionText);
+    }
+
+    /// <summary>指令碼自己寫出欄位名稱的來源（CTE）在述詞起點同樣帶別名，不必問資料庫。</summary>
+    [Fact]
+    public async Task WHERE的CTE欄位也帶別名()
+    {
+        var metadata = new RecordingMetadata();
+
+        var list = await GetAsync(
+            "WITH c (CopyNo, Title) AS (SELECT 1, 'a') SELECT * FROM c WHERE |",
+            new SqlAssistSettings(),
+            metadata);
+
+        Assert.Empty(metadata.ColumnQualifiers);
+        Assert.Equal(
+            new[] { "c.CopyNo", "c.Title" },
+            list.Where(item => item.Kind == SuggestionKind.Column).Select(item => item.InsertionText));
+    }
+
     /// <summary>兩個來源各有一組欄位，<c>CopyNo</c> 與 <c>Code</c> 同名。</summary>
     private static RecordingMetadata Joined()
     {
@@ -253,10 +304,12 @@ public sealed class SqlCompletionCandidatesTests
             SqlTableReference table,
             SqlAssistSettings settings,
             string? qualifier,
+            bool indexKeysFirst,
             CancellationToken cancellationToken)
         {
             Asked();
             ColumnQualifiers.Add(qualifier);
+            IndexKeysFirst.Add(indexKeysFirst);
             return Task.FromResult(ColumnsFor(table, settings, qualifier));
         }
 

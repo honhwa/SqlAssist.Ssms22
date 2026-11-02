@@ -30,10 +30,11 @@ SELECT a.N     → 這時才重新問來源，欄位清單終於出現
 - **候選集合封閉**（`SqlCompletionPolicy.IsClosed`：下一個詞元一定是清單上的某一項）→ 重開。
   線索有五種：限定字（`a.`、`[dbo].`）與左方括號；目標收斂（`FROM `、`EXEC `、`DATEADD(`、
   封閉片語；可能是名字的那一格不算，它寫得出清單外的新名字）；文法指定了資料行的所屬資料表（`UPDATE t SET `，見[欄位](completion-columns.md#文法指定的所屬資料表)）；
-  `ORDER BY `／`GROUP BY ` 的欄位（整句來源的欄位，見[欄位](completion-columns.md#order-by-與-group-by)）；
-  只接那幾個字的關鍵字位置（`ORDER `、MERGE 的 `THEN `，`SqlKeywordPositionExtensions.IsClosed`）。
+  `ORDER BY `／`GROUP BY `／`WHERE `／`ON ` 的欄位（整句來源的欄位，`AND`、`OR`、`HAVING` 不算，
+  見[配對鍵](completion-join-keys.md)）；只接那幾個字的關鍵字位置（`ORDER `、MERGE 的 `THEN `，
+  `SqlKeywordPositionExtensions.IsClosed`）。
   少了任何一種，那個位置就要多打一個字母才有清單——與點號完全同一個病。
-- 其餘（`SELECT `、`COUNT(`、`WHERE a `）→ 不重開：接得了運算式、常值、
+- 其餘（`SELECT `、`COUNT(`、`WHERE a = 1 AND `）→ 不重開：接得了運算式、常值、
   逗號或下一句，按一下空白鍵就開的話是整個資料庫。
 
 這幾條與建議來源是同一條參與規則（`SqlCompletionPolicy.Participates`），不另寫一份：

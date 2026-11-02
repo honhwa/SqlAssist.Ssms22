@@ -144,12 +144,13 @@ public sealed class SqlCatalogCompletionMetadata : ISqlCompletionMetadata
         return suggestions;
     }
 
-    /// <remarks>落在第二層按需載入：一次只查一個物件的欄位。</remarks>
+    /// <remarks>落在第二層按需載入：一次只查一個物件的欄位，已經在快取裡的來源不再問資料庫。</remarks>
     [Localizable(false)]
     public async Task<IReadOnlyList<SqlSuggestion>> GetColumnsAsync(
         SqlTableReference table,
         SqlAssistSettings settings,
         string? qualifier,
+        bool indexKeysFirst,
         CancellationToken cancellationToken)
     {
         var total = Stopwatch.StartNew();
@@ -165,7 +166,7 @@ public sealed class SqlCatalogCompletionMetadata : ISqlCompletionMetadata
             $"（第二層{(resolved.DetailWasCached ? "命中快取" : "查詢資料庫")}）",
             total);
 
-        return ToColumns(resolved, settings, qualifier, indexKeysFirst: false);
+        return ToColumns(resolved, settings, qualifier, indexKeysFirst);
     }
 
     public IReadOnlyList<SqlSuggestion> PeekColumns(
