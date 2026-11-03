@@ -10,6 +10,7 @@ using SqlAssist.Core.Diagnostics;
 using SqlAssist.Core.Notifications;
 using SqlAssist.Ssms22.Commands;
 using SqlAssist.Ssms22.Connections;
+using SqlAssist.Ssms22.Dictionary;
 using SqlAssist.Ssms22.Editor;
 using SqlAssist.Ssms22.Notifications;
 using SqlAssist.Ssms22.Preview;
@@ -33,6 +34,9 @@ namespace SqlAssist.Ssms22;
     Orientation = ToolWindowOrientation.Right, Window = "DocumentWell", DockedWidth = 440, Width = 440)]
 [ProvideToolWindow(typeof(SqlSearchToolWindow), Style = VsDockStyle.Linked,
     Orientation = ToolWindowOrientation.Right, Window = "DocumentWell", DockedWidth = 440, Width = 440)]
+// 資料字典比另外兩個寬：主從並排要放得下資料表清單與資料行的型別、說明兩欄。
+[ProvideToolWindow(typeof(SqlDictionaryToolWindow), Style = VsDockStyle.Linked,
+    Orientation = ToolWindowOrientation.Right, Window = "DocumentWell", DockedWidth = 640, Width = 640)]
 // 從浮動預覽移過來的結構：與另外兩個工具窗同一側，照著寫查詢時表結構就在旁邊。
 [ProvideToolWindow(typeof(SqlStructureToolWindow), Style = VsDockStyle.Linked,
     Orientation = ToolWindowOrientation.Right, Window = "DocumentWell", DockedWidth = 520, Width = 520)]
