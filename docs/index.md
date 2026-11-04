@@ -31,7 +31,7 @@
 |命中高亮、上下一個|[命中高亮](search-highlight.md)|
 |文字標記底色、端點配色|[文字標記](text-marks.md)|
 |搜尋範圍、伺服器、資料庫清單|[範圍](search-scope.md)|
-|資料字典、改說明|[資料字典](data-dictionary.md)|
+|資料字典|[資料字典](data-dictionary.md)|
 |建議清單、排名、列尾標記、IntelliSense|[補全](completion.md)|
 |CompletionContext、觸發、大小寫|[上下文](completion-context.md)／[大寫](keyword-casing.md)|
 |定序、語言、時區、登入、使用者、名稱格|[名單](completion-instance-lists.md)／[目錄](completion-catalog-names.md)|
