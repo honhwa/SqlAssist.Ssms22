@@ -5,7 +5,7 @@ namespace SqlAssist.Ssms22.Commands;
 /// <remarks>
 /// 這些數值是使用者自訂鍵盤快速鍵的定址方式，不要為了整齊而重新編號——
 /// 換掉一個 ID 等於安靜地解除他綁在上面的快速鍵。
-/// 移除命令留下的空號（0x0101–0x0104、0x0203–0x0205、0x0207、0x020C、0x020D、0x0306）刻意不回收。
+/// 移除命令留下的空號（0x0101–0x0104、0x0203–0x0205、0x0207、0x020C、0x020D、0x021D、0x021E、0x0306）刻意不回收。
 ///
 /// 同一組數值也寫在 <c>Menus.vsct</c> 的 IDSymbol 與 <c>SqlAssist.registration.json</c>
 /// 的按鈕（十進位）裡。三者分歧不會編譯失敗，按鈕就只是按不到，
@@ -149,8 +149,12 @@ internal static class CommandIds
     /// 而這個功能的用法是「複製一欄值、在要放條件的地方按右鍵」，
     /// 本來就不需要一組快捷鍵。要綁的人走「選項 → 環境 → 鍵盤」，
     /// 命令名稱是 <c>SqlAssist.PasteAsInPredicate</c>。
+    ///
+    /// 數值從 0x021D 順延到 0x0231：0x021D 要留給後來才到的資料字典工具窗命令，
+    /// 兩個分支各自取號時撞在同一格。這裡一次把整族貼上命令往後挪，讓 0x021D、0x021E
+    /// 空出來不再被佔用；空出的號照本檔的慣例不回收。
     /// </remarks>
-    public const int PasteAsInPredicate = 0x021D;
+    public const int PasteAsInPredicate = 0x0231;
 
     /// <summary>
     /// 查詢視窗右鍵：只貼值，不含 <c>IN</c> 與括號。
@@ -160,7 +164,7 @@ internal static class CommandIds
     /// 分成兩個命令而不是一個命令加對話框：兩者的差別只有一個字，
     /// 每次都要在彈出來的視窗裡再選一次只是多一次點擊。
     /// </remarks>
-    public const int PasteAsValues = 0x021E;
+    public const int PasteAsValues = 0x0232;
 
     /// <summary>
     /// 查詢視窗右鍵：把沒帶結構描述的物件名稱補成 <c>dbo.</c>。

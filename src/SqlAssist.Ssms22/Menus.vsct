@@ -738,8 +738,8 @@
       <IDSymbol name="cmdidResultGridJson" value="0x0307" />
       <IDSymbol name="cmdidQualifySchema" value="0x021F" />
       <IDSymbol name="cmdidParenthesizeTop" value="0x0220" />
-      <IDSymbol name="cmdidPasteAsInPredicate" value="0x021D" />
-      <IDSymbol name="cmdidPasteAsValues" value="0x021E" />
+      <IDSymbol name="cmdidPasteAsInPredicate" value="0x0231" />
+      <IDSymbol name="cmdidPasteAsValues" value="0x0232" />
       <IDSymbol name="cmdidInlineRename" value="0x0221" />
       <IDSymbol name="cmdidInlineRenameKey" value="0x0222" />
       <IDSymbol name="cmdidRefreshCache" value="0x0223" />
