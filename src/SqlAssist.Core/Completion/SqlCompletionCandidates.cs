@@ -204,8 +204,8 @@ public static class SqlCompletionCandidates
 
         var database = await metadata.GetObjectsAsync(qualifierPath: null, cancellationToken).ConfigureAwait(false);
 
-        // 述詞起點與 ORDER BY、GROUP BY 的欄位：整句來源的全部欄位，插入時帶別名，允許為此查一次資料庫。
-        // 其餘沒有限定字的位置只讀快取：那條路徑在每一次按鍵上。
+        // 述詞起點、ORDER BY／GROUP BY 與選取清單起點的欄位：整句來源的全部欄位，插入時帶別名，
+        // 允許為此查一次資料庫。其餘沒有限定字的位置只讀快取：那條路徑在每一次按鍵上。
         var scopeColumns = context.ListsScopeColumns
             ? await GetScopeColumnsAsync(context, settings, metadata, cancellationToken).ConfigureAwait(false)
             : PeekScopeColumns(context, settings, metadata);
@@ -297,9 +297,10 @@ public static class SqlCompletionCandidates
     /// 敘述中所有資料來源的欄位，允許查詢資料庫。
     /// </summary>
     /// <remarks>
-    /// 只給 <see cref="SqlCompletionContext.ListsScopeColumns"/> 那一格：<c>ORDER BY </c>、<c>GROUP BY </c>
-    /// 與述詞起點（<c>WHERE </c>、<c>ON </c>、<c>AND </c>、<c>OR </c>、<c>HAVING </c>）。
-    /// 使用者按空白鍵停在子句的起點或下一條條件的開頭，要的是欄位而不是游標前那幾個字，
+    /// 只給 <see cref="SqlCompletionContext.ListsScopeColumns"/> 那一格：<c>ORDER BY </c>、<c>GROUP BY </c>、
+    /// 述詞起點（<c>WHERE </c>、<c>ON </c>、<c>AND </c>、<c>OR </c>、<c>HAVING </c>）與選取清單起點
+    /// （<c>SELECT </c> 之後、選取清單的逗號之後）。
+    /// 使用者按空白鍵或逗號停在清單的起點或下一條條件的開頭，要的是欄位而不是游標前那幾個字，
     /// 所以這裡等得起第二層按需載入（一次一個來源，已經在快取裡的來源不再問資料庫）。
     ///
     /// 同一次走訪就把各來源的欄位收齊，配對鍵才有「另一邊」可比：述詞起點的同名欄位
@@ -348,7 +349,7 @@ public static class SqlCompletionCandidates
     /// 有兩個以上相異的限定字時，插入的文字會補上別名，否則
     /// <c>SELECT Name FROM A a JOIN B b</c> 這種寫法會因為欄位名稱模稜兩可而執行失敗。
     ///
-    /// 其餘述詞起點（例如 <c>AND NOT </c> 之後）仍走這裡，同樣會配對鍵，
+    /// 其餘位置（例如 <c>SELECT * </c> 一項寫完、<c>AND NOT </c> 之後）仍走這裡，同樣會配對鍵，
     /// 只是沒有查資料庫那個機會。
     /// </remarks>
     private static IReadOnlyList<SqlSuggestion> PeekScopeColumns(

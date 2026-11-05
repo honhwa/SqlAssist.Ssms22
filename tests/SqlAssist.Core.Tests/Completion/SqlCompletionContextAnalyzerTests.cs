@@ -208,10 +208,10 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// 否則按下空白鍵就會列出整個資料庫。
     /// </summary>
     /// <remarks>
-    /// <c>AND </c> 本身已是述詞起點，不能再拿它代表「沒有前導關鍵字」。
+    /// <c>AND </c> 本身已是述詞起點、<c>SELECT </c> 本身已是選取清單起點，
+    /// 兩者都不能再拿它代表「沒有前導關鍵字」。
     /// </remarks>
     [Theory]
-    [InlineData("SELECT ")]
     [InlineData("  ")]
     public void 既無前綴也無目標時不建議(string textBeforeCaret)
     {
@@ -230,6 +230,34 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// 上一條條件寫完之後，接著要挑的仍然是欄位，空白鍵該看到同一份清單。
     /// <c>WHEN</c> 的旗標也一樣，但那是 MERGE／CASE 的分支，不在這一格。
     /// </remarks>
+    /// <summary>
+    /// 選取清單的起點與述詞起點同一格：<c>SELECT </c> 之後、選取清單的逗號之後，
+    /// 以及 <c>DISTINCT</c>／<c>ALL</c>／<c>TOP</c> 寫完的同一格，都要列整句來源的欄位。
+    /// </summary>
+    /// <remarks>
+    /// 一項寫完（<c>SELECT * </c>）、函式引數裡的逗號、<c>RECEIVE </c> 借用同一位置、
+    /// 以及其他子句的逗號都不算：那裡按空白鍵開清單只會蓋掉正要打的運算式。
+    /// </remarks>
+    [Theory]
+    [InlineData("SELECT ", true)]
+    [InlineData("SELECT DISTINCT ", true)]
+    [InlineData("SELECT ALL ", true)]
+    [InlineData("SELECT a, ", true)]
+    [InlineData("SELECT *, ", true)]
+    [InlineData("SELECT TOP 10 ", true)]
+    [InlineData("SELECT TOP (10) WITH TIES ", true)]
+    [InlineData("SELECT DISTINCT TOP @n ", true)]
+    [InlineData("SELECT COUNT(a, ", false)]
+    [InlineData("SELECT * ", false)]
+    [InlineData("SELECT a ", false)]
+    [InlineData("FROM dbo.Loan, ", false)]
+    [InlineData("UPDATE dbo.Loan SET a = 1, ", false)]
+    [InlineData("RECEIVE ", false)]
+    public void 選取清單的起點列出整句來源(string textBeforeCaret, bool expected)
+    {
+        Assert.Equal(expected, SqlCompletionContextAnalyzer.Analyze(textBeforeCaret).ListsScopeColumns);
+    }
+
     [Theory]
     [InlineData("SELECT * FROM dbo.Loan l ORDER BY ", true)]
     [InlineData("SELECT * FROM dbo.Loan l ORDER BY l.CopyNo, ", true)]

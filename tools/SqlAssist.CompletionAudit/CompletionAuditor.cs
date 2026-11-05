@@ -351,12 +351,17 @@ public sealed class CompletionAuditor
             var token = Tokens[index];
             var prefix = _fragment.Text.Substring(0, _offset + token.Start);
             var typed = FirstTyped(token);
+            // 與按鍵路徑共用同一條規則：小老鼠與左方括號這類字元一打下去，
+            // SqlCompletionReopen 會把封閉的清單收掉重開，而不是拿新文字去篩舊清單。
+            // 少了這一條，空前綴就開的清單在打 @ 時會被當成「只篩選」，而那份清單裡
+            // 沒有指令碼宣告的變數——單打一個 @ 看起來就是變數全部消失。
+            var reopens = typed.Length > 0 && SqlCompletionTriggers.MayChangeContext(typed[0]);
             // 與建議來源同一個多載：單一參數那一支只給按鍵路徑判斷要不要參與，不做範圍分析。
             var opened = SqlCompletionContextAnalyzer.Analyze(prefix, prefix.Length);
             IReadOnlyList<SqlSuggestion> candidates;
             string typedText;
 
-            if (SqlCompletionPolicy.OffersItems(opened.Slot) && SqlCompletionPolicy.IsClosed(opened))
+            if (!reopens && SqlCompletionPolicy.OffersItems(opened.Slot) && SqlCompletionPolicy.IsClosed(opened))
             {
                 // 空前綴就開的清單在那時建好，打第一個字元只是篩選。
                 candidates = await _owner.CandidatesAsync(opened, _catalog, cancellationToken).ConfigureAwait(false);

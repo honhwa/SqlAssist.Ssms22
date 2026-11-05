@@ -28,13 +28,29 @@ public sealed class SqlCompletionCandidatesTests
     }
 
     [Fact]
-    public async Task 多個限定字的敘述裡快取欄位帶著別名查()
+    public async Task 多個限定字的敘述裡選取清單起點帶著別名查資料庫()
     {
         var metadata = new RecordingMetadata();
 
         await GetAsync("SELECT | FROM Lib_Reader r JOIN Loan l ON r.Id = l.ReaderId", new SqlAssistSettings(), metadata);
 
+        Assert.Equal(new[] { "r", "l" }, metadata.ColumnQualifiers);
+        Assert.Empty(metadata.PeekQualifiers);
+    }
+
+    /// <summary>選取清單一項寫完之後仍只讀快取，不為了開清單去查資料庫。</summary>
+    [Fact]
+    public async Task 選取清單一項寫完後仍只讀快取欄位並帶別名()
+    {
+        var metadata = new RecordingMetadata();
+
+        await GetAsync(
+            "SELECT * | FROM Lib_Reader r JOIN Loan l ON r.Id = l.ReaderId",
+            new SqlAssistSettings(),
+            metadata);
+
         Assert.Equal(new[] { "r", "l" }, metadata.PeekQualifiers);
+        Assert.Empty(metadata.ColumnQualifiers);
     }
 
     [Fact]
@@ -146,6 +162,30 @@ public sealed class SqlCompletionCandidatesTests
         await GetAsync("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |", new SqlAssistSettings(), metadata);
 
         Assert.Equal(new[] { false, false }, metadata.IndexKeysFirst);
+    }
+
+    /// <summary>
+    /// <c>SELECT </c> 與選取清單的逗號之後按空白鍵：整句來源的欄位一次列完，每個都帶別名，
+    /// 而且允許為此查一次資料庫——不是等人先打出 <c>a.</c>。
+    /// </summary>
+    [Theory]
+    [InlineData("SELECT | FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = c.CopyNo")]
+    [InlineData("SELECT l.CopyNo, | FROM dbo.Loan l JOIN dbo.Copy c ON l.CopyNo = c.CopyNo")]
+    public async Task 選取清單的欄位帶別名並允許查資料庫(string sqlWithCaret)
+    {
+        var metadata = Joined();
+
+        var list = await GetAsync(sqlWithCaret, new SqlAssistSettings(), metadata);
+
+        Assert.Equal(new[] { "l", "c" }, metadata.ColumnQualifiers);
+        Assert.Empty(metadata.PeekQualifiers);
+
+        var columns = list.Where(item => item.Kind == SuggestionKind.Column).ToArray();
+
+        Assert.All(columns, item => Assert.Null(item.JoinKey));
+        Assert.Equal(
+            new[] { "l.CopyNo", "l.Code", "c.CopyNo", "c.Code", "c.Amount" },
+            columns.Select(item => item.InsertionText));
     }
 
     /// <summary><c>SELECT</c> 之後不配對：那裡要的是欄位本身。</summary>

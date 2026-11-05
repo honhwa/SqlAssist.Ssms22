@@ -46,8 +46,8 @@
 - 游標在 `EXEC ` 之後——`sp_executesql`、`sp_help` 一律不加結構描述就呼叫
 - 敘述把系統物件寫成了資料來源（`FROM sys.triggers`）
 
-第三個位置要的不是那份清單而是**那一張表的欄位**：`SELECT |` 與 `WHERE |` 只讀快取，
-而快取要等到有人去載。載入接在欄位預熱上（`SqlMetadataService.WarmColumns`），
+第三個位置要的不是那份清單而是**那一張表的欄位**：非起點的位置只讀快取，
+而快取要等到有人去載；選取清單、排序與述詞的起點允許查一次資料庫。載入接在欄位預熱上（`SqlMetadataService.WarmColumns`），
 名稱的解析則收斂在 `SqlMetadataCatalog.FindObjectsAsync`——第一層答不出來而限定字正是
 那兩個結構描述時，順手把系統物件載進來，載完併回同一份快照。少了這一條的症狀是
 `FROM sys.triggers` 之後每一個位置都列不出欄位，而畫面上只是什麼都沒發生。

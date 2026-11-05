@@ -24,8 +24,8 @@ public static class SqlCompletionPolicy
     /// 候選集合不封閉時，要打幾個字元才開清單。
     /// </param>
     /// <remarks>
-    /// 封閉的位置空前綴就開，其餘等使用者打字：<c>SELECT </c> 之後接得了常值、括號與運算式，
-    /// 按一下空白鍵就開的話是整個資料庫。
+    /// 封閉的位置空前綴就開，其餘等使用者打字：<c>SELECT * </c> 之後接得了運算式與下一句，
+    /// 按一下空白鍵就開的話是整個資料庫。<c>SELECT </c> 本身收斂到整句來源的欄位，屬於封閉的那一格。
     /// </remarks>
     public static bool Participates(SqlCompletionContext context, int triggerAfterCharacters)
     {
@@ -51,8 +51,9 @@ public static class SqlCompletionPolicy
     /// 一進格就開，Tab 把 <c>dbo</c> 提交進 <c>dbo.ProcedureName</c>。</item>
     /// <item>文法指定了資料行的所屬資料表（<c>UPDATE t SET </c>、<c>INSERT INTO t (</c>）：
     /// 省略掉的限定字。</item>
-    /// <item><c>ORDER BY </c>、<c>GROUP BY </c> 與述詞起點（<c>WHERE </c>、<c>ON </c>、
-    /// <c>AND </c>、<c>OR </c>、<c>HAVING </c>）：接得到整句來源的欄位，
+    /// <item><c>ORDER BY </c>、<c>GROUP BY </c>、述詞起點（<c>WHERE </c>、<c>ON </c>、
+    /// <c>AND </c>、<c>OR </c>、<c>HAVING </c>）與選取清單起點（<c>SELECT </c>、選取清單的逗號之後，
+    /// <c>DISTINCT</c>／<c>ALL</c>／<c>TOP</c> 寫完同一格）：接得到整句來源的欄位，
     /// 而那就是按空白鍵之後要找的東西（<see cref="SqlCompletionContext.ListsScopeColumns"/>）。</item>
     /// <item>只接得了那幾個字的關鍵字位置（<c>ORDER </c>、MERGE 的 <c>THEN </c>），
     /// 見 <see cref="SqlKeywordPositionExtensions.IsClosed"/>。</item>

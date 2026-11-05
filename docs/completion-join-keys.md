@@ -14,8 +14,8 @@ SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |
 
 述詞起點（`ON `、`WHERE `、`AND `、`OR `、`HAVING `）的下一格和 `ORDER BY ` 同一種格子
 （`SqlCompletionContext.ListsScopeColumns`）：每個欄位帶著別名、允許為此查一次資料庫、
-按空白鍵就開清單。上一條條件寫完後下一條要挑的仍然是欄位，否則 `ON ` 有配對鍵與全部欄位、
-接著打 `AND ` 卻一個都沒有。
+按空白鍵就開清單。選取清單起點也是同一格，只是不配對。上一條條件寫完後下一條要挑的仍然是欄位，
+否則 `ON ` 有配對鍵與全部欄位、接著打 `AND ` 卻一個都沒有。
 
 挑選項就等於寫完條件（插入 `c.CopyNo = l.CopyNo`，游標留在後面接 `AND`），不必先挑
 一邊再回頭補另一邊。規則在 `Core/Completion/SqlJoinKeyMatcher`，插入文字與說明欄在
@@ -79,8 +79,8 @@ FROM A a JOIN B b ON |        → 當前對象是 b
 在一起，條件左邊寫完之後——`ON a.CopyNo = |`——位置分析回的就是 `Any`，靠位元交集會把
 那裡也當成述詞起點，插入整條條件就寫出 `= a.CopyNo = b.CopyNo`。
 
-`SELECT |` 與 `FROM |` 也不在內：那些位置要的是欄位或資料表本身，把兩張表之間的聯結
-條件塞到最前面只是佔位。
+`SELECT |` 與 `FROM |` 也不在內：`SELECT |` 現在同樣列得出全部欄位，但位置不含 Predicate 位元，
+要的是欄位本身；`FROM |` 要的是資料表。把聯結條件塞到最前面只是佔位。
 
 ## 只有一個來源時排索引鍵
 

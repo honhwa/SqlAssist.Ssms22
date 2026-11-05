@@ -30,16 +30,20 @@ SELECT a.N     → 這時才重新問來源，欄位清單終於出現
 - **候選集合封閉**（`SqlCompletionPolicy.IsClosed`：下一個詞元一定是清單上的某一項）→ 重開。
   線索有五種：限定字（`a.`、`[dbo].`）與左方括號；目標收斂（`FROM `、`EXEC `、`DATEADD(`、
   封閉片語；可能是名字的那一格不算，它寫得出清單外的新名字）；文法指定了資料行的所屬資料表（`UPDATE t SET `，見[欄位](completion-columns.md#文法指定的所屬資料表)）；
-  `ORDER BY `／`GROUP BY ` 與述詞起點（`WHERE `、`ON `、`AND `、`OR `、`HAVING `）的欄位
-  （整句來源的欄位，見[配對鍵](completion-join-keys.md)）；只接那幾個字的關鍵字位置（`ORDER `、MERGE 的 `THEN `，
+  `ORDER BY `／`GROUP BY `、述詞起點（`WHERE `、`ON `、`AND `、`OR `、`HAVING `）與選取清單起點
+  （`SELECT `、選取清單的逗號之後，`DISTINCT`／`ALL`／`TOP` 寫完同一格）的欄位
+  （整句來源的欄位，見[欄位](completion-columns.md)）；只接那幾個字的關鍵字位置（`ORDER `、MERGE 的 `THEN `，
   `SqlKeywordPositionExtensions.IsClosed`）。
   少了任何一種，那個位置就要多打一個字母才有清單——與點號完全同一個病。
-- 其餘（`SELECT `、`COUNT(`、`WHERE a = 1 AND NOT `）→ 不重開：接得了運算式、常值、
-  逗號或下一句，按一下空白鍵就開的話是整個資料庫。
+- 其餘（`SELECT * `、`COUNT(`、`WHERE a = 1 AND NOT `）→ 不重開：接得了運算式、常值、
+  逗號或下一句，按一下空白鍵就開的話是整個資料庫。選取清單起點收斂到整句來源的欄位，
+  不在這個顧慮裡；自己開的清單軟選，正要打的 `CASE`、`COUNT(` 與常值不會被蓋掉。
 
 這幾條與建議來源是同一條參與規則（`SqlCompletionPolicy.Participates`），不另寫一份：
 最後一條是空前綴沒到觸發字元數，`12.` 的點號是數值常值（`Inert`），名字那一格不開。
 自己開出來的清單還沒打字，一律軟選，見[補全](completion.md#清單內容與排名)。
+打下 `MayChangeContext` 認得的字元（`@`、左方括號）時清單會收掉重開、目標跟著換；
+召回稽核照同一條規則模擬，否則空前綴那份清單會把變數誤判成缺席。
 
 ## 重開清單的三個步驟
 

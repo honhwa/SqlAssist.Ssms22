@@ -80,20 +80,30 @@ public sealed class SqlCompletionTriggerTests
         Assert.True(ShouldReopen("SELECT * FROM A a GROUP BY a.X HAVING |"));
     }
 
+    /// <summary>選取清單的起點也是候選集合封閉的那一格，空白鍵與逗號都要重開。</summary>
+    [Fact]
+    public void 選取清單起點要重開()
+    {
+        Assert.True(ShouldReopen("SELECT |"));
+        Assert.True(ShouldReopen("SELECT a.X, |"));
+        Assert.True(ShouldReopen("SELECT DISTINCT |"));
+        Assert.True(ShouldReopen("SELECT TOP 10 |"));
+    }
+
     /// <summary>
     /// 目標沒有收斂就不重開。
     /// </summary>
     /// <remarks>
     /// 這一條與「輸入幾個字元之後才開始建議」是同一個設定在說話：前綴是空的，
     /// 而觸發字元數最少是 1，所以建議來源本來就不會參與。在這裡先擋掉，
-    /// 只是省下一次白跑的來回。
+    /// 只是省下一次白跑的來回。<c>SELECT </c> 與選取清單的逗號之後已收斂到整句來源的欄位，
+    /// 改由前一條守。
     /// </remarks>
     [Fact]
     public void 目標沒收斂就不重開()
     {
-        Assert.False(ShouldReopen("SELECT |"));
         Assert.False(ShouldReopen("SELECT COUNT(|"));
-        Assert.False(ShouldReopen("SELECT a.X, |"));
+        Assert.False(ShouldReopen("SELECT * |"));
     }
 
     /// <summary>游標不在結束詞元的字元後面就與這件事無關，例如剛打完一個字母。</summary>

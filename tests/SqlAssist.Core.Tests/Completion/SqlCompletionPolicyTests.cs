@@ -21,8 +21,8 @@ namespace SqlAssist.Core.Tests.Completion;
 public sealed class SqlCompletionPolicyTests
 {
     [Theory]
-    [InlineData("SELECT ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
-    [InlineData("SELECT P", true, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
+    [InlineData("SELECT ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
+    [InlineData("SELECT P", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
 
     // 選取清單一項寫完、同一行、還沒有別名：可能是別名，也可能是打到一半的 FROM。
     [InlineData("SELECT PublCode ", false, false, SqlCompletionSlot.MaybeName, SqlKeywordPosition.SelectListTail | SqlKeywordPosition.OperandTail, CompletionTarget.Any)]
@@ -38,19 +38,19 @@ public sealed class SqlCompletionPolicyTests
     [InlineData("SELECT PublCode a ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectListTail | SqlKeywordPosition.OperandTail, CompletionTarget.Any)]
     [InlineData("SELECT a AS b ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectListTail | SqlKeywordPosition.OperandTail, CompletionTarget.Any)]
     [InlineData("SELECT * ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.Any, CompletionTarget.Any)]
-    [InlineData("SELECT DISTINCT ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.Any, CompletionTarget.Any)]
-    [InlineData("SELECT a, ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
+    [InlineData("SELECT DISTINCT ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.Any, CompletionTarget.Any)]
+    [InlineData("SELECT a, ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
     [InlineData("SELECT PublCode\nF", true, false, SqlCompletionSlot.Grammar,
         SqlKeywordPosition.SelectListTail | SqlKeywordPosition.StatementStart | SqlKeywordPosition.OperandTail, CompletionTarget.Any)]
     [InlineData("SELECT COUNT(a ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectListTail | SqlKeywordPosition.OperandTail, CompletionTarget.Any)]
 
     // TOP 子句之後是選取清單的起點，不是尾端。
-    [InlineData("SELECT TOP 10 ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
-    [InlineData("SELECT TOP 10 P", true, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
-    [InlineData("SELECT TOP (10) ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
-    [InlineData("SELECT DISTINCT TOP @n ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
-    [InlineData("SELECT TOP 10 PERCENT ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
-    [InlineData("SELECT TOP (10) WITH TIES ", false, false, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
+    [InlineData("SELECT TOP 10 ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
+    [InlineData("SELECT TOP 10 P", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
+    [InlineData("SELECT TOP (10) ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
+    [InlineData("SELECT DISTINCT TOP @n ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
+    [InlineData("SELECT TOP 10 PERCENT ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList | SqlKeywordPosition.TopClauseTail, CompletionTarget.Any)]
+    [InlineData("SELECT TOP (10) WITH TIES ", true, true, SqlCompletionSlot.Grammar, SqlKeywordPosition.SelectList, CompletionTarget.Any)]
 
     // CASE 還沒寫完時是 CASE 的裡面，不是選取清單這一層。
     [InlineData("SELECT CASE WHEN a = 1 ", false, false, SqlCompletionSlot.Grammar,
@@ -204,7 +204,12 @@ public sealed class SqlCompletionPolicyTests
     [InlineData("SELECT * FROM t ORDER ", true)]
     [InlineData("MERGE t USING s ON t.a = s.a WHEN MATCHED THEN ", true)]
     [InlineData("SELECT * FROM t PIVOT (SUM(x) ", true)]
-    [InlineData("SELECT ", false)]
+    [InlineData("SELECT ", true)]
+    [InlineData("SELECT a, ", true)]
+    [InlineData("SELECT DISTINCT ", true)]
+    [InlineData("SELECT TOP 10 ", true)]
+    [InlineData("SELECT COUNT(a, ", false)]
+    [InlineData("SELECT * ", false)]
     [InlineData("SELECT * FROM t WHERE ", true)]
     [InlineData("SELECT * FROM t JOIN u ON ", true)]
     [InlineData("SELECT * FROM t WHERE a = 1 AND ", true)]

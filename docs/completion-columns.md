@@ -75,21 +75,21 @@ SELECT a.| FROM (SELECT c.PUBL_CODE FROM dbo.PUBLISHER c) a
 `SqlCursorDeclaration.ListsUpdateColumns`）；寫得出限定字，別名同列。
 
 不算的位置：`EXEC p ` 的位置引數可以直接寫常值，`WITH` 也接在那裡。
-`ORDER BY `、`GROUP BY ` 接得了運算式與序號，`WHERE `、`ON ` 接得了 `EXISTS`，都不屬於某一張表；
-那裡列的是整句來源的欄位，見下一節。
+`ORDER BY `、`GROUP BY ` 接得了運算式與序號，`WHERE `、`ON ` 接得了 `EXISTS`，
+`SELECT ` 起點接得了函式與常值，都不屬於某一張表；那裡列的是整句來源的欄位，見下一節。
 指派的左邊寫得出限定字（`SET t.Fee`、`UPDATE l SET l.Fee … FROM dbo.Loan l`），所以 `SET ` 與指派的逗號之後
 另列範圍裡的別名（MERGE 兩邊的都在）；打 `t.` 就重開成同一份。其他資料行的位置不寫限定字，不列別名。
 
 `UPDATE t⏎SET` 的 SET 仍是指派：片語前一格的換行只給真的開始一句的字，
 見[子句片語](phrase-generator.md#前一格)。
 
-## ORDER BY 與 GROUP BY
+## 全部欄位的那一格
 
-`BY` 之後與清單的逗號之後（視窗的 `ORDER BY` 也認同一格）按空白鍵就列出整句查詢看得到的**全部欄位**，
-每個名稱帶著別名（沒寫別名時是資料表名稱）：`… JOIN dbo.Copy c ON … ORDER BY |` 列得出 `l.CopyNo`、`c.CopyNo`。
-兩處與沒有限定字的位置不同：插入的文字一律帶別名（`ORDER BY CopyNo` 在兩個來源都有這一欄時執行不起來），
-欄位允許為此查一次資料庫（與打出 `a.` 同一件事）。目標與旗標仍是 `Any`——這一格也寫得出運算式、函式與 `ASC`。
-述詞起點的下一格是同一份清單，差別在配對鍵，見[配對鍵](completion-join-keys.md)。
+`BY`、`SELECT ` 之後與清單的逗號之後（視窗的 `ORDER BY`、`DISTINCT`／`ALL`／`TOP` 寫完也認同一格）
+按空白鍵就列出整句來源的**全部欄位**，每個名稱帶著別名：`… ORDER BY |` 列得出 `l.CopyNo`、`c.CopyNo`。
+與沒有限定字的位置不同：插入一律帶別名（同名欄位有兩個來源時裸名執行不起來），欄位允許為此查一次資料庫。
+目標與旗標仍是 `Any`——也寫得出運算式、函式與 `ASC`。述詞起點是同一份清單，差別在配對鍵；
+選取清單起點不配對，見[配對鍵](completion-join-keys.md)。
 
 `SELECT CopyNo AS Seq FROM dbo.Copy ORDER BY |` 另外列得出 `Seq`：只有查詢的 ORDER BY 引用得到選取清單別名，
 而且只能整項寫它，所以只在 `BY` 或逗號之後列（`SqlColumnSourceResolver.FindOrderByAliases`）。運算式裡、

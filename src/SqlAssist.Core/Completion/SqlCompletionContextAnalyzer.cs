@@ -275,14 +275,17 @@ public static class SqlCompletionContextAnalyzer
             : null;
 
         // 要列出整句來源全部欄位的那幾格：ORDER BY／GROUP BY 的欄位本身（BY 之後、清單的逗號之後，
-        // 視窗的 ORDER BY 也認同一格），以及述詞起點——按空白鍵之後要找的就是欄位。
-        // 比的是整個值而不是位元：判不出位置時的 Any 含著每一個旗標，用交集的話連 RETURN | 都算進來。
+        // 視窗的 ORDER BY 也認同一格）、述詞起點，以及 SELECT 選取清單的起點——
+        // 按空白鍵或逗號之後要找的就是欄位。
+        // 比的是整個值而不是位元：判不出位置時的 Any 含著每一個旗標，用交集的話連 RETURN | 都算進來；
+        // 選取清單那一支自己認 Any 的兩種變形，見 StartsSelectList。
         // 述詞還要再看前一個字：AND、OR、HAVING 與 WHEN 的旗標值與 WHERE、ON 相同，前三個是接續的
         // 述詞起點也收進來；WHEN 是 MERGE／CASE 的分支，那一格不挑欄位。
         var listsScopeColumns = target == CompletionTarget.Any &&
             qualifierPath is null &&
             (keywordPosition == SqlKeywordPosition.OrderByColumn ||
-             (keywordPosition == SqlKeywordPosition.Predicate && StartsPredicateClause(beforeToken)));
+             (keywordPosition == SqlKeywordPosition.Predicate && StartsPredicateClause(beforeToken)) ||
+             StartsSelectList(keywordPosition, beforeToken));
 
         return new SqlCompletionContext(
             caret.Slot,
@@ -420,8 +423,8 @@ public static class SqlCompletionContextAnalyzer
             return withScope.AsColumnsOf(withScope.ScopeSources).WithScriptSources(SqlScopeAliasSuggestions.Create(scope, resolver));
         }
 
-        // ORDER BY 與 GROUP BY 的欄位本身（BY 之後、清單的逗號之後，視窗的 ORDER BY 也認同一格），
-        // 以及 WHERE 與 ON（述詞的起點）：整句查詢看得到的來源全部列出來，插入時帶上別名。
+        // ORDER BY 與 GROUP BY 的欄位本身（BY 之後、清單的逗號之後，視窗的 ORDER BY 也認同一格）、
+        // 述詞起點，以及 SELECT 選取清單的起點：整句查詢看得到的來源全部列出來，插入時帶上別名。
         // 目標維持 Any——這幾格也寫得出運算式、函式、ASC／DESC 與 EXISTS，收成 Column 會讓那些字一起消失。
         // 游標查詢 FOR UPDATE OF 的清單也是 OrderByColumn，由上面那一支先接走。
         if (context.ListsScopeColumns)
@@ -676,6 +679,30 @@ public static class SqlCompletionContextAnalyzer
         EndsWithKeyword(beforeToken, "AND", out _) ||
         EndsWithKeyword(beforeToken, "OR", out _) ||
         EndsWithKeyword(beforeToken, "HAVING", out _);
+
+    /// <summary>
+    /// 游標在 SELECT 選取清單的起點：<c>SELECT </c> 之後、清單的逗號之後，
+    /// 以及 <c>DISTINCT</c>／<c>ALL</c>／<c>TOP</c> 寫完的同一格。
+    /// </summary>
+    /// <remarks>
+    /// 位置分析對前兩者回 <see cref="SqlKeywordPosition.SelectList"/>，TOP 寫完還多帶
+    /// <see cref="SqlKeywordPosition.TopClauseTail"/>；唯獨 <c>SELECT DISTINCT </c> 與
+    /// <c>SELECT ALL </c> 落在 <see cref="SqlKeywordPosition.Any"/>。Any 含每一個旗標，
+    /// 拿位元交集會連 <c>RETURN </c> 都算進來，所以那兩種只認前兩個詞元。
+    /// <c>RECEIVE </c> 借用同一個位置卻不是選取清單，由前一個詞元擋掉；一項寫完的
+    /// <see cref="SqlKeywordPosition.SelectListTail"/> 與函式引數的逗號也不帶這個位元。
+    /// </remarks>
+    private static bool StartsSelectList(SqlKeywordPosition position, string beforeToken)
+    {
+        if (position == SqlKeywordPosition.Any)
+        {
+            return EndsWithKeywords(beforeToken, "SELECT", "DISTINCT", out _) ||
+                   EndsWithKeywords(beforeToken, "SELECT", "ALL", out _);
+        }
+
+        return (position & SqlKeywordPosition.SelectList) != SqlKeywordPosition.None &&
+               !EndsWithKeyword(beforeToken, "RECEIVE", out _);
+    }
 
     /// <summary>
     /// 游標還在同一個 FROM／JOIN 清單裡，也就是逗號之後的下一個資料來源。
