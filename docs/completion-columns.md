@@ -89,7 +89,7 @@ SELECT a.| FROM (SELECT c.PUBL_CODE FROM dbo.PUBLISHER c) a
 每個名稱帶著別名（沒寫別名時是資料表名稱）：`… JOIN dbo.Copy c ON … ORDER BY |` 列得出 `l.CopyNo`、`c.CopyNo`。
 兩處與沒有限定字的位置不同：插入的文字一律帶別名（`ORDER BY CopyNo` 在兩個來源都有這一欄時執行不起來），
 欄位允許為此查一次資料庫（與打出 `a.` 同一件事）。目標與旗標仍是 `Any`——這一格也寫得出運算式、函式與 `ASC`。
-`WHERE `、`ON ` 的下一格是同一份清單，差別在配對鍵，見[配對鍵](completion-join-keys.md)。
+述詞起點的下一格是同一份清單，差別在配對鍵，見[配對鍵](completion-join-keys.md)。
 
 `SELECT CopyNo AS Seq FROM dbo.Copy ORDER BY |` 另外列得出 `Seq`：只有查詢的 ORDER BY 引用得到選取清單別名，
 而且只能整項寫它，所以只在 `BY` 或逗號之後列（`SqlColumnSourceResolver.FindOrderByAliases`）。運算式裡、

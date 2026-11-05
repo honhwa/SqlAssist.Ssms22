@@ -154,6 +154,13 @@ public static class SqlNameSlotScanner
 
             if (ListSourceKeywords.Contains(token.Value))
             {
+                // FETCH 的 FROM 後面接的是游標名稱，不是資料來源：補成 dbo.c 之後
+                // 那句 OPEN c 就找不到游標，而兩處相隔幾行，看起來完全合理。
+                if (IsCursorFetch(tokens, index))
+                {
+                    continue;
+                }
+
                 ReadSourceRun(tokens, index + 1, slots, seen, aliases);
                 continue;
             }
@@ -390,6 +397,62 @@ public static class SqlNameSlotScanner
     {
         return token.Kind == SqlTokenKind.Identifier
             && (token.IsQuoted || !SqlKeywordCatalog.IsKeywordOrDataType(token.Value));
+    }
+
+    /// <summary>
+    /// 這個 <c>FROM</c> 屬於 <c>FETCH</c> 的定位子句，後面接的是游標而不是資料表。
+    /// </summary>
+    /// <remarks>
+    /// 游標名稱不屬於任何結構描述：<c>FETCH NEXT FROM dbo.c</c> 是語法錯誤，
+    /// 而錯誤要等到執行那一段才看得到。往左只認得定位子句——<c>NEXT</c>／<c>PRIOR</c>
+    /// 這幾個字、<c>ABSOLUTE</c>／<c>RELATIVE</c> 後面的位移與它的正負號——
+    /// 遇到其他任何字就回 false：<c>FROM</c> 在查詢裡佔絕大多數，放寬只會讓真正的
+    /// 資料來源整批漏補。
+    /// </remarks>
+    private static bool IsCursorFetch(IReadOnlyList<SqlToken> tokens, int index)
+    {
+        for (var cursor = index - 1; cursor >= 0; cursor--)
+        {
+            var token = tokens[cursor];
+
+            if (token.Kind == SqlTokenKind.Comment)
+            {
+                continue;
+            }
+
+            if (token.IsKeyword("FETCH"))
+            {
+                return true;
+            }
+
+            if (!IsFetchPosition(token))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary><c>FETCH</c> 與它的 <c>FROM</c> 之間只會有這幾種詞法單元。</summary>
+    private static bool IsFetchPosition(SqlToken token)
+    {
+        return token.IsKeyword("NEXT")
+            || token.IsKeyword("PRIOR")
+            || token.IsKeyword("FIRST")
+            || token.IsKeyword("LAST")
+            || token.IsKeyword("ABSOLUTE")
+            || token.IsKeyword("RELATIVE")
+            || IsSign(token)
+            || token.Kind == SqlTokenKind.Number
+            || token.Kind == SqlTokenKind.Variable;
+    }
+
+    /// <summary>位移的正負號；詞法分析把它讀成運算子而不是標點。</summary>
+    private static bool IsSign(SqlToken token)
+    {
+        return token.Kind == SqlTokenKind.Operator
+            && (token.Value == "-" || token.Value == "+");
     }
 
     /// <summary>

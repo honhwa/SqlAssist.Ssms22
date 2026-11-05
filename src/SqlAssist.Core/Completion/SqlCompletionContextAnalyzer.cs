@@ -275,10 +275,10 @@ public static class SqlCompletionContextAnalyzer
             : null;
 
         // 要列出整句來源全部欄位的那幾格：ORDER BY／GROUP BY 的欄位本身（BY 之後、清單的逗號之後，
-        // 視窗的 ORDER BY 也認同一格），以及 WHERE／ON 的述詞起點——那兩處按空白鍵之後要找的就是欄位。
+        // 視窗的 ORDER BY 也認同一格），以及述詞起點——按空白鍵之後要找的就是欄位。
         // 比的是整個值而不是位元：判不出位置時的 Any 含著每一個旗標，用交集的話連 RETURN | 都算進來。
-        // 述詞還要再看前一個字：HAVING、AND、OR 與 WHEN 的旗標值與 WHERE、ON 相同，但那幾格接著寫的是
-        // 條件而不是挑欄位，按空白鍵彈出整份欄位清單會蓋掉正要打的 EXISTS、NOT。
+        // 述詞還要再看前一個字：AND、OR、HAVING 與 WHEN 的旗標值與 WHERE、ON 相同，前三個是接續的
+        // 述詞起點也收進來；WHEN 是 MERGE／CASE 的分支，那一格不挑欄位。
         var listsScopeColumns = target == CompletionTarget.Any &&
             qualifierPath is null &&
             (keywordPosition == SqlKeywordPosition.OrderByColumn ||
@@ -661,16 +661,21 @@ public static class SqlCompletionContextAnalyzer
     }
 
     /// <summary>
-    /// 游標前的程式碼以 <c>WHERE</c> 或 <c>ON</c> 結尾：述詞的起點，也是「整句來源的欄位」那一格。
+    /// 游標前的程式碼以述詞起點的關鍵字結尾，也是「整句來源的欄位」那一格。
     /// </summary>
     /// <remarks>
-    /// 只看前一個完整的詞元，不必回頭找子句：<c>WHERE</c> 與 <c>ON</c> 的旗標值是
-    /// <see cref="SqlKeywordPosition.Predicate"/>，與 <c>HAVING</c>、<c>AND</c>、<c>OR</c>、
-    /// <c>WHEN</c> 相同，光比旗標分不出是哪一個字。那幾格接著寫的是條件而不是挑欄位，
-    /// 按空白鍵就彈出整份欄位清單會蓋掉正要打的 <c>EXISTS</c>、<c>NOT</c>。
+    /// 只看前一個完整的詞元，不必回頭找子句：<c>WHERE</c>、<c>ON</c>、<c>AND</c>、<c>OR</c>
+    /// 與 <c>HAVING</c> 的旗標值都是 <see cref="SqlKeywordPosition.Predicate"/>，
+    /// 與 <c>WHEN</c> 相同，光比旗標分不出是哪一個字。前三個接續詞不收的症狀是
+    /// <c>ON </c> 有配對鍵與全部欄位、下一條條件卻一個都沒有；<c>WHEN</c> 是
+    /// MERGE／CASE 的分支，那一格不挑欄位。
     /// </remarks>
     private static bool StartsPredicateClause(string beforeToken) =>
-        EndsWithKeyword(beforeToken, "WHERE", out _) || EndsWithKeyword(beforeToken, "ON", out _);
+        EndsWithKeyword(beforeToken, "WHERE", out _) ||
+        EndsWithKeyword(beforeToken, "ON", out _) ||
+        EndsWithKeyword(beforeToken, "AND", out _) ||
+        EndsWithKeyword(beforeToken, "OR", out _) ||
+        EndsWithKeyword(beforeToken, "HAVING", out _);
 
     /// <summary>
     /// 游標還在同一個 FROM／JOIN 清單裡，也就是逗號之後的下一個資料來源。

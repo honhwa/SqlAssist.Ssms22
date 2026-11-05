@@ -120,6 +120,56 @@ public sealed class SqlSchemaQualificationTests
     }
 
     /// <remarks>
+    /// 游標名稱不屬於任何結構描述：<c>FETCH NEXT FROM dbo.c</c> 是語法錯誤，
+    /// 而 <c>FETCH</c> 的 <c>FROM</c> 與查詢的 <c>FROM</c> 在文字上一模一樣。
+    /// 定位子句的每一種寫法都要認得，漏一種就是那一種寫法被補壞。
+    /// </remarks>
+    [Theory]
+    [InlineData("FETCH FROM c")]
+    [InlineData("FETCH NEXT FROM c")]
+    [InlineData("FETCH PRIOR FROM c")]
+    [InlineData("FETCH FIRST FROM c")]
+    [InlineData("FETCH LAST FROM c")]
+    [InlineData("FETCH ABSOLUTE 5 FROM c")]
+    [InlineData("FETCH ABSOLUTE -5 FROM c")]
+    [InlineData("FETCH RELATIVE @n FROM c")]
+    [InlineData("FETCH NEXT FROM GLOBAL c")]
+    [InlineData("FETCH NEXT FROM [Loan cursor]")]
+    [InlineData("FETCH NEXT FROM c INTO @CopyNo")]
+    [InlineData("OPEN c")]
+    [InlineData("CLOSE c")]
+    [InlineData("DEALLOCATE c")]
+    [InlineData("DECLARE c CURSOR FOR SELECT 1")]
+    public void 游標名稱不動(string sql)
+    {
+        Assert.Equal(sql, Qualify(sql));
+        Assert.Equal(0, Count(sql));
+    }
+
+    /// <remarks>
+    /// 整段游標的寫法：只有真正的那兩個資料來源要補——宣告裡的查詢與 DML 的目標。
+    /// <c>FETCH … FROM c</c> 與 <c>WHERE CURRENT OF c</c> 的 <c>c</c> 是游標。
+    /// </remarks>
+    [Fact]
+    public void 游標語句只補資料來源()
+    {
+        Assert.Equal(
+            "DECLARE c CURSOR FOR SELECT CopyNo FROM dbo.Loan;\r\n" +
+            "OPEN c;\r\n" +
+            "FETCH NEXT FROM c INTO @CopyNo;\r\n" +
+            "UPDATE dbo.Loan SET CopyNo = 1 WHERE CURRENT OF c;\r\n" +
+            "CLOSE c;\r\n" +
+            "DEALLOCATE c",
+            Qualify(
+                "DECLARE c CURSOR FOR SELECT CopyNo FROM Loan;\r\n" +
+                "OPEN c;\r\n" +
+                "FETCH NEXT FROM c INTO @CopyNo;\r\n" +
+                "UPDATE Loan SET CopyNo = 1 WHERE CURRENT OF c;\r\n" +
+                "CLOSE c;\r\n" +
+                "DEALLOCATE c"));
+    }
+
+    /// <remarks>
     /// CTE 名稱不動，但 CTE 主體裡的來源要動——整組跳過的話，
     /// <c>WITH … AS (SELECT … FROM Loan)</c> 這種最常見的寫法會整段漏掉。
     /// </remarks>

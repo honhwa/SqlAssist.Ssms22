@@ -72,9 +72,12 @@ public sealed class SqlCompletionTriggerTests
         Assert.True(ShouldReopen("ALTER PROCEDURE |"));
         Assert.True(ShouldReopen("INSERT INTO |"));
 
-        // WHERE 與 ON 的下一格是整句來源的欄位，按空白鍵就該看到那一份。
+        // WHERE、ON 與接續的 AND、OR、HAVING 下一格都是整句來源的欄位，按空白鍵就該看到那一份。
         Assert.True(ShouldReopen("SELECT * FROM A a WHERE |"));
         Assert.True(ShouldReopen("SELECT * FROM A a JOIN B b ON |"));
+        Assert.True(ShouldReopen("SELECT * FROM A a WHERE a.X = 1 AND |"));
+        Assert.True(ShouldReopen("SELECT * FROM A a WHERE a.X = 1 OR |"));
+        Assert.True(ShouldReopen("SELECT * FROM A a GROUP BY a.X HAVING |"));
     }
 
     /// <summary>
@@ -91,7 +94,6 @@ public sealed class SqlCompletionTriggerTests
         Assert.False(ShouldReopen("SELECT |"));
         Assert.False(ShouldReopen("SELECT COUNT(|"));
         Assert.False(ShouldReopen("SELECT a.X, |"));
-        Assert.False(ShouldReopen("SELECT * FROM A a WHERE a.X = 1 AND |"));
     }
 
     /// <summary>游標不在結束詞元的字元後面就與這件事無關，例如剛打完一個字母。</summary>

@@ -207,9 +207,11 @@ public sealed class SqlCompletionContextAnalyzerTests
     /// 沒有輸入前綴、也沒有可據以縮小範圍的前導關鍵字時不主動跳出清單，
     /// 否則按下空白鍵就會列出整個資料庫。
     /// </summary>
+    /// <remarks>
+    /// <c>AND </c> 本身已是述詞起點，不能再拿它代表「沒有前導關鍵字」。
+    /// </remarks>
     [Theory]
     [InlineData("SELECT ")]
-    [InlineData("AND ")]
     [InlineData("  ")]
     public void 既無前綴也無目標時不建議(string textBeforeCaret)
     {
@@ -220,12 +222,13 @@ public sealed class SqlCompletionContextAnalyzerTests
     }
 
     /// <summary>
-    /// <c>ORDER BY</c>、<c>GROUP BY</c>、<c>WHERE</c> 與 <c>ON</c> 的下一格列的是整句來源的欄位，而且要帶別名；
+    /// <c>ORDER BY</c>、<c>GROUP BY</c>、<c>WHERE</c>、<c>ON</c> 與述詞接續的下一格列的是整句來源的欄位，而且要帶別名；
     /// 目標仍是 <see cref="CompletionTarget.Any"/>——那裡也寫得出運算式、函式、<c>ASC</c> 與 <c>EXISTS</c>。
     /// </summary>
     /// <remarks>
-    /// 述詞那一格只看前一個字：<c>HAVING</c>、<c>AND</c>、<c>OR</c> 的位置旗標與 <c>WHERE</c>、<c>ON</c> 相同，
-    /// 但那幾格接著寫的是條件，按空白鍵不該彈出整份欄位清單。
+    /// <c>AND</c>、<c>OR</c>、<c>HAVING</c> 與 <c>WHERE</c>、<c>ON</c> 的位置旗標相同，都是述詞起點：
+    /// 上一條條件寫完之後，接著要挑的仍然是欄位，空白鍵該看到同一份清單。
+    /// <c>WHEN</c> 的旗標也一樣，但那是 MERGE／CASE 的分支，不在這一格。
     /// </remarks>
     [Theory]
     [InlineData("SELECT * FROM dbo.Loan l ORDER BY ", true)]
@@ -235,8 +238,11 @@ public sealed class SqlCompletionContextAnalyzerTests
     [InlineData("SELECT SUM(l.Fee) OVER (ORDER BY ", true)]
     [InlineData("SELECT * FROM dbo.Loan l WHERE ", true)]
     [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON ", true)]
-    [InlineData("SELECT * FROM dbo.Loan l WHERE l.CopyNo = 1 AND ", false)]
-    [InlineData("SELECT * FROM dbo.Loan l GROUP BY l.CopyNo HAVING ", false)]
+    [InlineData("SELECT * FROM dbo.Loan l WHERE l.CopyNo = 1 AND ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l WHERE l.CopyNo = 1 OR ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l GROUP BY l.CopyNo HAVING ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON l.Code = c.Code AND ", true)]
+    [InlineData("SELECT * FROM dbo.Loan l WHERE l.CopyNo = 1 AND NOT ", false)]
     [InlineData("SELECT * FROM dbo.Loan l ORDER BY l.CopyNo ", false)]
     [InlineData("SELECT * FROM dbo.Loan l ORDER BY l.", false)]
     public void 排序與述詞的欄位那一格列出整句來源(string textBeforeCaret, bool expected)

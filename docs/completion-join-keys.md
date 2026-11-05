@@ -12,9 +12,10 @@ SELECT * FROM dbo.Loan l JOIN dbo.Copy c ON |
 → c 與 l 其餘的欄位照舊列在後面
 ```
 
-`ON ` 與 `WHERE ` 的下一格和 `ORDER BY ` 同一種格子（`SqlCompletionContext.ListsScopeColumns`）：
-每個欄位帶著別名、允許為此查一次資料庫、按空白鍵就開清單。`HAVING`、`AND`、`OR` 之後只讀快取，
-也不在空白鍵後開清單——那幾格接著寫的是條件，不是挑欄位。
+述詞起點（`ON `、`WHERE `、`AND `、`OR `、`HAVING `）的下一格和 `ORDER BY ` 同一種格子
+（`SqlCompletionContext.ListsScopeColumns`）：每個欄位帶著別名、允許為此查一次資料庫、
+按空白鍵就開清單。上一條條件寫完後下一條要挑的仍然是欄位，否則 `ON ` 有配對鍵與全部欄位、
+接著打 `AND ` 卻一個都沒有。
 
 挑選項就等於寫完條件（插入 `c.CopyNo = l.CopyNo`，游標留在後面接 `AND`），不必先挑
 一邊再回頭補另一邊。規則在 `Core/Completion/SqlJoinKeyMatcher`，插入文字與說明欄在
