@@ -113,7 +113,8 @@ public static class SqlCatalogSuggestions
             $"{info.QualifiedName}\r\n{column.ToScriptLine()}",
             SuggestionKind.Column,
             schemaName: info.SchemaName,
-            tag: column);
+            tag: column,
+            collationName: column.Script.CollationName);
     }
 
     /// <summary>

@@ -22,6 +22,10 @@ namespace SqlAssist.Core.Completion;
 /// 欄位名稱的比對去掉了分隔符並轉小寫：<c>Copy_No</c> 與 <c>CopyNo</c> 是同一件事，
 /// 而 T-SQL 的識別碼在大多排序規則下不分大小寫。分隔符名單與模糊比對共用
 /// （<see cref="FuzzyMatcher.SqlDelimiters"/>），免得兩邊各有一份而慢慢分岔。
+///
+/// 兩側定序不同時，配出來的那一條條件會多一段 <c>COLLATE</c>（見
+/// <see cref="SqlJoinKey.Collation"/>）：跨資料庫的兩張表各自用自己的定序，
+/// 直接比較是錯誤 468，而使用者按下這一項時要的是一條<b>跑得動</b>的條件。
 /// </remarks>
 public static class SqlJoinKeyMatcher
 {
@@ -100,8 +104,10 @@ public static class SqlJoinKeyMatcher
         var current = groups[groups.Count - 1];
         var pairs = new Dictionary<string, SqlJoinKey>(StringComparer.Ordinal);
 
-        foreach (var name in current.Names)
+        foreach (var column in current.Columns)
         {
+            var name = column.Name;
+
             // 同一個名稱在來源裡出現兩次時只留第一筆：第二筆配到的是同一個對象，
             // 多一條清單項目只是讓使用者多看一次。
             if (pairs.ContainsKey(name))
@@ -135,7 +141,12 @@ public static class SqlJoinKeyMatcher
 
                 pairs.Add(
                     name,
-                    new SqlJoinKey(name, current.Qualifier, counterpart, other.Qualifier));
+                    new SqlJoinKey(
+                        name,
+                        current.Qualifier,
+                        counterpart.Name,
+                        other.Qualifier,
+                        CollationToApply(column.Collation, counterpart.Collation)));
 
                 break;
             }
@@ -143,6 +154,31 @@ public static class SqlJoinKeyMatcher
 
         return new SqlJoinKeyMatch(current.Indexes, pairs);
     }
+
+    /// <summary>
+    /// 這一條條件要不要補 <c>COLLATE</c>，要補的話寫哪一個定序。
+    /// </summary>
+    /// <param name="current">當前來源那一欄的定序。</param>
+    /// <param name="counterpart">對面那一欄的定序。</param>
+    /// <remarks>
+    /// 兩邊都有定序而且不同時才補：只有一邊有定序代表另一邊不是字元型別，
+    /// 那樣的比較不會撞上定序衝突，寫了反而是多餘的字。
+    ///
+    /// 寫的是<b>對面</b>那一欄的定序，掛在當前那一欄後面
+    /// （<c>c.CopyNo COLLATE Chinese_Taiwan_Stroke_CI_AS = l.CopyNo</c>）：
+    /// 對面那一欄是使用者已經寫好、這條條件要接上的目標，以它的定序為準等於
+    /// 「把剛加入的那張表轉過來比」。反過來把對面的定序寫在對面自己身上，
+    /// 看起來像是把一欄轉成它原本的定序，讀的人分不出那是必要的還是多打的。
+    ///
+    /// 不判斷兩張表在不在同一個資料庫：同一個資料庫裡兩欄定序不同，等值比較
+    /// 一樣會失敗（錯誤 468），跨庫只是最常見的來源。
+    /// </remarks>
+    private static string? CollationToApply(string? current, string? counterpart) =>
+        current is not null &&
+        counterpart is not null &&
+        !string.Equals(current, counterpart, StringComparison.OrdinalIgnoreCase)
+            ? counterpart
+            : null;
 
     /// <summary>
     /// 把來源依限定字收成群組：同一個限定字相鄰的來源是同一張表的延伸。
@@ -165,11 +201,11 @@ public static class SqlJoinKeyMatcher
                 last?.Qualifier is not null &&
                 string.Equals(last.Qualifier, source.Qualifier, StringComparison.OrdinalIgnoreCase))
             {
-                last.Absorb(index, source.Names);
+                last.Absorb(index, source);
             }
             else
             {
-                groups.Add(new SourceGroup(source.Qualifier, index, source.Names));
+                groups.Add(new SourceGroup(source.Qualifier, index, source));
             }
         }
 
@@ -198,59 +234,92 @@ public static class SqlJoinKeyMatcher
 
     private sealed class SourceGroup
     {
-        private Dictionary<string, string>? _byNormalizedName;
+        private readonly List<Column> _columns = new();
+        private readonly Dictionary<string, Column> _byName = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, Column>? _byNormalizedName;
 
-        public SourceGroup(string? qualifier, int index, IReadOnlyList<string> names)
+        public SourceGroup(string? qualifier, int index, SqlJoinKeySource source)
         {
             Qualifier = qualifier;
             Indexes = new List<int> { index };
-            Names = new List<string>(names);
+            Add(source);
         }
 
         public string? Qualifier { get; }
 
         public List<int> Indexes { get; }
 
-        public List<string> Names { get; }
+        public IReadOnlyList<Column> Columns => _columns;
 
-        public void Absorb(int index, IReadOnlyList<string> names)
+        public void Absorb(int index, SqlJoinKeySource source)
         {
             Indexes.Add(index);
-
-            foreach (var name in names)
-            {
-                // 重名的只留第一筆，比對不分大小寫。
-                if (!Names.Exists(existing => string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    Names.Add(name);
-                }
-            }
+            Add(source);
         }
 
-        /// <summary>用正規化後的名稱找回原始名稱；找不到時為 null。</summary>
-        public string? Find(string normalized)
+        /// <summary>用正規化後的名稱找回原始欄位；找不到時為 null。</summary>
+        public Column? Find(string normalized)
         {
             _byNormalizedName ??= BuildIndex();
 
-            return _byNormalizedName.TryGetValue(normalized, out var name) ? name : null;
+            return _byNormalizedName.TryGetValue(normalized, out var column) ? column : null;
         }
 
-        private Dictionary<string, string> BuildIndex()
+        private void Add(SqlJoinKeySource source)
         {
-            var index = new Dictionary<string, string>(Names.Count, StringComparer.Ordinal);
-
-            foreach (var name in Names)
+            for (var index = 0; index < source.Names.Count; index++)
             {
-                var normalized = Normalize(name);
+                var name = source.Names[index];
+                var collation = source.CollationAt(index);
+
+                // 重名的只留第一筆，比對不分大小寫；但定序可以從後面那一筆補上——
+                // 衍生資料表先攤出寫死的名稱、才攤出資料表那一筆，先到的那一筆沒有定序。
+                if (_byName.TryGetValue(name, out var existing))
+                {
+                    if (existing.Collation is null)
+                    {
+                        existing.Collation = collation;
+                    }
+
+                    continue;
+                }
+
+                var column = new Column(name, collation);
+                _byName.Add(name, column);
+                _columns.Add(column);
+            }
+        }
+
+        private Dictionary<string, Column> BuildIndex()
+        {
+            var index = new Dictionary<string, Column>(_columns.Count, StringComparer.Ordinal);
+
+            foreach (var column in _columns)
+            {
+                var normalized = Normalize(column.Name);
 
                 // 空鍵會把「名稱只有分隔符」的欄位配給任何人，直接不進索引。
                 if (normalized.Length > 0 && !index.ContainsKey(normalized))
                 {
-                    index.Add(normalized, name);
+                    index.Add(normalized, column);
                 }
             }
 
             return index;
         }
+    }
+
+    /// <summary>群組裡的一個欄位：原始名稱與它的定序。</summary>
+    private sealed class Column
+    {
+        public Column(string name, string? collation)
+        {
+            Name = name;
+            Collation = collation;
+        }
+
+        public string Name { get; }
+
+        public string? Collation { get; set; }
     }
 }

@@ -15,7 +15,8 @@ public sealed class SqlSuggestion
         object? tag = null,
         SqlKeywordPosition positions = SqlKeywordPosition.Any,
         bool isDestructive = false,
-        SqlJoinKey? joinKey = null)
+        SqlJoinKey? joinKey = null,
+        string? collationName = null)
     {
         DisplayText = displayText;
         InsertionText = insertionText;
@@ -28,6 +29,7 @@ public sealed class SqlSuggestion
         Positions = positions;
         IsDestructive = isDestructive;
         JoinKey = joinKey;
+        CollationName = collationName;
     }
 
     public string DisplayText { get; }
@@ -71,4 +73,15 @@ public sealed class SqlSuggestion
     /// 見 <c>SuggestionScore.JoinKeyBonus</c>。
     /// </remarks>
     public SqlJoinKey? JoinKey { get; }
+
+    /// <summary>
+    /// 欄位的定序；非字元型別、指令碼宣告的來源與取不到時為 null。
+    /// </summary>
+    /// <remarks>
+    /// 只有配對鍵讀它：兩側定序不同時等值比較會失敗（錯誤 468），
+    /// 而那一條條件要在建立清單時就把 <c>COLLATE</c> 一起寫出來。
+    /// 型別那一欄刻意不跟著傳——判斷「是不是字元型別」不必另立旗標，
+    /// 定序本來就只有字元型別有。
+    /// </remarks>
+    public string? CollationName { get; }
 }

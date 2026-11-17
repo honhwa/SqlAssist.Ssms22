@@ -19,6 +19,12 @@ public sealed class SqlJoinKeyMatcherTests
         return new SqlJoinKeySource(qualifier, names);
     }
 
+    /// <summary>帶著定序的來源：名稱與定序逐項對應，null 代表非字元型別或取不到。</summary>
+    private static SqlJoinKeySource Collated(string? qualifier, string[] names, string?[] collations)
+    {
+        return new SqlJoinKeySource(qualifier, names, collations);
+    }
+
     /// <summary>限定字讀不出來時只寫名稱，攤平的字串才讀得出來少了什麼。</summary>
     private static string Label(string? qualifier, string name)
     {
@@ -204,6 +210,75 @@ public sealed class SqlJoinKeyMatcherTests
         Assert.Equal(
             new[] { "CopyNo=a.CopyNo" },
             Pairs(Source("a", "CopyNo"), Source(null, "CopyNo")));
+    }
+
+    /// <summary>
+    /// 兩側定序不同時，配出來的條件帶著<b>對面</b>那一欄的定序。
+    /// </summary>
+    /// <remarks>
+    /// 跨資料庫的兩張表各自用自己的定序，直接比較是錯誤 468；寫進編輯器的條件
+    /// 要能直接執行，所以定序在配對這一層就決定，不必等使用者按下去再問一次。
+    /// </remarks>
+    [Fact]
+    public void 兩側定序不同時帶上對面的定序()
+    {
+        var match = SqlJoinKeyMatcher.Pair(new[]
+        {
+            Collated("l", new[] { "CopyNo" }, new[] { "Chinese_Taiwan_Stroke_CI_AS" }),
+            Collated("c", new[] { "CopyNo" }, new[] { "Latin1_General_CI_AS" })
+        });
+
+        Assert.Equal("Chinese_Taiwan_Stroke_CI_AS", match.Pairs["CopyNo"].Collation);
+    }
+
+    /// <summary>定序名稱不分大小寫：大小寫不同不是衝突。</summary>
+    [Fact]
+    public void 定序只有大小寫不同時不帶()
+    {
+        var match = SqlJoinKeyMatcher.Pair(new[]
+        {
+            Collated("l", new[] { "CopyNo" }, new[] { "Latin1_General_CI_AS" }),
+            Collated("c", new[] { "CopyNo" }, new[] { "latin1_general_ci_as" })
+        });
+
+        Assert.Null(match.Pairs["CopyNo"].Collation);
+    }
+
+    /// <summary>
+    /// 只有一邊有定序時不帶：那代表另一邊不是字元型別，比較不會撞上定序衝突。
+    /// </summary>
+    [Theory]
+    [InlineData("Latin1_General_CI_AS", null)]
+    [InlineData(null, "Latin1_General_CI_AS")]
+    public void 只有一邊有定序時不帶(string? current, string? counterpart)
+    {
+        var match = SqlJoinKeyMatcher.Pair(new[]
+        {
+            Collated("l", new[] { "CopyNo" }, new[] { counterpart }),
+            Collated("c", new[] { "CopyNo" }, new[] { current })
+        });
+
+        Assert.Null(match.Pairs["CopyNo"].Collation);
+    }
+
+    /// <summary>
+    /// 名稱先到、定序後到時要補上：衍生資料表先攤出寫死的名稱，才攤出資料表那一筆。
+    /// </summary>
+    /// <remarks>
+    /// 不補的話，<c>FROM (SELECT * FROM T) d JOIN U u ON …</c> 的兩側明明都查得到定序，
+    /// 卻因為先合併的那一筆沒有定序而永遠不寫 <c>COLLATE</c>。
+    /// </remarks>
+    [Fact]
+    public void 同名限定字的來源先後兩筆會補上定序()
+    {
+        var match = SqlJoinKeyMatcher.Pair(new[]
+        {
+            Source("d", "CopyNo"),
+            Collated("d", new[] { "CopyNo" }, new[] { "Latin1_General_CI_AS" }),
+            Collated("u", new[] { "CopyNo" }, new[] { "Chinese_Taiwan_Stroke_CI_AS" })
+        });
+
+        Assert.Equal("Latin1_General_CI_AS", match.Pairs["CopyNo"].Collation);
     }
 
     /// <summary>正規化：去分隔符、轉小寫，全分隔符的名稱回空字串。</summary>

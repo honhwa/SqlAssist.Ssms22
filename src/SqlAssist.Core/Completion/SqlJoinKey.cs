@@ -17,12 +17,14 @@ public sealed class SqlJoinKey
         string columnName,
         string? qualifier,
         string counterpartName,
-        string? counterpartQualifier)
+        string? counterpartQualifier,
+        string? collation = null)
     {
         ColumnName = columnName;
         Qualifier = qualifier;
         CounterpartName = counterpartName;
         CounterpartQualifier = counterpartQualifier;
+        Collation = collation;
     }
 
     /// <summary>當前來源的欄位名稱。</summary>
@@ -37,15 +39,42 @@ public sealed class SqlJoinKey
     /// <summary>往前配到的來源的限定字；沒有時為 null。</summary>
     public string? CounterpartQualifier { get; }
 
+    /// <summary>
+    /// 兩側定序不同時要寫進 <c>COLLATE</c> 的定序名稱；相同或有一邊取不到時為 null。
+    /// </summary>
+    /// <remarks>
+    /// 定序名稱不加方括號：<c>COLLATE [Latin1_General_CI_AS]</c> 是語法錯誤，
+    /// 它與「插入物件時加上方括號」那個偏好無關。
+    /// </remarks>
+    public string? Collation { get; }
+
     /// <summary>整條條件，例如 <c>b.CopyNo = a.CopyNo</c>。</summary>
     public string ComposeInsertionText(SqlAssistSettings settings) =>
         SqlInsertionText.Column(ColumnName, Qualifier, settings) +
+        Collate() +
         " = " +
         SqlInsertionText.Column(CounterpartName, CounterpartQualifier, settings);
 
     /// <summary>
     /// 只寫右半邊，接在已寫好的 <c>b.CopyNo</c> 之後，例如 <c>= a.CopyNo</c>。
     /// </summary>
+    /// <remarks>
+    /// 要補 <c>COLLATE</c> 時它排在最前面（<c>COLLATE X = a.CopyNo</c>）：
+    /// 那一段接在已寫好的欄位名稱後面，位置與整條條件的寫法一致。
+    /// </remarks>
     public string ComposeSuffix(SqlAssistSettings settings) =>
-        "= " + SqlInsertionText.Column(CounterpartName, CounterpartQualifier, settings);
+        (Collation is null ? string.Empty : "COLLATE " + Collation + " ") +
+        "= " +
+        SqlInsertionText.Column(CounterpartName, CounterpartQualifier, settings);
+
+    /// <summary>
+    /// <c>COLLATE</c> 那一段，含前面的空白；不需要時是空字串。
+    /// </summary>
+    /// <remarks>
+    /// 掛在<b>當前</b>那一欄後面而不是條件的最尾端：那一欄是使用者從清單裡挑的，
+    /// 說明欄與插入文字都以它開頭。掛在尾端的話，提交時「文字結尾就是這個名稱」
+    /// 那條方括號改寫就認不出欄位（見 <c>SqlInsertionText.BracketName</c>），
+    /// 而症狀是使用者自己打了左方括號卻沒有作用。
+    /// </remarks>
+    private string Collate() => Collation is null ? string.Empty : " COLLATE " + Collation;
 }

@@ -107,6 +107,41 @@ public sealed class SqlJoinKeyTests
             Key("CopyNo", "@rows", "CopyNo", "a").ComposeInsertionText(Plain));
     }
 
+    /// <summary>
+    /// 兩側定序不同時，<c>COLLATE</c> 接在當前那一欄後面。
+    /// </summary>
+    /// <remarks>
+    /// 不是接在整條條件的尾端：使用者打了左方括號時，提交那一次要認出「文字結尾
+    /// 就是這個名稱」才換得成方括號，尾端多一段就認不出來。
+    /// </remarks>
+    [Fact]
+    public void 兩側定序不同時寫出COLLATE()
+    {
+        var key = new SqlJoinKey(
+            "CopyNo",
+            "c",
+            "CopyNo",
+            "l",
+            "Chinese_Taiwan_Stroke_CI_AS");
+
+        Assert.Equal(
+            "c.CopyNo COLLATE Chinese_Taiwan_Stroke_CI_AS = l.CopyNo",
+            key.ComposeInsertionText(Plain));
+        Assert.Equal("COLLATE Chinese_Taiwan_Stroke_CI_AS = l.CopyNo", key.ComposeSuffix(Plain));
+    }
+
+    /// <remarks>定序名稱加了方括號是語法錯誤，它不在「一律加方括號」那個偏好的管轄內。</remarks>
+    [Fact]
+    public void 定序名稱不加方括號()
+    {
+        var settings = new SqlAssistSettings { UseSquareBrackets = true };
+        var key = new SqlJoinKey("CopyNo", "c", "CopyNo", "l", "Latin1_General_CI_AS");
+
+        Assert.Equal(
+            "[c].[CopyNo] COLLATE Latin1_General_CI_AS = [l].[CopyNo]",
+            key.ComposeInsertionText(settings));
+    }
+
     private static bool WantsJoinKeys(string sqlWithCaret)
     {
         var input = SqlWithCaret.Parse(sqlWithCaret);

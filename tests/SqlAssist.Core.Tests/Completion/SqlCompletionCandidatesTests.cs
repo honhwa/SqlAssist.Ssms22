@@ -288,6 +288,52 @@ public sealed class SqlCompletionCandidatesTests
             list.Where(item => item.Kind == SuggestionKind.Column).Select(item => item.InsertionText));
     }
 
+    /// <summary>
+    /// 跨庫的兩張表定序不同時，配出來的條件帶著對面那一欄的定序。
+    /// </summary>
+    /// <remarks>
+    /// 定序跟著欄位建議一起進來（中繼資料的第二層就有），配對那一層只負責比對；
+    /// 沒有這一段，使用者按下 <c>c.CopyNo</c> 得到的是一條錯誤 468 的條件。
+    /// </remarks>
+    [Fact]
+    public async Task 跨庫兩側定序不同時條件帶上對面的定序()
+    {
+        var metadata = Joined();
+        metadata.Collations["Loan.CopyNo"] = "Chinese_Taiwan_Stroke_CI_AS";
+        metadata.Collations["Copy.CopyNo"] = "Latin1_General_CI_AS";
+
+        var list = await GetAsync(
+            "SELECT * FROM dbo.Loan l JOIN LibArchive.dbo.Copy c ON |",
+            new SqlAssistSettings(),
+            metadata);
+
+        var columns = list.Where(item => item.Kind == SuggestionKind.Column).ToArray();
+
+        Assert.Equal("CopyNo", columns[0].DisplayText);
+        Assert.Equal(
+            "c.CopyNo COLLATE Chinese_Taiwan_Stroke_CI_AS = l.CopyNo",
+            columns[0].InsertionText);
+        Assert.Contains("COLLATE Chinese_Taiwan_Stroke_CI_AS", columns[0].Description);
+    }
+
+    /// <summary>兩側定序相同（同一個資料庫的兩張表）時不多寫 <c>COLLATE</c>。</summary>
+    [Fact]
+    public async Task 兩側定序相同時不寫COLLATE()
+    {
+        var metadata = Joined();
+        metadata.Collations["Loan.CopyNo"] = "Latin1_General_CI_AS";
+        metadata.Collations["Copy.CopyNo"] = "Latin1_General_CI_AS";
+
+        var list = await GetAsync(
+            "SELECT * FROM dbo.Loan l JOIN LibArchive.dbo.Copy c ON |",
+            new SqlAssistSettings(),
+            metadata);
+
+        var columns = list.Where(item => item.Kind == SuggestionKind.Column).ToArray();
+
+        Assert.Equal("c.CopyNo = l.CopyNo", columns[0].InsertionText);
+    }
+
     /// <summary>兩個來源各有一組欄位，<c>CopyNo</c> 與 <c>Code</c> 同名。</summary>
     private static RecordingMetadata Joined()
     {
@@ -323,6 +369,9 @@ public sealed class SqlCompletionCandidatesTests
 
         /// <summary>每個資料表名稱要回哪些欄位名稱；沒登記的回空清單。</summary>
         public Dictionary<string, string[]> Columns { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>「資料表.欄位」的定序；沒登記的欄位沒有定序。</summary>
+        public Dictionary<string, string> Collations { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>每一輪問到的「索引鍵排前面」旗標，依來源順序。</summary>
         public List<bool> IndexKeysFirst { get; } = new();
@@ -382,9 +431,13 @@ public sealed class SqlCompletionCandidatesTests
                     SqlInsertionText.Column(name, qualifier, settings),
                     table.ObjectName,
                     table.ObjectName,
-                    SuggestionKind.Column))
+                    SuggestionKind.Column,
+                    collationName: CollationOf(table.ObjectName, name)))
                 .ToArray();
         }
+
+        private string? CollationOf(string tableName, string columnName) =>
+            Collations.TryGetValue($"{tableName}.{columnName}", out var collation) ? collation : null;
 
         public Task WarmColumnsAsync(IReadOnlyList<SqlColumnSource> sources, CancellationToken cancellationToken) =>
             Task.CompletedTask;

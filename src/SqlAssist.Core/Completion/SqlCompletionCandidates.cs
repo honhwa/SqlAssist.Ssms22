@@ -407,7 +407,10 @@ public static class SqlCompletionCandidates
         {
             starts[index] = suggestions.Count;
             suggestions.AddRange(blocks[index]);
-            keySources.Add(new SqlJoinKeySource(sources[index].Qualifier, NamesOf(blocks[index])));
+            keySources.Add(new SqlJoinKeySource(
+                sources[index].Qualifier,
+                NamesOf(blocks[index]),
+                CollationsOf(blocks[index])));
             counts[index] = suggestions.Count - starts[index];
         }
 
@@ -472,6 +475,25 @@ public static class SqlCompletionCandidates
         }
 
         return names;
+    }
+
+    /// <summary>
+    /// 一組欄位建議的定序，與 <see cref="NamesOf"/> 逐項對應；沒有定序的欄位是 null。
+    /// </summary>
+    /// <remarks>
+    /// 兩份一起交出去而不是先過濾掉沒有定序的：配對是照名稱的位置在走的，
+    /// 少一項就整排錯開，而錯開的症狀是「配到的那一欄明明同名卻沒有 COLLATE」。
+    /// </remarks>
+    private static IReadOnlyList<string?> CollationsOf(IReadOnlyList<SqlSuggestion> columns)
+    {
+        var collations = new string?[columns.Count];
+
+        for (var index = 0; index < collations.Length; index++)
+        {
+            collations[index] = columns[index].CollationName;
+        }
+
+        return collations;
     }
 
     /// <summary>
