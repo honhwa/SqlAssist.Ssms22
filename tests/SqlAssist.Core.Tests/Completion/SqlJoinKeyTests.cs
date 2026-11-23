@@ -142,6 +142,30 @@ public sealed class SqlJoinKeyTests
             key.ComposeInsertionText(settings));
     }
 
+    /// <summary>
+    /// 兩側定序不同才補，補的是對面那一個；定序名稱不分大小寫。
+    /// </summary>
+    /// <remarks>
+    /// 挑選項與手打兩條路都問這一個方法：各自判一次的話，同一條條件會因為
+    /// 從哪一條路寫出來而少一段或多一段 <c>COLLATE</c>。
+    /// </remarks>
+    [Theory]
+    [InlineData("Latin1_General_CI_AS", "Chinese_Taiwan_Stroke_CI_AS", "Chinese_Taiwan_Stroke_CI_AS")]
+    [InlineData("Latin1_General_CI_AS", "latin1_general_ci_as", null)]
+    [InlineData(null, "Latin1_General_CI_AS", null)]
+    [InlineData("Latin1_General_CI_AS", null, null)]
+    public void 兩側定序不同才補對面的那一個(string? current, string? counterpart, string? expected)
+    {
+        Assert.Equal(expected, SqlJoinKey.CollationToApply(current, counterpart));
+    }
+
+    [Fact]
+    public void COLLATE那一段含前面的空白()
+    {
+        Assert.Equal(" COLLATE Latin1_General_CI_AS", SqlJoinKey.CollateClause("Latin1_General_CI_AS"));
+        Assert.Equal(string.Empty, SqlJoinKey.CollateClause(null));
+    }
+
     private static bool WantsJoinKeys(string sqlWithCaret)
     {
         var input = SqlWithCaret.Parse(sqlWithCaret);

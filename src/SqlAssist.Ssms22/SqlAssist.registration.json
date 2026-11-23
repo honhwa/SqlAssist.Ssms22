@@ -454,6 +454,14 @@
       "additionalKeywords": [ "引數", "參數", "預留值", "placeholder", "預設值", "產生 SQL" ],
       "enableWhen": "${config:sqlAssist.insertion.expandFunctionCall} == 'true'"
     },
+    "sqlAssist.insertion.highlightInsertColumnValue": {
+      "type": "boolean",
+      "default": true,
+      "order": 370,
+      "title": "@InsertionHighlightInsertColumnValueTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "description": "@InsertionHighlightInsertColumnValueDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "additionalKeywords": [ "黃底", "標記", "游標", "對應", "高亮", "highlight", "VALUES" ]
+    },
 
     "sqlAssist.structure.hoverEnabled": {
       "type": "boolean",

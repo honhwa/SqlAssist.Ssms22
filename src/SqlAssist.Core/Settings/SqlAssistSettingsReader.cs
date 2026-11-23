@@ -156,6 +156,10 @@ public static class SqlAssistSettingsReader
                 source,
                 SqlAssistMonikers.ExpandFunctionArguments,
                 defaults.ExpandFunctionArguments),
+            HighlightInsertColumnValue = Value(
+                source,
+                SqlAssistMonikers.HighlightInsertColumnValue,
+                defaults.HighlightInsertColumnValue),
 
             HoverEnabled = Value(source, SqlAssistMonikers.HoverEnabled, defaults.HoverEnabled),
             BuiltInHelpEnabled = Value(

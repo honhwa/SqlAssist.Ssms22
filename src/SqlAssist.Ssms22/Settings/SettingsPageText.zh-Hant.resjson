@@ -110,6 +110,8 @@
   "InsertionExpandFunctionCallDescription": "選取純量函式或資料表值函式後補上一對空括號，游標停在中間，接著由 SSMS 的「陳述式完成 → 參數資訊」告訴你要填什麼。函式的括號在 T-SQL 裡本來就非寫不可，沒有參數的函式也一樣要寫 ()。關閉後只插入名稱。",
   "InsertionExpandFunctionArgumentsTitle": "括號裡填入引數預留值",
   "InsertionExpandFunctionArgumentsDescription": "開啟後不只補括號，還依參數型別填入一整組預留值（數值 0、字串 ''、日期 NULL、uniqueidentifier NEWID()），游標停在第一個引數上。預設關閉：預留值只是照型別猜的，每一個接著都要換掉，而空括號讓 SSMS 的參數資訊接手告訴你參數叫什麼。",
+  "InsertionHighlightInsertColumnValueTitle": "INSERT 欄位與值互相標記",
+  "InsertionHighlightInsertColumnValueDescription": "游標停在 INSERT 的欄位上時，用黃底標出對應的值；停在值上時標出對應的欄位。只認第一組 VALUES，展開產生與手寫的 INSERT 都適用。",
   "StructureHoverEnabledTitle": "滑鼠停留時顯示物件結構",
   "StructureHoverEnabledDescription": "停在資料表、檢視、預存程序上時顯示欄位型別、NULL、主索引鍵等資訊。總開關在「一般」頁。",
   "StructureBuiltInHelpTitle": "滑鼠停留時顯示內建名稱的說明",

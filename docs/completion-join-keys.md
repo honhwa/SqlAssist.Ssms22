@@ -87,6 +87,29 @@ SELECT * FROM dbo.Loan l JOIN LibArchive.dbo.Copy c ON |
 `COLLATE`。取不到時不補：猜一個定序出來會讓條件多一段錯的，那比少寫一段更難查。
 連結伺服器上才有的定序在本機不一定存在，那時要自己把這一段改成 `COLLATE DATABASE_DEFAULT`。
 
+### 手打的條件也會補
+
+自己打 `ON a.CustID = b.CustomerId` 的人拿不到清單那條路，所以在**打完右邊那一欄、
+接著打分隔字元**（空白、Enter、`)`、`,`、`;`）時再判斷一次，成立就把 `COLLATE` 補在游標處：
+
+```sql
+ON a.CustID = b.CustomerId |
+→ ON a.CustID = b.CustomerId COLLATE Chinese_Taiwan_Stroke_CI_AS |
+```
+
+不是打完最後一個字元就補：那一刻還可能是 `b.CustomerIdOld` 的前半段，插進去的字會擋在
+名稱中間。分隔字元才是「這一條寫完了」的證據。
+
+只認述詞子句的等值比較，也就是前面那個字是 `ON`、`WHERE`、`HAVING`、`AND`、`OR` 或左括號。
+`SET` 與 `SELECT` 後面同樣是「名稱 `=` 名稱」，但那是指定，補上去是語法錯誤；
+`!=`、`<>`、`<=` 也不補，只有等值比較會撞上定序衝突。兩側都要有限定字而且不同，
+裸名分不出是哪一個來源的欄位。規則在 `Core/Completion/SqlJoinCollateAnalyzer`（只看文字），
+編輯器那一半在 `Editor/SqlJoinCollateInsertion`。
+
+定序只讀快取（`PeekColumns`）：這一條在按鍵路徑上，等不起一次資料庫查詢；沒命中就這一輪
+不補，下一次打字還會再問。清單開著時先收掉再寫，Enter 那一條是例外：那一刻 Enter 是提交鍵，
+先收掉等於取消使用者正要選的那一項，所以清單開著時整個讓開，提交完再打空白一樣成立。
+
 ## 排名
 
 加成加在類別層**之內**（`SuggestionScore.JoinKeyBonus`）：欄位 35 加 3 是 38，仍在

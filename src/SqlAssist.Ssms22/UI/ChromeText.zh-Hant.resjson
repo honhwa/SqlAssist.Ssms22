@@ -4,6 +4,7 @@
   "BlockEndpointFormat": "SqlAssist 配對端點預設",
   "BlockSymbolFormat": "SqlAssist 配對括號與方括號",
   "BlockQuoteFormat": "SqlAssist 配對字串引號",
+  "InsertColumnValueFormat": "SqlAssist INSERT 欄位與值對應",
   "BlockRangeFormat": "SqlAssist 區塊區間背景",
   "ClickLinkFormat": "SqlAssist Ctrl＋點擊連結",
   // ── 主從區與預覽 ──

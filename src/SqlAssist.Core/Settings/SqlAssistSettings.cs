@@ -303,6 +303,16 @@ public sealed class SqlAssistSettings
     /// </remarks>
     public bool ExpandFunctionArguments { get; init; }
 
+    /// <summary>
+    /// sqlAssist.insertion.highlightInsertColumnValue
+    /// </summary>
+    /// <remarks>
+    /// 游標停在 INSERT 的欄位或值上時，用黃底標出同一序位的另一端。
+    /// 與 <see cref="ExpandInsertStatement"/> 分開：展開與手寫的 INSERT 都受這一項管理，
+    /// 想關掉高亮的人不見得想關掉展開。
+    /// </remarks>
+    public bool HighlightInsertColumnValue { get; init; } = true;
+
     /// <summary>sqlAssist.structure.hoverEnabled：滑鼠停留提示，與浮動預覽是兩個獨立的表面。</summary>
     public bool HoverEnabled { get; init; } = true;
 

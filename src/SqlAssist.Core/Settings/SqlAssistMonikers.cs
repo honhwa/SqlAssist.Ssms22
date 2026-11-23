@@ -79,6 +79,7 @@ public static class SqlAssistMonikers
     public const string AvoidVariableNameCollision = "sqlAssist.insertion.avoidVariableNameCollision";
     public const string ExpandFunctionCall = "sqlAssist.insertion.expandFunctionCall";
     public const string ExpandFunctionArguments = "sqlAssist.insertion.expandFunctionArguments";
+    public const string HighlightInsertColumnValue = "sqlAssist.insertion.highlightInsertColumnValue";
 
     public const string HoverEnabled = "sqlAssist.structure.hoverEnabled";
     public const string BuiltInHelp = "sqlAssist.structure.builtInHelp";

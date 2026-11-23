@@ -225,6 +225,15 @@ internal sealed class SqlAssistCompletionCommandHandler :
                     args.TypedChar,
                     Broker);
 
+                // 兩欄相比而定序不同時補 COLLATE。排在自動配對之前：打的是右括號時
+                // 配對會把游標移過那個括號，之後再補就變成補在括號外面。
+                SqlJoinCollateInsertion.ApplyBeforeSeparator(
+                    args.TextView,
+                    args.SubjectBuffer,
+                    args.TypedChar,
+                    Broker,
+                    ServiceProvider);
+
                 // 欄位 session 開著時讓開：自動配對是 Snippet Engine 之外的緩衝區編輯，
                 // 會打斷欄位標記或同名欄位同步。建議清單開著時怎麼做見 SqlAutoPairing。
                 if (SqlSnippetExpansionController.Peek(args.TextView)?.HasActiveSession == true)

@@ -99,6 +99,8 @@
   "InsertionExpandFunctionCallDescription": "After you pick a scalar or table-valued function, adds an empty pair of parentheses with the cursor inside, and SSMS's Statement completion > Parameter information tells you what to fill in. T-SQL requires the parentheses even for functions without parameters. When off, only the name is inserted.",
   "InsertionExpandFunctionArgumentsTitle": "Fill parentheses with argument placeholders",
   "InsertionExpandFunctionArgumentsDescription": "Besides the parentheses, fills in a full set of placeholders by parameter type (0 for numbers, '' for strings, NULL for dates, NEWID() for uniqueidentifier) with the cursor on the first argument. Off by default: the placeholders are only guesses by type and each has to be replaced anyway, while empty parentheses let SSMS's parameter information tell you the parameter names.",
+  "InsertionHighlightInsertColumnValueTitle": "Mark matching INSERT column and value",
+  "InsertionHighlightInsertColumnValueDescription": "When the cursor is on an INSERT column, highlights the matching value in yellow; when it's on a value, highlights the matching column. Uses only the first VALUES group and applies to both expanded and hand-written INSERT statements.",
   "StructureHoverEnabledTitle": "Show object structure on hover",
   "StructureHoverEnabledDescription": "Hovering over a table, view, or stored procedure shows column types, nullability, the primary key, and more. The master switch is on the \"General\" page.",
   "StructureBuiltInHelpTitle": "Show help for built-in names on hover",

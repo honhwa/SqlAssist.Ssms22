@@ -107,6 +107,14 @@ internal sealed class SqlTabCommandHandler :
                     SqlKeywordCasing.NewLine,
                     Broker);
 
+                // Enter 也結束了一條條件；清單開著時那一個 Enter 是提交鍵，規則自己會讓開。
+                SqlJoinCollateInsertion.ApplyBeforeSeparator(
+                    args.TextView,
+                    args.SubjectBuffer,
+                    SqlKeywordCasing.NewLine,
+                    Broker,
+                    ServiceProvider);
+
                 if (Broker?.GetSession(args.TextView) is null)
                 {
                     _ = SqlSnippetExpansionController.Peek(args.TextView)?.EndForEnter();

@@ -146,7 +146,7 @@ public static class SqlJoinKeyMatcher
                         current.Qualifier,
                         counterpart.Name,
                         other.Qualifier,
-                        CollationToApply(column.Collation, counterpart.Collation)));
+                        SqlJoinKey.CollationToApply(column.Collation, counterpart.Collation)));
 
                 break;
             }
@@ -154,31 +154,6 @@ public static class SqlJoinKeyMatcher
 
         return new SqlJoinKeyMatch(current.Indexes, pairs);
     }
-
-    /// <summary>
-    /// 這一條條件要不要補 <c>COLLATE</c>，要補的話寫哪一個定序。
-    /// </summary>
-    /// <param name="current">當前來源那一欄的定序。</param>
-    /// <param name="counterpart">對面那一欄的定序。</param>
-    /// <remarks>
-    /// 兩邊都有定序而且不同時才補：只有一邊有定序代表另一邊不是字元型別，
-    /// 那樣的比較不會撞上定序衝突，寫了反而是多餘的字。
-    ///
-    /// 寫的是<b>對面</b>那一欄的定序，掛在當前那一欄後面
-    /// （<c>c.CopyNo COLLATE Chinese_Taiwan_Stroke_CI_AS = l.CopyNo</c>）：
-    /// 對面那一欄是使用者已經寫好、這條條件要接上的目標，以它的定序為準等於
-    /// 「把剛加入的那張表轉過來比」。反過來把對面的定序寫在對面自己身上，
-    /// 看起來像是把一欄轉成它原本的定序，讀的人分不出那是必要的還是多打的。
-    ///
-    /// 不判斷兩張表在不在同一個資料庫：同一個資料庫裡兩欄定序不同，等值比較
-    /// 一樣會失敗（錯誤 468），跨庫只是最常見的來源。
-    /// </remarks>
-    private static string? CollationToApply(string? current, string? counterpart) =>
-        current is not null &&
-        counterpart is not null &&
-        !string.Equals(current, counterpart, StringComparison.OrdinalIgnoreCase)
-            ? counterpart
-            : null;
 
     /// <summary>
     /// 把來源依限定字收成群組：同一個限定字相鄰的來源是同一張表的延伸。
