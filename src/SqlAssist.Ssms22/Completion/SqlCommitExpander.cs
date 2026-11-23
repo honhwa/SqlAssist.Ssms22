@@ -211,12 +211,17 @@ internal sealed class SqlCommitExpander
     /// 提交之後緩衝區裡站著的那個完整名稱，含使用者自己打的限定字、結構描述
     /// 與方括號；等待期間的原文比對要用它。
     /// </param>
+    /// <param name="functionAliasSuffix">
+    /// 補括號時一併寫在右括號後面的別名字尾。引數展開換掉的是「名稱加括號」那一段，
+    /// 要把同一串字尾再接回引數後面，否則一展開就不見了。
+    /// </param>
     public static ISqlCommitExpansion? Resolve(
         SqlSuggestion selected,
         SqlCompletionContext context,
         int caretPosition,
         SqlAssistSettings settings,
-        string insertedName)
+        string insertedName,
+        string? functionAliasSuffix)
     {
         // 整句展開要蓋掉「關鍵字 → 名稱」那一段，算不出起點就整個不做。
         // 函式的引數接在名稱後面，與這個起點無關，所以不在這一關擋。
@@ -318,7 +323,7 @@ internal sealed class SqlCommitExpander
                    objectInfo.Kind.IsFunction(),
                    context.Target,
                    settings) == SqlFunctionCallInsertionMode.Arguments
-            ? new SqlFunctionCallExpansion(objectInfo, insertedName)
+            ? new SqlFunctionCallExpansion(objectInfo, insertedName, functionAliasSuffix)
             : null;
     }
 

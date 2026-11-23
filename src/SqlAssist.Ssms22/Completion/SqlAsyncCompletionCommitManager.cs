@@ -259,6 +259,14 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
         var insertionText = snippetText ?? item.InsertText;
         var insertionStart = span.Start.Position;
 
+        // 資料表值函式在「補上括號」那一條路：別名要接在右括號之後，而建立建議時
+        // 括號還沒寫出來。這裡先問同一個取名函式，把結果交給下面的插入與展開共用；
+        // 關掉補括號時 SqlInsertionText.Build 已經接好在名稱後面，不能再接第二次。
+        var functionAliasSuffix = suggestion.Kind == SuggestionKind.TableFunction &&
+                                  snippet is null && settings.ExpandFunctionCall
+            ? SqlAutoAlias.ComposeSuffix(suggestion, context, settings)
+            : null;
+
         // 展開拿到的是緩衝區裡站著的那個「完整名稱」，不是只有剛插進去的那一段。
         // 使用者自己打的限定字就在它前面，而整句展開蓋掉的範圍從關鍵字起算，
         // 連那一段一起蓋掉：少了它，INSERT INTO LibArchive.dbo.Loan 會被換成
@@ -274,7 +282,8 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             context,
             span.End,
             settings,
-            writtenName);
+            writtenName,
+            functionAliasSuffix);
 
         // 使用者自訂函式：「補上括號」開著時，這一次要寫的是名稱加一對空括號，
         // 游標停在中間。補到哪一步由 SqlFunctionCallInsertion 回答，展開那一端
@@ -294,15 +303,20 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
 
         char? insertedClose = null;
 
+        // 右括號後面可能還跟著別名，記錄「跳過這一個」時不能假設它就是最後一個字元。
+        var insertedCloseFromEnd = 0;
+
         if (snippet is null && functionCall != SqlFunctionCallInsertionMode.None)
         {
-            // 空括號也走 SqlFunctionCallText：函式呼叫長什麼樣子只有那一份說得算，
+            // 空括號也走 SqlFunctionCallText 那一份排版；別名由同一支接在右括號後面，
             // 在這裡自己接兩個字元的話，哪天引數的排版改了這一條不會跟著改。
-            insertionText = SqlFunctionCallText.Build(
+            insertionText = SqlInsertionText.FunctionCall(
                 insertionText,
                 Array.Empty<SqlStatementParameter>(),
+                functionAliasSuffix,
                 out caretOffset);
             insertedClose = ')';
+            insertedCloseFromEnd = functionAliasSuffix?.Length ?? 0;
         }
         else
         {
@@ -398,7 +412,7 @@ internal sealed class SqlAsyncCompletionCommitManager : IAsyncCompletionCommitMa
             SqlAutoPairing.NoteInsertedClose(
                 session.TextView,
                 applied,
-                insertionStart + insertionText.Length - 1,
+                insertionStart + insertionText.Length - 1 - insertedCloseFromEnd,
                 inserted);
 
             // 游標剛落進一對剛寫好的括號裡，這正是使用者自己打左括號時的狀態——

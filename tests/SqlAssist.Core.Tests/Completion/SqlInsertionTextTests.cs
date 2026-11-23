@@ -1,7 +1,9 @@
+using System;
 using System.Linq;
 using SqlAssist.Core.Completion;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
+using SqlAssist.Core.Statements;
 using Xunit;
 
 namespace SqlAssist.Core.Tests.Completion;
@@ -466,9 +468,9 @@ public sealed class SqlInsertionTextTests
 
     /// <remarks>
     /// 資料表值函式的別名要接在右括號<b>之後</b>，而那個位置不在這裡——這一段文字
-    /// 之後還要補括號。三條路徑各接各的，由模式一分為三：不補括號接在名稱後面
-    /// （就是本則第二個斷言）；只補空括號由提交那一次編輯接在右括號後面；
-    /// 連引數一起補由展開器接在引數清單後面。這裡釘住的是後兩者不在插入文字裡。
+    /// 之後還要補括號。三條路徑由模式一分為三：不補括號接在名稱後面（本則第二個
+    /// 斷言）；補了括號的兩種由 `SqlInsertionText.FunctionCall` 接在右括號後面，
+    /// 提交端與展開端共用同一串字尾。這裡釘住的是後兩者不在建建議時的插入文字裡。
     /// </remarks>
     [Fact]
     public void 資料表值函式的別名交給展開那條路()
@@ -499,5 +501,35 @@ public sealed class SqlInsertionTextTests
         Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expanded));
         Assert.Equal("dbo.LoanDetail", Build(suggestion, "SELECT * FROM |", expandedWithArguments));
         Assert.Equal("dbo.LoanDetail ld ", Build(suggestion, "SELECT * FROM |", notExpanded));
+    }
+
+    /// <remarks>
+    /// 補括號那一條路的別名要接在右括號<b>之後</b>：提交先寫一對空括號，游標停在
+    /// 括號裡；引數展開再蓋掉那對括號。兩條路都得留住同一串 <c> ld </c>，而
+    /// <see cref="SqlInsertionText.Build"/> 刻意不寫它——名稱後面還不是最後一個位置。
+    /// 游標仍舊落在第一個引數（沒有引數時是兩括號之間），不能被後面的別名挪走。
+    /// </remarks>
+    [Theory]
+    [InlineData(SqlTableSourceAliasStyle.None, "dbo.LoanDetail() ld ")]
+    [InlineData(SqlTableSourceAliasStyle.As, "dbo.LoanDetail() AS ld ")]
+    public void 函式呼叫的別名接在右括號後面(SqlTableSourceAliasStyle style, string expected)
+    {
+        var suggestion = new SqlSuggestion(
+            "LoanDetail", "LoanDetail", "", "", SuggestionKind.TableFunction, schemaName: "dbo");
+        var settings = new SqlAssistSettings
+        {
+            TableSourceAliasStyle = style,
+            ExpandFunctionCall = true,
+        };
+        var context = SqlCompletionContextAnalyzer.Analyze("SELECT * FROM ");
+        var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
+
+        Assert.NotNull(aliasSuffix);
+
+        var text = SqlInsertionText.FunctionCall(
+            "dbo.LoanDetail", Array.Empty<SqlStatementParameter>(), aliasSuffix, out var caretOffset);
+
+        Assert.Equal(expected, text);
+        Assert.Equal("dbo.LoanDetail(".Length, caretOffset);
     }
 }

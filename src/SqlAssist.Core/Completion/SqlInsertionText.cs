@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using SqlAssist.Core.Parsing;
 using SqlAssist.Core.Settings;
+using SqlAssist.Core.Statements;
 
 namespace SqlAssist.Core.Completion;
 
@@ -27,9 +29,8 @@ public static class SqlInsertionText
         var aliasSuffix = SqlAutoAlias.ComposeSuffix(suggestion, context, settings);
 
         // 資料表值函式在「補上括號」開啟時不在這裡接別名：別名要接在右括號<b>之後</b>，
-        // 而那個位置還沒寫出來——括號由提交那一次編輯補上（只補空括號），
-        // 或由展開器連引數一起補（連引數一起補），兩條都要等寫完才接得上。
-        // 這裡是「不補括號」那一條，名稱後面就是最後一個位置。
+        // 而那個位置還沒寫出來——提交時由 FunctionCall 補空括號，展開時同一支填引數，
+        // 兩條都從那裡拿到同一串字尾。這裡是「不補括號」那一條，名稱後面就是最後一個位置。
         if (aliasSuffix is not null &&
             (suggestion.Kind != SuggestionKind.TableFunction || !settings.ExpandFunctionCall))
         {
@@ -37,6 +38,31 @@ public static class SqlInsertionText
         }
 
         return insertion;
+    }
+
+    /// <summary>
+    /// 資料表值函式補上括號後真正寫進編輯器的文字：<c>名稱(引數) 別名 </c>。
+    /// </summary>
+    /// <param name="name">已經加好結構描述與方括號的函式名稱。</param>
+    /// <param name="parameters">要填入的引數；空清單得到一對空括號。</param>
+    /// <param name="aliasSuffix">
+    /// <see cref="SqlAutoAlias.ComposeSuffix"/> 算出的字尾，含前後空白；不接別名時為 null。
+    /// </param>
+    /// <param name="caretOffset">第一個引數的位置；沒有引數時是兩括號之間。</param>
+    /// <remarks>
+    /// 別名接在右括號<b>之後</b>，所以不能交給 <see cref="Build"/>：那一支跑在建立建議時，
+    /// 那時候括號還不存在。提交時補空括號、展開時填引數，兩條路都改走這裡，
+    /// 別名才不會只在一條路上出現。字尾接在括號之後，游標位置由 <see cref="SqlFunctionCallText.Build"/> 決定，不受它影響。
+    /// </remarks>
+    public static string FunctionCall(
+        string name,
+        IReadOnlyList<SqlStatementParameter> parameters,
+        string? aliasSuffix,
+        out int caretOffset)
+    {
+        var call = SqlFunctionCallText.Build(name, parameters, out caretOffset);
+
+        return aliasSuffix is null ? call : call + aliasSuffix;
     }
 
     /// <summary>
