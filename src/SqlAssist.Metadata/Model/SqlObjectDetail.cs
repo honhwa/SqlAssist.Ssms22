@@ -31,6 +31,10 @@ public sealed class SqlObjectDetail
         Implementation = implementation;
     }
 
+    /// <summary>只換定義本文，其餘欄位原樣帶過去；解密後的本文要回到同一份結構的其餘資料。</summary>
+    public SqlObjectDetail WithDefinition(string? definition) =>
+        new(Object, Columns, Parameters, definition, Description, Implementation);
+
     public SqlObjectInfo Object { get; }
 
     public IReadOnlyList<SqlColumnInfo> Columns { get; }

@@ -1,0 +1,17 @@
+{
+  "DacNoConnection": "目前沒有一條可以拿來開啟系統管理員專用連線的連線。",
+  "DacBadConnectionString": "目前連線無法轉成系統管理員專用連線：{reason}",
+  "DacNoCredentials": "SQL 驗證的密碼沒有隨這條連線保留下來。請改用 Windows 驗證，或讓 SSMS 記住密碼後重新連線。",
+  "DacBusy": "伺服器的系統管理員專用連線（DAC）已被占用，而它是讀取加密模組文字的唯一方式。請關閉該工作階段後再試。{detail}",
+  "DacBusyHolder": "目前占用者：{holders}。",
+  "DacBusyNoHolder": "目前看不到占用者，可能剛剛釋出，請再試一次。",
+  "DacLoginRefused": "系統管理員連線被拒絕：解密模組文字需要 sysadmin 伺服器角色。（{reason}）",
+  "DacUnavailable": "無法開啟系統管理員專用連線。解密模組文字需要它，而且需要 sysadmin；遠端執行個體還要啟用 remote admin connections。（{reason}）",
+  "DacPortUnresolved": "無法連上系統管理員專用連線：用戶端找不到它的連接埠（錯誤 43），而伺服器監聽的 TCP 連接埠是 {ports}。SQL Server Express 必須以 trace flag 7806 啟動才會有 DAC；遠端連線還需要 remote admin connections。（{reason}）",
+  "DacGateTimeout": "等待另一輪解密釋出系統管理員專用連線時逾時，請稍後再試。",
+  "DacUiThread": "解密不能在 UI 執行緒執行：開啟系統管理員連線會讓 SSMS 停住等待。請從背景入口重試。",
+  "DecryptNoCipher": "讀不到這個物件的加密文字。",
+  "DecryptUnsupportedType": "這種物件類型（{type}）沒有可用的假定義。",
+  "DecryptInvalidDefinition": "還原出來的文字不是模組定義，已捨棄：{reason}",
+  "DecryptObjectMissing": "物件已經不存在。"
+}

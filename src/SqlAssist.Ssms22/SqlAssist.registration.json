@@ -237,6 +237,14 @@
       "description": "@GeneralCheckForUpdatesDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
       "additionalKeywords": [ "更新", "版本", "update", "release", "GitHub" ]
     },
+    "sqlAssist.general.decryptEncryptedModules": {
+      "type": "boolean",
+      "default": false,
+      "order": 260,
+      "title": "@GeneralDecryptEncryptedModulesTitle;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "description": "@GeneralDecryptEncryptedModulesDescription;{b386e18d-f34b-4db4-a40d-b9092a31d89f}",
+      "additionalKeywords": [ "加密", "解密", "預存程序", "DAC", "sysadmin", "decrypt", "encrypted" ]
+    },
     "sqlAssist.general.animations": {
       "type": "boolean",
       "default": true,

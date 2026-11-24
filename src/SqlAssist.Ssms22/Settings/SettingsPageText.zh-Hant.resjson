@@ -49,6 +49,8 @@
   "GeneralAutoPairDelimitersDescription": "輸入 ( ' [ \" 時補上另一半並把游標留在中間；接著輸入結尾字元會跳過補上的那一個，Backspace 刪掉開頭字元時把空的另一半一起收掉，先選取一段文字再輸入開頭字元則是把它包起來。從建議清單提交自己帶著左括號的項目（GETDATE、varchar）時也一併補上右括號。字串與註解裡不配對，建議清單或程式碼片段欄位開著時也不介入。BEGIN…END 不在這一項底下，那是程式碼片段。",
   "GeneralCheckForUpdatesTitle": "啟動時檢查有沒有新版本",
   "GeneralCheckForUpdatesDescription": "每天最多問一次 GitHub 的發行頁，有新版才跳出提醒，略過的版本不再提醒；不下載也不安裝。關閉之後仍可用「工具 → SqlAssist → 檢查更新…」自己問。",
+  "GeneralDecryptEncryptedModulesTitle": "解密物件結構中的加密模組",
+  "GeneralDecryptEncryptedModulesDescription": "關閉時，加密的預存程序、檢視或函式在物件結構與 F12 一律顯示原本的「取不到定義」。開啟時，SqlAssist 會透過系統管理員專用連線（DAC）短暫套用一份捨棄用的定義，讀回原文後立刻回復。需要 sysadmin；遠端執行個體還要啟用 remote admin connections。過程會短暫取得結構修改鎖，忙碌的正式環境除非真的需要否則請保持關閉。同一個物件版本每次工作階段只解密一次。",
   "GeneralAnimationsTitle": "播放介面動畫",
   "GeneralAnimationsDescription": "SqlAssist 自製介面的所有動畫：通知的進出、明細、狀態圖示與進度條，結構預覽的淡入，以及 SQL Memory 的載入圖示與清單停駐效果。關閉後直接切到最終狀態。高對比模式一律不播放。",
   "GeneralIgnoreWindowsAnimationSettingTitle": "不受 Windows 動畫設定影響",

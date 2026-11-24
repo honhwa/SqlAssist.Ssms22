@@ -46,6 +46,9 @@ public sealed class SqlDatabaseScopedConnectionSource : ISqlConnectionSource
 
     public string ServerCacheKey => _inner.ServerCacheKey;
 
+    /// <summary>拿出最內層的連線來源；解密要從那一份取 DAC 憑證，不能用換過資料庫的包裝。</summary>
+    public ISqlConnectionSource Unwrap() => _inner;
+
     public string DatabaseName { get; }
 
     public IDbConnection OpenConnection()

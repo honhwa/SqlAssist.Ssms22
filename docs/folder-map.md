@@ -8,6 +8,7 @@
 | 資料夾 | 職責 |
 | --- | --- |
 | `Completion/` | 建議項的模型、上下文判斷、篩選與排名 |
+| `Decryption/` | 加密模組文字的 XOR 還原、假定義與驗證（不含 DAC） |
 | `Keywords/` | 關鍵字、內建函式、全域變數、型別、內建說明與其資源（`BuiltInDocs/`）、自動大寫 |
 | `Matching/` | 與領域無關的字串模糊比對（**禁止**參照 `Completion/`） |
 | `Pairing/` | 輸入分隔字元時要不要補上另一半 |
@@ -52,6 +53,7 @@
 | 資料夾 | 職責 |
 | --- | --- |
 | `Completion/` | 非同步 IntelliSense、提交、展開與重開 |
+| `Decryption/` | DAC 連線、解密服務與接線；見[加密模組](encrypted-modules.md) |
 | `Editor/` | 編輯器接線、Tab／Enter、寫回、物件定位與殼層命令 |
 | `QuickInfo/` | 滑鼠停留提示 |
 | `Signatures/` | 純量函式的參數提示（平台簽章提示的來源與目前引數）與提示收掉後的續接 |

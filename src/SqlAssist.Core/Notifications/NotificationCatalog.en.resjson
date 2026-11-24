@@ -1,6 +1,10 @@
 {
   "LoadingObjects": "Loading object list",
   "LoadingObjectsDone": "Loaded object list",
+  "DecryptingEncryptedModule": "Decrypting encrypted module",
+  "DecryptingEncryptedModuleDone": "Decrypted encrypted module",
+  "DecryptionSummary": "Decrypted {succeeded} of {total} encrypted modules",
+  "DecryptionFailure": "Decrypted {succeeded} of {total} encrypted modules - {reason}",
   "LoadingColumns": "Loading columns and definitions",
   "LoadingColumnsDone": "Loaded columns and definitions",
   "LoadingIndexes": "Loading indexes and constraints",

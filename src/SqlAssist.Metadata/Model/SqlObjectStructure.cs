@@ -47,6 +47,20 @@ public sealed class SqlObjectStructure
         Parent = parent;
     }
 
+    /// <summary>只換定義本文的結構；解密成功後不能丟掉同一輪查到的欄位、索引與旗標。</summary>
+    public SqlObjectStructure WithDefinition(string? definition) =>
+        new(
+            Detail.WithDefinition(definition),
+            Indexes,
+            ForeignKeys,
+            ExtendedProperties,
+            CheckConstraints,
+            Storage,
+            Triggers,
+            IsStructureUnavailable,
+            IsStructurePending,
+            Parent);
+
     public SqlObjectDetail Detail { get; }
 
     public SqlObjectInfo Object => Detail.Object;

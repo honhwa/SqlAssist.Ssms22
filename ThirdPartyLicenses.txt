@@ -232,3 +232,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 SQLite is Public Domain
 https://sqlite.org/copyright.html
+
+Encrypted module decryption technique (reference only)
+http://jongurgul.com/blog/sql-object-decryption/

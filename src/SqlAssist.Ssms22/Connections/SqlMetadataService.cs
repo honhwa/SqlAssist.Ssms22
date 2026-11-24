@@ -14,6 +14,7 @@ using SqlAssist.Metadata.Completion;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Metadata.Querying;
 using SqlAssist.Ssms22;
+using SqlAssist.Ssms22.Decryption;
 using SqlAssist.Ssms22.Settings;
 
 namespace SqlAssist.Ssms22.Connections;
@@ -148,6 +149,8 @@ internal sealed class SqlMetadataService : IDisposable
     public static void InvalidateAll()
     {
         SqlMetadataCatalogRegistry.Default.InvalidateAll();
+        // 解密的成功與失敗都按物件版本記憶；清快取時一起清，使用者才有辦法重試修好的 DAC。
+        SqlModuleDecryptionService.ClearCache();
         Interlocked.Increment(ref _invalidationGeneration);
     }
 
@@ -540,6 +543,15 @@ internal sealed class SqlMetadataService : IDisposable
 
         var timer = Stopwatch.StartNew();
         var structure = await catalog.GetStructureAsync(objectInfo, cancellationToken, origin, refresh).ConfigureAwait(false);
+
+        // 解密是附加的：失敗就讓原本的「取不到定義」照舊顯示，不把已拿到的欄位與結構丟掉。
+        if (structure is not null)
+        {
+            structure = await SqlModuleDecryptor
+                .EnrichAsync(structure, objectInfo, catalog.ConnectionSource, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         ReportIfSlow($"物件結構 {objectInfo.QualifiedName}（第四層）", timer);
         return structure;
     }

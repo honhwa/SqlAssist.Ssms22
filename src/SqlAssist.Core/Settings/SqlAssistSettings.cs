@@ -85,6 +85,16 @@ public sealed class SqlAssistSettings
     public bool CheckForUpdates { get; init; } = true;
 
     /// <summary>
+    /// sqlAssist.general.decryptEncryptedModules
+    /// </summary>
+    /// <remarks>
+    /// 只管 F12 與物件結構要不要讀回 WITH ENCRYPTION 模組的本文。解密需要 sysadmin 與 DAC，
+    /// 而且會短暫 ALTER（Sch-M 鎖），所以預設關閉；這是伺服器擁有者的決定，不是預設值。
+    /// 同一個物件版本只解密一次，結果記到快取清空為止。
+    /// </remarks>
+    public bool DecryptEncryptedModules { get; init; }
+
+    /// <summary>
     /// sqlAssist.general.animations
     /// </summary>
     /// <remarks>

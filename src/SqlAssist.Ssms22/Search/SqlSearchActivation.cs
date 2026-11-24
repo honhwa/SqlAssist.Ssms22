@@ -9,6 +9,7 @@ using SqlAssist.Metadata.Formatting;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Metadata.Search;
 using SqlAssist.Ssms22.Connections;
+using SqlAssist.Ssms22.Decryption;
 using SqlAssist.Ssms22.Editor;
 
 namespace SqlAssist.Ssms22.Search;
@@ -118,6 +119,10 @@ internal static partial class SqlSearchActivation
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             return;
         }
+
+        structure = await SqlModuleDecryptor
+            .EnrichAsync(structure, objectInfo, catalog.ConnectionSource, CancellationToken.None)
+            .ConfigureAwait(false);
 
         var script = await Task.Run(() => SqlDefinitionScript.Build(structure, documentName)).ConfigureAwait(false);
 

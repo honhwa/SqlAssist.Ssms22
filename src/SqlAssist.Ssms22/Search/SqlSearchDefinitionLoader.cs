@@ -8,6 +8,7 @@ using SqlAssist.Core.Notifications;
 using SqlAssist.Metadata.Formatting;
 using SqlAssist.Metadata.Model;
 using SqlAssist.Metadata.Search;
+using SqlAssist.Ssms22.Decryption;
 using SqlAssist.Ssms22.Settings;
 
 namespace SqlAssist.Ssms22.Search;
@@ -105,6 +106,11 @@ internal sealed class SqlSearchDefinitionLoader
                 "",
                 SqlSearchText.DefinitionMissing(target.DatabaseName, objectInfo.QualifiedName));
         }
+
+        // 同一道「看定義」的解密門檻；這個清單指到哪一台就讀哪一台，不回頭拿查詢視窗的連線。
+        structure = await SqlModuleDecryptor
+            .EnrichAsync(structure, objectInfo, resolved.ConnectionSource, cancellationToken)
+            .ConfigureAwait(false);
 
         // 種類與這一次的資料齊不齊由 SqlObjectScript 那一支問；任一道不過它就整段換成註解，
         // 這裡不再自己判斷，也不自己組任何一段 T-SQL。

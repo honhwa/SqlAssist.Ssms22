@@ -53,6 +53,7 @@ public static class SqlAssistMonikers
     public const string UppercaseKeywordsOnType = "sqlAssist.general.uppercaseKeywordsOnType";
     public const string AutoPairDelimiters = "sqlAssist.general.autoPairDelimiters";
     public const string CheckForUpdates = "sqlAssist.general.checkForUpdates";
+    public const string DecryptEncryptedModules = "sqlAssist.general.decryptEncryptedModules";
     public const string Animations = "sqlAssist.general.animations";
     public const string IgnoreWindowsAnimationSetting = "sqlAssist.general.ignoreWindowsAnimationSetting";
     public const string Language = "sqlAssist.general.language";

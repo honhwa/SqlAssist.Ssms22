@@ -5,6 +5,10 @@
   // ── 中繼資料 ──
   "LoadingObjects": "載入物件清單",
   "LoadingObjectsDone": "已載入物件清單",
+  "DecryptingEncryptedModule": "解密加密模組",
+  "DecryptingEncryptedModuleDone": "已解密加密模組",
+  "DecryptionSummary": "已解密 {succeeded}/{total} 個加密模組",
+  "DecryptionFailure": "已解密 {succeeded}/{total} 個加密模組－{reason}",
   "LoadingColumns": "載入欄位與定義",
   "LoadingColumnsDone": "已載入欄位與定義",
   "LoadingIndexes": "載入索引與條件約束",

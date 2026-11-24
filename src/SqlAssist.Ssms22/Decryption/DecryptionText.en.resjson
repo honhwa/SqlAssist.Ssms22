@@ -1,0 +1,17 @@
+{
+  "DacNoConnection": "No connection is available to open an administrator connection on.",
+  "DacBadConnectionString": "The active connection string could not be turned into an administrator connection: {reason}",
+  "DacNoCredentials": "The SQL authentication password was not preserved on this connection. Use Windows authentication, or let SSMS remember the password and reconnect.",
+  "DacBusy": "The server's dedicated administrator connection (DAC) is already in use, and it is the only way to read encrypted module text. Close that session and try again. {detail}",
+  "DacBusyHolder": "Holding it now: {holders}.",
+  "DacBusyNoHolder": "No DAC session is visible at this instant, so the slot may have just been released - try again.",
+  "DacLoginRefused": "The administrator connection was refused: decrypting module text requires membership of the sysadmin server role. ({reason})",
+  "DacUnavailable": "Could not open a dedicated administrator connection. Decrypting module text needs one, and it requires sysadmin; a remote instance also needs 'remote admin connections' enabled. ({reason})",
+  "DacPortUnresolved": "Could not reach the dedicated administrator connection: the client could not work out its port (error 43), and the server is listening on TCP ports {ports}. SQL Server Express needs trace flag 7806 to start a DAC at all; a remote client also needs 'remote admin connections'. ({reason})",
+  "DacGateTimeout": "Timed out waiting for another decryption run to release the administrator connection. Try again in a moment.",
+  "DacUiThread": "Decryption cannot run on the UI thread: opening an administrator connection would freeze SSMS while it waits. Retry from a background entry point.",
+  "DecryptNoCipher": "No encrypted text was found for this object.",
+  "DecryptUnsupportedType": "There is no throwaway definition for objects of type {type}.",
+  "DecryptInvalidDefinition": "The recovered text was not a module definition and was discarded: {reason}",
+  "DecryptObjectMissing": "The object no longer exists."
+}
