@@ -107,7 +107,8 @@ internal sealed class SsmsConnectionSource : ISqlConnectionSource, IDisposable
             try
             {
                 return SqlDacConnectionFactory.StripDacUnsupportedParts(
-                    new SqlConnectionStringBuilder(_template.ConnectionString).DataSource);
+                    new SqlConnectionStringBuilder(
+                        SqlDacConnectionFactory.NormalizeKeywords(_template.ConnectionString)).DataSource);
             }
             catch
             {
@@ -131,7 +132,8 @@ internal sealed class SsmsConnectionSource : ISqlConnectionSource, IDisposable
 
         try
         {
-            var builder = new SqlConnectionStringBuilder(_template.ConnectionString)
+            var builder = new SqlConnectionStringBuilder(
+                SqlDacConnectionFactory.NormalizeKeywords(_template.ConnectionString))
             {
                 Pooling = false,
                 MultipleActiveResultSets = false,

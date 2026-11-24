@@ -26,6 +26,8 @@ SQL Server 把模組本文與一條依物件識別導出的金流做 XOR；金�
 
 批次帶 `SET LOCK_TIMEOUT 5000`：ALTER 要 Sch-M 鎖，等待時會把該程序的新呼叫者一起堵在後面。全處理序同時只放行一條 DAC，最多等 30 秒；忙碌的 DAC（17810／17809）重試兩次，其餘失敗不重試。
 
+SSMS 交出的連線字串可能混用帶空格的關鍵字（`Multiple Active Result Sets`、`Trust Server Certificate`）或 net48 builder 不認得的欄位（`Authentication`、`Column Encryption Setting`）。進 builder 前先白名單重建，只留 DAC 需要的欄位，避免在開線前就因「不支援關鍵字」失敗。
+
 ## 記憶與回報
 
 結果按 `伺服器|資料庫|schema.name|modify_date` 記憶，物件改過才重讀。失敗也記：登入被拒記到工作階段結束，DAC 被占用記 5 秒，完全連不上記 2 分鐘；「清快取」或重新整理建議會清掉。

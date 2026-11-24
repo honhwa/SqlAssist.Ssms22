@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
+using System.Globalization;
+using System.Text;
 
 namespace SqlAssist.Ssms22.Decryption;
 
@@ -20,6 +22,201 @@ namespace SqlAssist.Ssms22.Decryption;
 internal static class SqlDacConnectionFactory
 {
     private const string ApplicationName = "SqlAssist for SSMS (DAC)";
+
+    /// <summary>
+    /// SSMS 交出來的連線字串可能混用帶空格的關鍵字（<c>Multiple Active Result Sets</c>、
+    /// <c>Trust Server Certificate</c>）與 net48 builder 不認得的 SSMS 專用關鍵字
+    /// （<c>Authentication</c>、<c>Column Encryption Setting</c>）。builder 在建構時就拋
+    /// 「不支援關鍵字」，根本還沒嘗試開 DAC；逐條改寫會永遠慢一個關鍵字，所以這裡改成
+    /// 白名單重建：只留下 DAC 需要的欄位，其餘丟掉。
+    /// </summary>
+    private static readonly Dictionary<string, string> SupportedKeywords = new(StringComparer.Ordinal)
+    {
+        ["datasource"] = "Data Source",
+        ["server"] = "Data Source",
+        ["address"] = "Data Source",
+        ["addr"] = "Data Source",
+        ["networkaddress"] = "Data Source",
+        ["initialcatalog"] = "Initial Catalog",
+        ["database"] = "Initial Catalog",
+        ["integratedsecurity"] = "Integrated Security",
+        ["trustedconnection"] = "Integrated Security",
+        ["userid"] = "User ID",
+        ["uid"] = "User ID",
+        ["user"] = "User ID",
+        ["password"] = "Password",
+        ["pwd"] = "Password",
+        ["trustservercertificate"] = "TrustServerCertificate",
+        ["encrypt"] = "Encrypt",
+        ["currentlanguage"] = "Current Language",
+        ["workstationid"] = "Workstation ID",
+        ["wsid"] = "Workstation ID",
+        ["packetsize"] = "Packet Size",
+        ["networklibrary"] = "Network Library",
+        ["network"] = "Network Library",
+        ["net"] = "Network Library",
+        ["connecttimeout"] = "Connect Timeout",
+        ["connectiontimeout"] = "Connect Timeout",
+        ["multipleactiveresultsets"] = "MultipleActiveResultSets",
+    };
+
+    /// <summary>
+    /// 把 SSMS 的連線字串重建成 <see cref="SqlConnectionStringBuilder"/> 認得的形式。
+    /// 所有進 builder 的入口都得先過這一道。
+    /// </summary>
+    public static string NormalizeKeywords(string? connectionString)
+    {
+        if (string.IsNullOrEmpty(connectionString)) return connectionString ?? "";
+
+        var normalized = new SqlConnectionStringBuilder();
+        foreach (var pair in ParsePairs(connectionString!))
+        {
+            if (!SupportedKeywords.TryGetValue(Compact(pair.Key), out var keyword)) continue;
+
+            var value = pair.Value;
+            switch (keyword)
+            {
+                case "Integrated Security":
+                    var integrated = ParseFlag(value);
+                    if (integrated.HasValue) normalized.IntegratedSecurity = integrated.Value;
+                    break;
+                case "TrustServerCertificate":
+                    var trust = ParseFlag(value);
+                    if (trust.HasValue) normalized.TrustServerCertificate = trust.Value;
+                    break;
+                case "Encrypt":
+                    var encrypt = ParseEncrypt(value);
+                    if (encrypt.HasValue) normalized.Encrypt = encrypt.Value;
+                    break;
+                case "MultipleActiveResultSets":
+                    var mars = ParseFlag(value);
+                    if (mars.HasValue) normalized.MultipleActiveResultSets = mars.Value;
+                    break;
+                case "Packet Size":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var packet))
+                        normalized.PacketSize = packet;
+                    break;
+                case "Connect Timeout":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var timeout))
+                        normalized.ConnectTimeout = timeout;
+                    break;
+                default:
+                    normalized[keyword] = value;
+                    break;
+            }
+        }
+
+        return normalized.ConnectionString;
+    }
+
+    /// <summary>關鍵字大小寫、空白都可能不同；移除空白後再查表。</summary>
+    private static string Compact(string keyword)
+    {
+        if (string.IsNullOrEmpty(keyword)) return "";
+        if (keyword.IndexOf(' ') < 0 && keyword.IndexOf('\t') < 0) return keyword.ToLowerInvariant();
+
+        var text = new StringBuilder(keyword.Length);
+        foreach (var c in keyword)
+            if (!char.IsWhiteSpace(c)) text.Append(char.ToLowerInvariant(c));
+        return text.ToString();
+    }
+
+    /// <summary>自行拆解 key=value，避開值裡用引號包起來的分號。</summary>
+    private static IEnumerable<KeyValuePair<string, string>> ParsePairs(string connectionString)
+    {
+        var index = 0;
+        while (index < connectionString.Length)
+        {
+            while (index < connectionString.Length &&
+                   (connectionString[index] == ';' || char.IsWhiteSpace(connectionString[index])))
+                index++;
+            if (index >= connectionString.Length) break;
+
+            var keyStart = index;
+            while (index < connectionString.Length &&
+                   connectionString[index] != '=' && connectionString[index] != ';')
+                index++;
+            if (index >= connectionString.Length || connectionString[index] == ';')
+            {
+                while (index < connectionString.Length && connectionString[index] != ';') index++;
+                continue;
+            }
+
+            var key = connectionString.Substring(keyStart, index - keyStart).Trim();
+            index++; // '='
+
+            var value = new StringBuilder();
+            var quote = '\0';
+            while (index < connectionString.Length)
+            {
+                var c = connectionString[index];
+                if (quote != '\0')
+                {
+                    if (c == quote)
+                    {
+                        if (index + 1 < connectionString.Length && connectionString[index + 1] == quote)
+                        {
+                            value.Append(c);
+                            index += 2;
+                            continue;
+                        }
+                        quote = '\0';
+                        index++;
+                        continue;
+                    }
+                    value.Append(c);
+                    index++;
+                    continue;
+                }
+
+                if (c == '"' || c == '\'')
+                {
+                    quote = c;
+                    index++;
+                    continue;
+                }
+                if (c == ';')
+                {
+                    index++;
+                    break;
+                }
+                value.Append(c);
+                index++;
+            }
+
+            if (key.Length > 0)
+                yield return new KeyValuePair<string, string>(key, value.ToString().Trim());
+        }
+    }
+
+    private static bool? ParseFlag(string value)
+    {
+        if (value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("1", StringComparison.Ordinal) ||
+            value.Equals("sspi", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("no", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("0", StringComparison.Ordinal))
+            return false;
+
+        return null;
+    }
+
+    /// <summary>新版 SSMS 寫 Mandatory／Optional；net48 builder 的 Encrypt 只接受布林。</summary>
+    private static bool? ParseEncrypt(string value)
+    {
+        var flag = ParseFlag(value);
+        if (flag.HasValue) return flag;
+
+        if (value.Equals("mandatory", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("strict", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (value.Equals("optional", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
+    }
 
     /// <summary>把資料來源縮成 DAC 認得出來的形式：去掉 ADMIN:、通訊協定前綴與明確的埠。</summary>
     public static string StripDacUnsupportedParts(string? dataSource)
@@ -52,7 +249,7 @@ internal static class SqlDacConnectionFactory
     /// <summary>一般連線轉成 DAC 連線字串。</summary>
     public static string BuildConnectionString(string baseConnectionString, string database)
     {
-        var builder = new SqlConnectionStringBuilder(baseConnectionString)
+        var builder = new SqlConnectionStringBuilder(NormalizeKeywords(baseConnectionString))
         {
             Pooling = false,
             MultipleActiveResultSets = false,
@@ -71,7 +268,7 @@ internal static class SqlDacConnectionFactory
     /// </summary>
     public static string BuildDirectConnectionString(string baseConnectionString, string database, int dacPort)
     {
-        var builder = new SqlConnectionStringBuilder(baseConnectionString)
+        var builder = new SqlConnectionStringBuilder(NormalizeKeywords(baseConnectionString))
         {
             Pooling = false,
             MultipleActiveResultSets = false,
@@ -311,7 +508,7 @@ ORDER BY s.session_id;";
 
     private static SqlConnectionStringBuilder ProbeBuilder(string baseConnectionString, string applicationName)
     {
-        var builder = new SqlConnectionStringBuilder(baseConnectionString)
+        var builder = new SqlConnectionStringBuilder(NormalizeKeywords(baseConnectionString))
         {
             ConnectTimeout = 3,
             ApplicationName = applicationName,

@@ -7,6 +7,7 @@ using System.Threading;
 using Microsoft.VisualStudio.Shell;
 using SqlAssist.Core.Decryption;
 using SqlAssist.Core.Notifications;
+using SqlAssist.Ssms22.Connections;
 using SqlAssist.Ssms22.Settings;
 
 namespace SqlAssist.Ssms22.Decryption;
@@ -59,15 +60,22 @@ internal static class SqlModuleDecryptionService
         LastSummary = null;
     }
 
+    /// <summary>
+    /// 記憶鍵用的伺服器識別必須與 <see cref="SsmsConnectionSource.ServerForDecryption"/> 逐字相同：
+    /// 傳進來的是 DAC 連線字串，<c>DataSource</c> 帶著 <c>ADMIN:</c>，不去掉就永遠
+    /// 命不到呼叫端先用正常連線算出來的那把鍵，於是每次預覽都重跑一次 ALTER。
+    /// </summary>
     public static string ServerOf(string? connectionString)
     {
         try
         {
-            return new SqlConnectionStringBuilder(connectionString ?? "").DataSource;
+            return SqlDacConnectionFactory.StripDacUnsupportedParts(
+                new SqlConnectionStringBuilder(
+                    SqlDacConnectionFactory.NormalizeKeywords(connectionString)).DataSource);
         }
         catch
         {
-            return connectionString ?? "";
+            return SqlDacConnectionFactory.StripDacUnsupportedParts(connectionString);
         }
     }
 

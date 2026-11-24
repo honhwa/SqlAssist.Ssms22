@@ -94,6 +94,7 @@
     <Compile Include="..\..\src\SqlAssist.Ssms22\Search\SqlSearchProviders.cs" Link="Product\Search\SqlSearchProviders.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Connections\SqlCatalogConnection.cs" Link="Product\Connections\SqlCatalogConnection.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Connections\SqlCatalogScopeSummary.cs" Link="Product\Connections\SqlCatalogScopeSummary.cs" />
+    <Compile Include="..\..\src\SqlAssist.Ssms22\Decryption\SqlDacConnectionFactory.cs" Link="Product\Decryption\SqlDacConnectionFactory.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Dictionary\DictionaryText.cs" Link="Product\Dictionary\DictionaryText.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Dictionary\SqlDictionaryRows.cs" Link="Product\Dictionary\SqlDictionaryRows.cs" />
     <Compile Include="..\..\src\SqlAssist.Ssms22\Dictionary\SqlDictionaryBrowserModel.cs" Link="Product\Dictionary\SqlDictionaryBrowserModel.cs" />
